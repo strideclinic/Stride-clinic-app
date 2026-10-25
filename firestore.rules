@@ -97,20 +97,27 @@ service cloud.firestore {
     }
 
     // ---- attendance: everyone checks themselves in/out (server clock); only the owner sees or edits others ----
+    // temporary grant from the owner: Reham may enter past attendance inside a date range until it expires
+    function backfill() { return get(/databases/$(database)/documents/pub/backfill).data; }
+    function backfillActive() {
+      return isAdmin() && exists(/databases/$(database)/documents/pub/backfill)
+        && backfill().get('on', false) == true && request.time < backfill().until;
+    }
+    function inBackfill(d) { return backfillActive() && d >= backfill().from && d <= backfill().to; }
     match /att/{id} {
-      allow read: if isOwner() || (isStaff() && resource.data.staffId == mySid());
-      allow create: if isOwner()
+      allow read: if isOwner() || backfillActive() || (isStaff() && resource.data.staffId == mySid());
+      allow create: if isOwner() || inBackfill(request.resource.data.date)
         || (isStaff() && request.resource.data.staffId == mySid()
             && id == request.resource.data.date + '_' + mySid()
             && request.resource.data.inAt == request.time
             && request.resource.data.out == ''
             && request.resource.data.keys().hasOnly(['date', 'staffId', 'inAt', 'in', 'out', 'note', 'by', 'inLoc']));
-      allow update: if isOwner()
+      allow update: if isOwner() || (inBackfill(resource.data.date) && inBackfill(request.resource.data.date))
         || (isStaff() && resource.data.staffId == mySid()
             && !('outAt' in resource.data)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt', 'outLoc'])
             && request.resource.data.outAt == request.time);
-      allow delete: if isOwner();
+      allow delete: if isOwner() || inBackfill(resource.data.date);
     }
   }
 }

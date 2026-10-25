@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 أكتوبر · 11";
+const APP_VERSION="25 أكتوبر · 12";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -78,14 +78,14 @@ async function onAuth(u){
   },e=>{console.warn(e);S.role="none";render()});
 }
 async function checkSetup(){if(S.setupDone)return;try{const d=await S.db.doc("meta/setup").get();S.setupDone=d.exists}catch(e){S.setupDone=true}}
-function clearSubs(){S.roleSubs.forEach(u=>{try{u()}catch(e){}});S.roleSubs=[];
+function clearSubs(){S.roleSubs.forEach(u=>{try{u()}catch(e){}});S.roleSubs=[];if(backfillUnsub){backfillUnsub();backfillUnsub=null}
   Object.assign(S,{staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",loadedMonths:{},
     live:{visits:{},payments:{},att:{},exp:{},appts:{}},old:{visits:{},payments:{},att:{},exp:{},appts:{}}});merge()}
 function rowOf(d){const x={id:d.id,...d.data({serverTimestamps:"estimate"})};if(x.inAt)x.in=fmtTs(x.inAt);if(x.outAt)x.out=fmtTs(x.outAt);if(x.arrivedAt)x.arrived=fmtTs(x.arrivedAt);if(x.startAt)x.start=fmtTs(x.startAt);if(x.endAt)x.end=fmtTs(x.endAt);return x}
 function toObj(snap){const o={};snap.docs.forEach(d=>o[d.id]=rowOf(d));return o}
 function sub(q,set){return q.onSnapshot(snap=>{set(toObj(snap));sched()},e=>console.warn("sub",e))}
 function subDoc(path,set){return S.db.doc(path).onSnapshot(d=>{set(d.exists?d.data():null);sched()},e=>console.warn(path,e))}
-function merge(){S.visits={...S.old.visits,...S.live.visits};S.payments={...S.old.payments,...S.live.payments};S.att={...S.old.att,...S.live.att};S.expenses={...S.old.exp,...S.live.exp};S.appts={...S.old.appts,...S.live.appts}}
+function merge(){S.visits={...S.old.visits,...S.live.visits};S.payments={...S.old.payments,...S.live.payments};S.att={...S.old.att,...(S.live.attAll||{}),...S.live.att};S.expenses={...S.old.exp,...S.live.exp};S.appts={...S.old.appts,...S.live.appts}}
 function setLive(k){return o=>{S.live[k]=o;merge()}}
 function setupRoleSubs(){
   clearSubs();const r=S.roleSubs,db=S.db,c=n=>db.collection(n);
@@ -93,6 +93,7 @@ function setupRoleSubs(){
   r.push(subDoc("pub/types",d=>S.types=d?.list||[]));
   r.push(subDoc("pub/geo",d=>S.geo=d||null));
   r.push(subDoc("pub/notify",d=>S.notify=d||null));
+  r.push(subDoc("pub/backfill",d=>{S.backfill=d||null;syncBackfillSub()}));
   r.push(sub(c("pdir"),o=>S.pdir=o));
   r.push(c("usernames").where("uid","==",S.uid).onSnapshot(s=>{S.myUsername=s.docs[0]?.id||"";sched()},()=>{}));
   if(isAdmin()){
@@ -134,6 +135,16 @@ async function ensureMonth(m){ // months outside the live window load once, on d
     S.loadedMonths[m]=true;merge();sched()}catch(e){console.warn(e);S.loadedMonths[m]=false}
 }
 function forget(col,id){delete S.old[col]?.[id];merge()}
+/* temporary access for Reham to enter past attendance (owner grants it with an end time; the server enforces it too) */
+function backfillOn(){const b=S.backfill;return !!(b&&b.on&&tsDate(b.until)>new Date())}
+function inBackfill(date){const b=S.backfill;return backfillOn()&&date>=b.from&&date<=b.to}
+let backfillUnsub=null;
+function syncBackfillSub(){
+  if(S.role!=="secretary")return;
+  if(backfillOn()&&!backfillUnsub)backfillUnsub=S.db.collection("att").where("date",">=",S.backfill.from).onSnapshot(sn=>{S.live.attAll=toObj(sn);merge();sched()},()=>{});
+  if(!backfillOn()&&backfillUnsub){backfillUnsub();backfillUnsub=null;S.live.attAll={};merge()}
+  sched();
+}
 function defaultTab(){return {owner:"appts",secretary:"appts",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
@@ -142,7 +153,7 @@ function tabsFor(){
   const toConfirm=Object.values(S.appts).filter(a=>a.status==="done"&&!a.confirmed).length;
   const base=[["appts","المواعيد",toConfirm],["visits","الجلسات والفلوس"],["review","جلسات من غير ميعاد",pend],["patients","المرضى والكشف"]];
   if(S.role==="owner")return [...base,["att","الحضور"],["reports","الحسابات والمرتبات"],["settings","الإعدادات"]];
-  return [...base,["myatt","حضوري"],["reports","دخل وخرج اليوم"],["settings","الإعدادات"]];
+  return [...base,["myatt","حضوري"],...(backfillOn()?[["att","حضور الفريق (مؤقت)"]]:[]),["reports","دخل وخرج اليوم"],["settings","الإعدادات"]];
 }
 function render(){
   const who=document.getElementById("who"),tabs=document.getElementById("tabs"),main=document.getElementById("main");
@@ -340,14 +351,16 @@ function renderPatientList(){
 }
 /* ---------- views: attendance (admin) ---------- */
 function vAtt(){
+  if(S.role!=="owner"&&!backfillOn())return `<div class="empty"><b>الصلاحية المؤقتة خلصت</b>تسجيل حضور الفريق متاح لـ د. محي بس.</div>`;
   const d=S.ui.attDate,m=d.slice(0,7);ensureMonth(m);const base=cfg().hoursBase*60;
+  const tempNote=S.role!=="owner"?`<div class="note">صلاحية مؤقتة: تسجيل الحضور من ${esc(S.backfill.from)} لحد ${esc(S.backfill.to)}، ومتاحة لحد ${tsDate(S.backfill.until).toLocaleString("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",hour:"numeric",minute:"2-digit"})}.${inBackfill(d)?"":" <b>اليوم ده بره الفترة.</b>"}</div>`:"";
   const st=activeStaff();
   const rows=st.map(s=>{const r=S.att[d+"_"+s.id];const w=r?attMinutes(r):null;const ot=w!=null&&w>base?w-base:0;
     return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span></span>
     <span class="end">${attChip(r,w,ot,base)}</span>
     <span class="m">${r?`حضور ${esc(r.in||"—")} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
   const sum=st.map(s=>{let days=0,ot=0,short=0;for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(m)){const w=attMinutes(r);if(w==null)continue;days++;w>base?ot+=w-base:short+=base-w}return `<tr><td>${esc(s.name)}</td><td class="num">${days}</td><td>${hm(ot)}</td><td>${hm(short)}</td></tr>`}).join("");
-  return `<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
+  return `${tempNote}<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
   ${st.length?`<div class="list">${rows}</div>`:`<div class="empty"><b>مفيش فريق متسجل</b>ضيف الدكاترة والسكرتارية من الإعدادات.</div>`}
   <div class="panel"><h2>ملخص ${esc(monthLabel(m))}</h2><p class="sub" style="margin:0">اليوم الأساسي ${cfg().hoursBase} ساعات؛ أي دقيقة زيادة بتتحسب بدقيقة ونص في المرتب.</p>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>أيام متسجلة</th><th>أوفر تايم</th><th>ساعات ناقصة</th></tr></thead><tbody>${sum}</tbody></table></div></div>`;
@@ -472,6 +485,12 @@ function vSettings(){
   <p class="sub" style="margin:0">كل واحد يقدر يغيّر اسم المستخدم والباسورد بتوعه من «حسابي». لو حد نسي الباسورد اضغط «باسورد جديد» وهيطلعلك باسورد مؤقت تديهوله.</p></div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات والأسعار</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   ${S.types.length?`<div class="list">${S.types.map(t=>`<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)}</span><span class="end money">${S.prices[t.id]!=null?money(S.prices[t.id]):"بدون سعر"}</span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: كشف، جلسة علاج طبيعي، جلسة تأهيل. الدكاترة بيشوفوا الأسماء بس، من غير أسعار.</div>`}</div>
+  ${S.role==="owner"?`<div class="panel"><div class="sec-title"><h2>صلاحية مؤقتة لريهام</h2>${backfillOn()?`<span class="chip c-acc">شغالة</span>`:""}</div>
+  ${backfillOn()?`<p class="sub" style="margin:0">ريهام تقدر تسجل حضور وانصراف الفريق من ${esc(S.backfill.from)} لحد ${esc(S.backfill.to)}، والصلاحية بتقفل لوحدها ${tsDate(S.backfill.until).toLocaleString("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",hour:"numeric",minute:"2-digit"})}.</p><button class="btn danger" data-act="stopBackfill">اقفلها دلوقتي</button>`
+  :`<p class="sub" style="margin:0">عشان ريهام تسجل الحضور والانصراف القديم من غير GPS. الجلسات القديمة بتسجلها عادي من «الجلسات والفلوس».</p>
+  <div class="grid2"><label class="f">من يوم<input type="date" id="bf_from" value="${today().slice(0,7)}-01"></label><label class="f">لحد يوم<input type="date" id="bf_to" value="${today()}"></label>
+  <label class="f">الصلاحية تقفل بعد<select id="bf_days"><option value="1">يوم</option><option value="3" selected>3 أيام</option><option value="7">أسبوع</option></select></label></div>
+  <button class="btn primary" data-act="setBackfill">فعّل الصلاحية</button>`}</div>`:""}
   ${S.role==="owner"?`<div class="panel"><div class="sec-title"><h2>إشعارات على موبايلك</h2>${S.notify?.topic?`<span class="chip ${S.notify.on===false?"c-mute":"c-ok"}">${S.notify.on===false?"متوقفة":"شغالة"}</span>`:""}</div>
   ${S.notify?.topic?`<p class="sub" style="margin:0">بيوصلك إشعار لو حد حاول يسجل حضور أو انصراف من بره المركز، أو رفض يدّي مكانه.</p>
   <ol class="sub" style="margin:0;padding-inline-start:20px;display:grid;gap:4px"><li>نزّل تطبيق <b>ntfy</b> من App Store أو Google Play، وهو مجاني.</li><li>افتحه ودوس <b>+</b> واكتب اسم القناة ده بالظبط:</li></ol>
@@ -821,6 +840,7 @@ async function sheetVisit(id){
   openSheet(id?"تعديل جلسة":"جلسة جديدة",`
   <label class="f">الحالة${patientPicker("v_pat",v.patientId&&S.patients[v.patientId]?pLabel(S.patients[v.patientId]):v.patientName)}</label>${newPatientFields("v")}
   <div class="grid2"><label class="f">الدكتور<select id="v_doc">${docOpts.map(([k,n])=>`<option value="${k}" ${v.doctorId===k?"selected":""}>${esc(n)}</option>`).join("")}</select></label>
+  <label class="f">دكتور تاني (لو اتقسمت نص ونص)<select id="v_doc2"><option value="">مفيش</option>${docOpts.map(([k,n])=>`<option value="${k}" ${v.doctor2Id===k?"selected":""}>${esc(n)}</option>`).join("")}</select></label>
   <label class="f">نوع الجلسة<select id="v_type">${typeOptions(v.typeId)}</select></label>
   <label class="f">التاريخ<input type="date" id="v_date" value="${v.date}"></label><label class="f">الساعة<input type="time" id="v_time" value="${v.time||""}"></label></div>
   ${compSeg("v_comp",v.completion)}
@@ -834,7 +854,8 @@ async function saveVisit(id){
   const pv=val("v_pat").trim(),type=val("v_type");if(!pv)return setErr("اختار الحالة");if(!type)return setErr("اختار نوع الجلسة");
   const mny=readMoney("v");const me=moneyError(mny);if(me)return setErr(me);
   const pat=await ensurePatient(pv,val("v_phone"),val("v_src"));
-  const body={date:val("v_date")||today(),time:val("v_time"),patientId:pat.id,patientName:pat.name,doctorId:val("v_doc"),typeId:type,typeName:typeName(type),...mny,completion:radio("v_comp")||"full"};
+  const d2=val("v_doc2")&&val("v_doc2")!==val("v_doc")?val("v_doc2"):null;
+  const body={date:val("v_date")||today(),time:val("v_time"),patientId:pat.id,patientName:pat.name,doctorId:val("v_doc"),doctor2Id:d2,typeId:type,typeName:typeName(type),...mny,completion:d2?"half":(radio("v_comp")||"full")};
   const b=S.db.batch(),acc={};
   if(id){const old=S.visits[id];b.update(S.db.doc("visits/"+id),body);visitEffect(acc,old,-1);visitEffect(acc,body,1);if(S.old.visits[id])S.old.visits[id]={...old,...body}}
   else{b.set(S.db.collection("visits").doc(),{...body,createdAt:Date.now(),by:S.mySid});visitEffect(acc,body,1)}
@@ -1189,7 +1210,8 @@ document.addEventListener("change",e=>{
   if(id==="monthPick"&&e.target.value){S.ui.month=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","editAtt","saveAtt","delAtt","saveCfg","backup","setupAlerts","toggleAlerts","testAlert"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill"]);
+const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
@@ -1197,6 +1219,7 @@ document.addEventListener("click",async e=>{
   if(a==="srcScope")return;
   if(ADMIN_ACTS.has(a)&&!isAdmin())return;
   if(OWNER_ACTS.has(a)&&S.role!=="owner")return;
+  if(ATT_ACTS.has(a)&&S.role!=="owner"&&!(S.role==="secretary"&&inBackfill(S.ui.attDate))){toast("اليوم ده بره فترة الصلاحية المؤقتة");return}
   if((a==="saveCfg"||a==="backup")&&S.role!=="owner")return;
   if(t.hasAttribute("data-confirm")&&!t.dataset.armed){t.dataset.armed="1";t.dataset.label=t.textContent;t.textContent="متأكد؟ اضغط تاني";setTimeout(()=>{if(t.isConnected){delete t.dataset.armed;t.textContent=t.dataset.label}},4000);return}
   const db=S.db;
@@ -1205,6 +1228,9 @@ document.addEventListener("click",async e=>{
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
+    case "setBackfill":guard(t,async()=>{const from=val("bf_from"),to=val("bf_to");if(!from||!to||from>to)return toast("اختار فترة صح");
+      const until=new Date(Date.now()+num(val("bf_days"))*864e5);await db.doc("pub/backfill").set({on:true,from,to,until,by:S.mySid,at:Date.now()});toast("الصلاحية اتفعّلت")});break;
+    case "stopBackfill":guard(t,async()=>{await db.doc("pub/backfill").set({on:false,at:Date.now()});toast("الصلاحية اتقفلت")});break;
     case "setupAlerts":if(S.role==="owner")guard(t,async()=>{await db.doc("pub/notify").set({topic:"stride-"+randId()+randId(),on:true,at:Date.now()});toast("الإشعارات اتفعّلت. كمّل الخطوات اللي ظهرت.")});break;
     case "toggleAlerts":if(S.role==="owner")guard(t,async()=>{await db.doc("pub/notify").update({on:S.notify?.on===false})});break;
     case "testAlert":if(S.role==="owner"){const n=S.notify;if(n?.topic)fetch("https://ntfy.sh/",{method:"POST",body:JSON.stringify({topic:n.topic,title:"Stride Clinic",message:"الإشعارات شغالة. هيوصلك تنبيه هنا لو حد سجل حضور من بره المركز.",priority:3})}).then(r=>toast(r.ok?"اتبعت. بص على موبايلك.":"مااتبعتش، جرب تاني.")).catch(()=>toast("مااتبعتش. اتأكد من النت."))}break;
