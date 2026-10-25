@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 19";
+const APP_VERSION="26 أكتوبر · 20";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1118,6 +1118,7 @@ function sheetSellPack(pid){
   <label class="f">الباكدج<select id="k_type"></select></label>
   <div class="grid2"><label class="f">اسم الباكدج<input id="k_name"></label><label class="f">عدد الجلسات<input id="k_sessions" inputmode="numeric"></label><label class="f">التاريخ<input type="date" id="k_date" value="${today()}"></label>
   <label class="f" id="k_usedbox" hidden>كام جلسة خلصت منه قبل كده<input id="k_used" inputmode="numeric" placeholder="0"></label></div>
+  <p class="sub" id="k_rate" style="margin:0" hidden></p>
   ${moneyFields("k",{price:"",paid:"",method:"cash"})}
   <div id="k_oldbox" hidden style="display:grid;gap:10px">
     <div class="grid2"><label class="f">دفع كام قبل الشهر ده<input id="k_prepaid" inputmode="decimal" placeholder="0"></label>
@@ -1137,9 +1138,16 @@ function sheetSellPack(pid){
     const mode=()=>{const old=radio("k_mode")==="old";E("k_usedbox").hidden=!old;E("k_oldbox").hidden=!old;E("k_oldsum").hidden=!old;E("k_paid").closest("label").hidden=old;E("k_method").closest("label").hidden=old;E("k_sum").hidden=old;oldSum()};
     document.querySelectorAll('input[name="k_mode"]').forEach(r=>r.addEventListener("change",mode));
     ["k_sessions","k_used","k_price","k_disc","k_prepaid","k_mpaid"].forEach(i=>E(i).addEventListener("input",oldSum));E("k_dmode").addEventListener("change",oldSum);
-    t.addEventListener("change",()=>{const x=types.find(y=>y.id===t.value);if(!x)return;if(x.typeId&&!cat.value)cat.value=x.typeId;
-    document.getElementById("k_name").value=x.name;document.getElementById("k_sessions").value=x.sessions;const pr=document.getElementById("k_price");pr.value=x.price;
-    const pd=document.getElementById("k_paid");if(!pd.value)pd.value=x.price;pr.dispatchEvent(new Event("input"));oldSum()})});
+    // pick a package, then just change the number of sessions: the price follows at that package's per-session rate
+    let auto=null;const pr=E("k_price"),pd=E("k_paid"),ns=E("k_sessions"),hint=E("k_rate");
+    const setPrice=v=>{const old=pr.value;pr.value=v;if(!pd.value||pd.value===old)pd.value=v;pr.dispatchEvent(new Event("input"));oldSum()};
+    const rate=()=>{if(!auto){hint.hidden=true;return}const n=Math.round(num(ns.value));const per=auto.price/auto.sessions;
+      hint.hidden=false;hint.textContent=n&&n!==auto.sessions?`${n} جلسة بسعر جلسة ${auto.name} (${money(per)}) = ${money(Math.round(per*n))}`:`سعر الجلسة في ${auto.name}: ${money(per)}. غيّر عدد الجلسات والسعر يتظبط لوحده.`};
+    t.addEventListener("change",()=>{const x=types.find(y=>y.id===t.value);auto=x||null;if(!x){rate();return}if(x.typeId&&!cat.value)cat.value=x.typeId;
+      E("k_name").value=x.name;ns.value=x.sessions;setPrice(x.price);rate()});
+    ns.addEventListener("input",()=>{if(!auto)return;const n=Math.round(num(ns.value));if(n>0){setPrice(Math.round(auto.price/auto.sessions*n));E("k_name").value=n===auto.sessions?auto.name:`${auto.name} · ${n} جلسات`}rate()});
+    pr.addEventListener("input",e=>{if(e.isTrusted&&auto){auto=null;hint.hidden=true}}); // typing a price by hand switches the auto-price off
+  });
 }
 async function saveSellPack(pid){
   const p=S.patients[pid];const name=val("k_name").trim(),sessions=Math.round(num(val("k_sessions"))),date=val("k_date")||today();
