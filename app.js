@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 أكتوبر · 10";
+const APP_VERSION="25 أكتوبر · 11";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -81,7 +81,7 @@ async function checkSetup(){if(S.setupDone)return;try{const d=await S.db.doc("me
 function clearSubs(){S.roleSubs.forEach(u=>{try{u()}catch(e){}});S.roleSubs=[];
   Object.assign(S,{staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",loadedMonths:{},
     live:{visits:{},payments:{},att:{},exp:{},appts:{}},old:{visits:{},payments:{},att:{},exp:{},appts:{}}});merge()}
-function rowOf(d){const x={id:d.id,...d.data({serverTimestamps:"estimate"})};if(x.inAt)x.in=fmtTs(x.inAt);if(x.outAt)x.out=fmtTs(x.outAt);if(x.startAt)x.start=fmtTs(x.startAt);if(x.endAt)x.end=fmtTs(x.endAt);return x}
+function rowOf(d){const x={id:d.id,...d.data({serverTimestamps:"estimate"})};if(x.inAt)x.in=fmtTs(x.inAt);if(x.outAt)x.out=fmtTs(x.outAt);if(x.arrivedAt)x.arrived=fmtTs(x.arrivedAt);if(x.startAt)x.start=fmtTs(x.startAt);if(x.endAt)x.end=fmtTs(x.endAt);return x}
 function toObj(snap){const o={};snap.docs.forEach(d=>o[d.id]=rowOf(d));return o}
 function sub(q,set){return q.onSnapshot(snap=>{set(toObj(snap));sched()},e=>console.warn("sub",e))}
 function subDoc(path,set){return S.db.doc(path).onSnapshot(d=>{set(d.exists?d.data():null);sched()},e=>console.warn(path,e))}
@@ -98,7 +98,8 @@ function setupRoleSubs(){
   if(isAdmin()){
     r.push(sub(c("log"),o=>{S.log=o;pruneLog()}));
     r.push(sub(c("appts").where("date",">=",winStart()),o=>{S.live.appts=o;merge();pruneAppts()}));
-    r.push(sub(c("att").where("date",">=",winStart()),setLive("att")));
+    if(S.role==="owner")r.push(sub(c("att").where("date",">=",winStart()),setLive("att")));
+    else r.push(sub(c("att").where("staffId","==",S.mySid),setLive("att"))); // Reham sees her own attendance only
     r.push(sub(c("visits").where("date",">=",winStart()),setLive("visits")));
     r.push(sub(c("payments").where("date",">=",winStart()),setLive("payments")));
     r.push(sub(c("exp").where("date",">=",winStart()),setLive("exp")));
@@ -108,7 +109,7 @@ function setupRoleSubs(){
     r.push(c("usernames").onSnapshot(s=>{const m={};s.docs.forEach(d=>m[d.data().uid]=d.id);S.usernames=m;sched()},()=>{}));
   }else{
     r.push(sub(c("log").where("doctorSid","==",S.mySid),o=>S.log=o));
-    r.push(sub(c("appts").where("doctorSid","==",S.mySid),setLive("appts")));
+    r.push(sub(c("appts").where("doctors","array-contains",S.mySid),setLive("appts")));
     r.push(sub(c("att").where("staffId","==",S.mySid),setLive("att")));
   }
   if(S.role==="owner")r.push(subDoc("priv/config",d=>S.config=d||{}));
@@ -128,7 +129,7 @@ function pruneLog(){ // reviewed entries older than LOG_KEEP_DAYS are already sa
 async function ensureMonth(m){ // months outside the live window load once, on demand
   if(!isAdmin()||m>=winMonth()||S.loadedMonths[m])return;S.loadedMonths[m]="loading";
   const a=m+"-01",z=m+"-31",c=n=>S.db.collection(n).where("date",">=",a).where("date","<=",z).get();
-  try{const [v,p,t,x,ap]=await Promise.all([c("visits"),c("payments"),c("att"),c("exp"),c("appts")]);
+  try{const [v,p,t,x,ap]=await Promise.all([c("visits"),c("payments"),S.role==="owner"?c("att"):Promise.resolve({docs:[]}),c("exp"),c("appts")]);
     Object.assign(S.old.appts,toObj(ap));Object.assign(S.old.visits,toObj(v));Object.assign(S.old.payments,toObj(p));Object.assign(S.old.att,toObj(t));Object.assign(S.old.exp,toObj(x));
     S.loadedMonths[m]=true;merge();sched()}catch(e){console.warn(e);S.loadedMonths[m]=false}
 }
@@ -136,12 +137,12 @@ function forget(col,id){delete S.old[col]?.[id];merge()}
 function defaultTab(){return {owner:"appts",secretary:"appts",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
-  if(S.role==="doctor"){return [["myappts","مواعيدي",Object.values(S.appts).filter(a=>a.date===today()&&a.status==="booked").length],["mine","جلساتي",myFresh()],["myatt","حضوري"]]}
+  if(S.role==="doctor"){return [["myappts","مواعيدي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)).length],["mine","جلسات من غير ميعاد",myFresh()],["myatt","حضوري"]]}
   const pend=pendingEntries().length;
   const toConfirm=Object.values(S.appts).filter(a=>a.status==="done"&&!a.confirmed).length;
-  const base=[["appts","المواعيد",toConfirm],["visits","الجلسات والفلوس"],["review","مراجعة الدكاترة",pend],["patients","المرضى والكشف"],["att","الحضور"]];
-  if(S.role==="owner")return [...base,["reports","الحسابات والمرتبات"],["settings","الإعدادات"]];
-  return [...base,["reports","الإيراد والمصروفات"],["settings","الإعدادات"]];
+  const base=[["appts","المواعيد",toConfirm],["visits","الجلسات والفلوس"],["review","جلسات من غير ميعاد",pend],["patients","المرضى والكشف"]];
+  if(S.role==="owner")return [...base,["att","الحضور"],["reports","الحسابات والمرتبات"],["settings","الإعدادات"]];
+  return [...base,["myatt","حضوري"],["reports","دخل وخرج اليوم"],["settings","الإعدادات"]];
 }
 function render(){
   const who=document.getElementById("who"),tabs=document.getElementById("tabs"),main=document.getElementById("main");
@@ -254,6 +255,8 @@ function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات<
   return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">خالص</span>`}
 function attMinutes(rec){const a=mins(rec.in),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
 function cfg(){const c=S.config||{};return{salary:c.salary||{},commission:c.commission||{},otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
+function creditsOf(v){return v.doctor2Id?[[v.doctorId,"half"],[v.doctor2Id,"half"]]:[[v.doctorId,v.completion||"full"]]}
+function visitDocs(v){return v.doctor2Id?`${staffName(v.doctorId)} + ${staffName(v.doctor2Id)} (نص ونص)`:staffName(v.doctorId)}
 function payroll(month){
   const c=cfg();const base=c.hoursBase*60;
   return activeStaff().map(s=>{
@@ -262,7 +265,7 @@ function payroll(month){
     for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;if(w>base)ot+=w-base;else short+=base-w}
     const otPay=ot*c.otMult*minRate;
     const cm=c.commission[s.id];let comm=0,full=0,half=0,base2=0;
-    if(cm)for(const v of Object.values(S.visits))if(v.doctorId===s.id&&(v.date||"").startsWith(month)){const pct=v.completion==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):(v.paid||0);comm+=base*pct/100;base2+=base;v.completion==="half"?half++:full++}
+    if(cm)for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))for(const [sid,comp] of creditsOf(v))if(sid===s.id){const pct=comp==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):(v.paid||0);comm+=base*pct/100;base2+=base;comp==="half"?half++:full++}
     return{s,sal,ot,otPay,days,short,cm,comm,full,half,commBase:base2,total:sal+otPay+comm};
   });
 }
@@ -302,7 +305,7 @@ function vVisits(){
   ${vs.length?`<div class="list">${vs.map(v=>{const rem=(v.net||0)-(v.paid||0);return `<button class="row" data-act="editVisit" data-id="${v.id}">
       <span class="t">${esc(v.patientName)} ${v.completion==="half"?`<span class="chip c-warn">نص حالة</span>`:""}</span>
       <span class="end money">${v.packId?`<span class="chip c-teal">باكدج</span>`:money(v.net)}</span>
-      <span class="m">${esc(v.time||"")} · ${esc(staffName(v.doctorId))} · ${esc(v.typeName||"")}${v.discount?` · خصم ${money(v.discount)}`:""}</span>
+      <span class="m">${esc(v.time||"")} · ${esc(visitDocs(v))} · ${esc(v.typeName||"")}${v.discount?` · خصم ${money(v.discount)}`:""}</span>
       <span class="end m">${v.paid?`دفع ${money(v.paid)} ${METHODS[v.method]||""}`:""} ${rem>0?`<span class="chip c-bad">باقي ${money(rem)}</span>`:""}</span>
     </button>`}).join("")}</div>`:`<div class="empty"><b>مفيش جلسات متسجلة اليوم ده</b>الجلسات بتنزل هنا لما تعتمد اللي الدكاترة سجلوه، أو اضغط «+ جلسة» تسجلها مباشرة.</div>`}
   ${ps.length?`<div class="panel"><h2>دفعات وخصومات اليوم ده</h2><div class="list">${ps.map(p=>`<button class="row" data-act="editPay" data-id="${p.id}"><span class="t">${esc(p.patientName)} ${p.kind==="discount"?`<span class="chip c-acc">خصم</span>`:""}</span><span class="end money">${money(p.amount)}</span><span class="m">${p.kind==="discount"?esc(p.reason||""):(METHODS[p.method]||"")}${p.kind!=="discount"&&p.note?" · "+esc(p.note):""}</span><span></span></button>`).join("")}</div></div>`:""}`;
@@ -409,17 +412,26 @@ function vReports(){
   const srcArr=Object.entries(src).sort((a,b)=>b[1].n-a[1].n);const maxN=srcArr[0]?.[1].n||1;
   const sourcesPanel=`<div class="panel"><div class="sec-title"><h2>الحالات بتيجي منين</h2><div class="seg" style="flex:0 1 auto"><label><input type="radio" name="srcScope" data-act="srcScope" value="m" ${S.ui.srcAll?"":"checked"}> الشهر ده</label><label><input type="radio" name="srcScope" data-act="srcScope" value="all" ${S.ui.srcAll?"checked":""}> من الأول</label></div></div>
   ${srcArr.length?`<div class="bars">${srcArr.map(([k,v],i)=>`<div class="brow"><span>${esc(k)}</span><div class="btrack"><div class="bfill ${i===0?"top":""}" style="width:${Math.max(4,v.n/maxN*100)}%"></div></div><span class="num">${v.n} · ${Math.round(v.n/srcN*100)}%</span></div>`).join("")}</div>
-  <div class="tblwrap"><table><thead><tr><th>المصدر</th><th>حالات</th><th>إجمالي جلساتهم</th></tr></thead><tbody>${srcArr.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="num">${v.n}</td><td>${money(v.rev)}</td></tr>`).join("")}</tbody></table></div>
+  <div class="tblwrap"><table><thead><tr><th>المصدر</th><th>حالات</th>${owner?"<th>إجمالي جلساتهم</th>":""}</tr></thead><tbody>${srcArr.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="num">${v.n}</td>${owner?`<td>${money(v.rev)}</td>`:""}</tr>`).join("")}</tbody></table></div>
   <p class="sub" style="margin:0">من خانة «عرفت المركز منين» في شيت الكشف.</p>`
   :`<div class="empty"><b>مفيش حالات جديدة ${S.ui.srcAll?"":"الشهر ده"}</b>لما تملا شيت الكشف وتختار «عرفت المركز منين» هتظهر هنا.</div>`}</div>`;
   const top=`<div class="bar"><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span></div>${loadingNote}`;
-  if(!owner)return `${top}
+  if(!owner){
+    const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
+    let cash=0,insta=0;for(const v of Object.values(S.visits))if(v.date===d)v.method==="instapay"?insta+=v.paid||0:cash+=v.paid||0;
+    for(const p of Object.values(S.payments))if(p.date===d&&p.kind!=="discount")p.method==="instapay"?insta+=p.amount||0:cash+=p.amount||0;
+    const dayExp=Object.values(S.expenses).filter(x=>x.date===d);const out=dayExp.reduce((t,x)=>t+(x.amount||0),0);
+    return `<div class="bar">${dayNav("repDay","repPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span></div>
   <div class="stats">
-    <div class="stat"><div class="k">اتحصّل فعلاً</div><div class="v money">${money(rv.collected)}</div></div>
-    <div class="stat"><div class="k">كاش</div><div class="v money">${money(rv.cash)}</div></div>
-    <div class="stat"><div class="k">InstaPay</div><div class="v money">${money(rv.insta)}</div></div>
-    <div class="stat"><div class="k">متبقي على الحالات</div><div class="v money">${money(rv.unpaid)}</div></div>
-  </div>${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
+    <div class="stat"><div class="k">دخل اليوم</div><div class="v money">${money(cash+insta)}</div></div>
+    <div class="stat"><div class="k">منهم كاش</div><div class="v money">${money(cash)}</div></div>
+    <div class="stat"><div class="k">منهم InstaPay</div><div class="v money">${money(insta)}</div></div>
+    <div class="stat"><div class="k">خرج اليوم</div><div class="v money" style="color:${out?"var(--bad)":"inherit"}">${money(out)}</div></div>
+  </div>
+  ${dayExp.length?`<div class="list">${dayExp.map(x=>`<button class="row" data-act="editExp" data-id="${x.id}"><span class="t">${esc(x.category)}</span><span class="end money">${money(x.amount)}</span><span class="m">${esc(x.note||"")}</span><span></span></button>`).join("")}</div>`:""}
+  <div class="bar"><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="شهر المصروفات"><span class="sub grow">مصروفات ${esc(monthLabel(m))}</span></div>
+  ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
+  }
   const pr=payroll(m);const salTotal=pr.reduce((s,x)=>s+x.total,0);const totalExp=salTotal+ex.t;const net=rv.collected-totalExp;
   const ratio=rv.collected?totalExp/rv.collected:null;
   const prevWith=[1,2,3].map(n=>expByCat(prevMonth(m,n))).filter(p=>p.t>0);const flags=[];
@@ -466,10 +478,10 @@ function vSettings(){
   <div class="bar"><code id="ntfyTopic" style="direction:ltr;background:var(--sunk);padding:6px 10px;border-radius:8px;user-select:all">${esc(S.notify.topic)}</code><button class="btn sm" data-act="copyTopic">نسخ</button></div>
   <div class="bar"><button class="btn sm" data-act="testAlert">ابعت إشعار تجربة</button><button class="btn sm" data-act="toggleAlerts">${S.notify.on===false?"شغّل الإشعارات":"وقّف الإشعارات"}</button></div>`
   :`<p class="sub" style="margin:0">لو حد حاول يسجل حضور من بره المركز يوصلك إشعار على موبايلك حتى لو التطبيق مقفول.</p><button class="btn primary" data-act="setupAlerts">فعّل الإشعارات</button>`}</div>`:""}
-  <div class="panel"><div class="sec-title"><h2>مكان المركز للحضور</h2>${S.geo?.lat?`<span class="chip ${S.geo.required===false?"c-mute":"c-ok"}">${S.geo.required===false?"متوقف":"شغال"}</span>`:""}</div>
+  ${S.role==="owner"?`  <div class="panel"><div class="sec-title"><h2>مكان المركز للحضور</h2>${S.geo?.lat?`<span class="chip ${S.geo.required===false?"c-mute":"c-ok"}">${S.geo.required===false?"متوقف":"شغال"}</span>`:""}</div>
   <p class="sub" style="margin:0">${S.geo?.lat?`متسجل. أي حد يسجل حضوره لازم يكون في حدود ${S.geo.radius||150} متر من المركز.`:"اقف جوه المركز ودوس الزرار، عشان الحضور والانصراف يتسجلوا من جوه المركز بس."}</p>
   <div class="grid2"><label class="f">المسافة المسموحة (متر)<input id="geo_r" inputmode="numeric" value="${S.geo?.radius||150}"></label></div>
-  <div class="bar"><button class="btn primary" data-act="setGeo">${S.geo?.lat?"حدّث مكان المركز من مكاني دلوقتي":"سجّل مكان المركز من مكاني دلوقتي"}</button>${S.geo?.lat?`<button class="btn sm" data-act="toggleGeo">${S.geo.required===false?"شغّل التحقق":"وقّف التحقق"}</button>`:""}</div><p class="err" id="geoSetMsg" style="margin:0"></p></div>
+  <div class="bar"><button class="btn primary" data-act="setGeo">${S.geo?.lat?"حدّث مكان المركز من مكاني دلوقتي":"سجّل مكان المركز من مكاني دلوقتي"}</button>${S.geo?.lat?`<button class="btn sm" data-act="toggleGeo">${S.geo.required===false?"شغّل التحقق":"وقّف التحقق"}</button>`:""}</div><p class="err" id="geoSetMsg" style="margin:0"></p></div>`:""}
   <div class="panel"><div class="sec-title"><h2>الباكدجات</h2><button class="btn sm" data-act="newPackType">+ باكدج</button></div>
   ${(S.packTypes||[]).length?`<div class="list">${S.packTypes.map(t=>`<button class="row" data-act="editPackType" data-id="${t.id}"><span class="t">${esc(t.name)}</span><span class="end money">${money(t.price)}</span><span class="m">${t.sessions} جلسة · الجلسة بـ ${money(t.price/t.sessions)}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش باكدجات</b>مثلاً «باكدج أ» 10 جلسات بـ 4800. بيتباع للمريض من ملفه، وكل جلسة بتتخصم منه.</div>`}</div>
   ${owner?`<div class="panel"><h2>المرتبات والنسب (ليك انت بس)</h2>
@@ -625,67 +637,144 @@ async function saveEntry(id){
 }
 /* ---------- appointments ---------- */
 let entryAppt=null,apptWarned=false;
-const APPT_STATUS={booked:["c-mute","محجوز"],started:["c-acc","شغّال دلوقتي"],done:["c-ok","خلص"],noshow:["c-warn","محضرش"],cancelled:["c-bad","اتلغى"]};
+const APPT_STATUS={booked:["c-mute","محجوز"],arrived:["c-warn","وصل ومستني"],started:["c-acc","جوه الجلسة"],done:["c-ok","خلص"],noshow:["c-warn","محضرش"],cancelled:["c-bad","اتلغى"]};
 function apptChip(a){const [c,l]=APPT_STATUS[a.status]||APPT_STATUS.booked;return `<span class="chip ${c}">${l}</span>`}
-function apptDur(a){const x=mins(a.start),y=mins(a.end);return x!=null&&y!=null&&y>=x?y-x:null}
-function apptTimes(a){if(!a.start)return "";const d=apptDur(a);return `بدأ ${a.start}${a.end?` · خلص ${a.end}${d!=null?` · ${hm(d)}`:""}`:""}`}
-function apptRow(a,forDoctor,showDoc){
-  return `<div class="row" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${a.confirmed?`<span class="chip c-teal">ريهام أكدت</span>`:""}</span>
-  <span class="end bar">${forDoctor?
-    (a.status==="booked"&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:"")
-    :(a.status==="done"&&!a.confirmed?`<button class="btn sm teal" data-act="apptConfirm" data-id="${a.id}">تأكيد</button>`:"")+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`}</span>
-  <span class="m">${[showDoc?staffName(a.doctorSid):"",a.typeName||"",a.note||""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${apptTimes(a)}</span></div>`;
+function apptDocs(a){return (a.doctors&&a.doctors.length?a.doctors:[a.doctorSid]).filter(Boolean)}
+function tsDate(t){return t?(t.toDate?t.toDate():new Date(t)):null}
+function apptDur(a){const s=tsDate(a.startAt),e=tsDate(a.endAt);return s&&e?Math.max(0,Math.round((e-s)/60000)):null}
+function apptElapsed(a){const s=tsDate(a.startAt);return s?Math.max(0,Math.round((Date.now()-s)/60000)):null}
+function apptTimes(a){const p=[];if(a.arrived)p.push(`وصل ${a.arrived}`);
+  if(a.start)p.push(`بدأ ${a.start}${a.startBy?` مع ${staffName(a.startBy)}`:""}`);
+  if(a.end){const d=apptDur(a);p.push(`خلص ${a.end}${a.endBy&&a.endBy!==a.startBy?` (${staffName(a.endBy)})`:""}${d!=null?` · ${hm(d)}`:""}`)}
+  else if(a.status==="started"){const e=apptElapsed(a);if(e!=null)p.push(`شغّال من ${hm(e)}`)}
+  return p.join(" · ")}
+function isDoc(sid){return sid==="owner"||S.staff[sid]?.role==="doctor"}
+function provisionalCredit(a){ // who gets the session until Reham confirms
+  if(!a.startBy)return{mode:"full",a:apptDocs(a)[0]};
+  if(a.endBy&&isDoc(a.endBy)&&a.endBy!==a.startBy)return{mode:"split",a:a.startBy,b:a.endBy};
+  return{mode:"full",a:a.startBy};
+}
+function creditLabel(c){return c.mode==="split"?`نص ونص: ${staffName(c.a)} و${staffName(c.b)}`:`حالة كاملة لـ ${staffName(c.a)}`}
+function sessionInfo(pid,kind,excludeId,date,time){ // "جلسة 4 من 10 · باكدج أ" for packages, "جلسة رقم 7" otherwise
+  if(kind==="exam")return{label:"كشف",packId:null};
+  const pack=activePacks(pid)[0];
+  const before=Object.values(S.appts).filter(x=>x.id!==excludeId&&x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!["cancelled","noshow"].includes(x.status)&&((x.date||"")+(x.time||""))<(date+time)&&(!pack||x.packId===pack.id)).length;
+  if(pack){const n=(pack.used||0)+before+1;return{label:`جلسة ${Math.min(n,pack.sessions)} من ${pack.sessions} · ${packTitle(pack)}`,packId:pack.id}}
+  return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}`,packId:null};
+}
+function apptRow(a,view,showDoc){
+  const doctorBtns=a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"";
+  const adminBtns=(a.status==="booked"&&a.date===today()?`<button class="btn sm" data-act="apptArrive" data-id="${a.id}">وصل</button>`:"")
+    +(a.status==="started"?`<button class="btn sm" data-act="apptFinish" data-id="${a.id}">خلّصها</button>`:"")
+    +(a.status==="done"&&!a.confirmed?`<button class="btn sm teal" data-act="apptConfirm" data-id="${a.id}">تأكيد</button>`:"")
+    +`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
+  const docs=apptDocs(a).map(staffName).join(" + ");
+  const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
+  return `<div class="row" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} <span class="chip c-teal">${esc(a.kindLabel||(a.kind==="exam"?"كشف":"جلسة"))}</span> ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
+  <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
 function vAppts(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
   const list=Object.values(S.appts).filter(a=>a.date===d).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   const active=list.filter(a=>a.status!=="cancelled");
-  const pend=Object.values(S.appts).filter(a=>a.status==="done"&&!a.confirmed).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
-  const byDoc={};active.forEach(a=>(byDoc[a.doctorSid]=byDoc[a.doctorSid]||[]).push(a));
+  const pend=Object.values(S.appts).filter(a=>a.status==="done"&&!a.confirmed).sort((a,b)=>((a.date||"")+(a.time||"")).localeCompare((b.date||"")+(b.time||"")));
+  const byDoc={};active.forEach(a=>{const k=apptDocs(a)[0]||"—";(byDoc[k]=byDoc[k]||[]).push(a)});
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn primary" data-act="newAppt">+ ميعاد</button></div>
-  ${pend.length?`<div class="panel"><div class="sec-title"><h2>مستني تأكيدك</h2><button class="btn sm teal" data-act="apptConfirmAll">أكّد الكل (${pend.length})</button></div><div class="list">${pend.map(a=>apptRow({...a,time:(a.date!==d?a.date+" ":"")+(a.time||"")},false,true)).join("")}</div></div>`:""}
-  <div class="stats"><div class="stat"><div class="k">مواعيد اليوم</div><div class="v num">${active.length}</div></div><div class="stat"><div class="k">خلصت</div><div class="v num">${active.filter(a=>a.status==="done").length}</div></div><div class="stat"><div class="k">محضروش</div><div class="v num">${active.filter(a=>a.status==="noshow").length}</div></div></div>
-  ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} ميعاد</span></h2><div class="list">${arr.map(a=>apptRow(a,false)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش مواعيد اليوم ده</b>اضغط «+ ميعاد» واختار المريض والدكتور والساعة.</div>`}
+  ${pend.length?`<div class="panel"><h2>مستني تأكيدك <span class="sub">${pend.length}</span></h2><div class="list">${pend.map(a=>apptRow({...a,time:(a.date!==d?a.date+" ":"")+(a.time||"")},"admin",true)).join("")}</div></div>`:""}
+  <div class="stats"><div class="stat"><div class="k">مواعيد اليوم</div><div class="v num">${active.length}</div></div><div class="stat"><div class="k">جوه دلوقتي</div><div class="v num">${active.filter(a=>a.status==="started").length}</div></div><div class="stat"><div class="k">خلصت</div><div class="v num">${active.filter(a=>a.status==="done").length}</div></div><div class="stat"><div class="k">محضروش</div><div class="v num">${active.filter(a=>a.status==="noshow").length}</div></div></div>
+  ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} ميعاد</span></h2><div class="list">${arr.map(a=>apptRow(a,"admin",apptDocs(a).length>1)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش مواعيد اليوم ده</b>اضغط «+ ميعاد» واختار المريض والدكتور والساعة.</div>`}
   ${list.length>active.length?`<p class="sub">${list.length-active.length} ميعاد اتلغى.</p>`:""}`;
 }
 function vMyAppts(){
-  const d=S.ui.date;const list=Object.values(S.appts).filter(a=>a.date===d&&a.status!=="cancelled").sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const d=S.ui.date;const list=Object.values(S.appts).filter(a=>a.date===d&&a.status!=="cancelled"&&apptDocs(a).includes(S.mySid)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span></div>
-  <p class="sub" style="margin:0">دوس «بدأت» أول ما الجلسة تبدأ، و«خلصت» لما تخلص. هيفتحلك تسجيل الجلسة جاهز تكمّله.</p>
-  ${list.length?`<div class="list">${list.map(a=>apptRow(a,true)).join("")}</div>`:`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}`;
+  <p class="sub" style="margin:0">دوس «بدأت» أول ما المريض يدخل، و«خلصت» في آخر الجلسة. لو حد تاني من الدكاترة كمّل الجلسة، هو اللي يدوس «خلصت» من عنده.</p>
+  ${list.length?`<div class="list">${list.map(a=>apptRow(a,"doctor",apptDocs(a).length>1)).join("")}</div>`:`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}`;
 }
 function sheetAppt(id){
-  const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked"};if(!a)return;apptWarned=false;
+  const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session"};if(!a)return;apptWarned=false;
   const cur=a.patientId&&S.patients[a.patientId]?pLabel(S.patients[a.patientId]):(a.patientName||"");
+  const docOpts=sel=>[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
+  const ds=apptDocs(a);
   openSheet(id?"تعديل ميعاد":"ميعاد جديد",`
   <label class="f">المريض${patientPicker("ap_pat",cur)}</label>${newPatientFields("ap")}
-  <div class="grid2"><label class="f">الدكتور<select id="ap_doc"><option value="">اختار الدكتور</option>${[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}" ${a.doctorSid===k?"selected":""}>${esc(n)}</option>`).join("")}</select></label>
+  <div class="seg"><label><input type="radio" name="ap_kind" value="exam" ${a.kind==="exam"?"checked":""}> كشف</label><label><input type="radio" name="ap_kind" value="session" ${a.kind!=="exam"?"checked":""}> جلسة</label></div>
+  <div class="note" id="ap_info"></div>
+  <div class="grid2"><label class="f">الدكتور<select id="ap_doc"><option value="">اختار الدكتور</option>${docOpts(ds[0])}</select></label>
+  <label class="f">دكتور تاني (لو الحالة هتتحوّل له)<select id="ap_doc2"><option value="">مفيش</option>${docOpts(ds[1])}</select></label>
   <label class="f">نوع الجلسة<select id="ap_type">${typeOptions(a.typeId)}</select></label>
   <label class="f">اليوم<input type="date" id="ap_date" value="${a.date}"></label><label class="f">الساعة<input type="time" id="ap_time" value="${a.time||""}"></label>
   <label class="f">المدة<select id="ap_dur">${[30,45,60,90,120].map(m=>`<option value="${m}" ${(a.duration||60)===m?"selected":""}>${hm(m)}</option>`).join("")}</select></label></div>
   <label class="f">ملاحظة<input id="ap_note" value="${esc(a.note||"")}"></label>
-  ${id&&a.start?`<div class="note">${apptTimes(a)}${a.confirmed?" · اتأكد":""}</div>`:""}
+  ${id&&(a.start||a.arrived)?`<div class="note">${esc(apptTimes(a))}</div>`:""}
   <div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveAppt" data-id="${id||""}">حفظ</button>
-  ${id&&a.status==="booked"?`<button class="btn" data-act="apptNoShow" data-id="${id}">محضرش</button><button class="btn danger" data-act="apptCancel" data-id="${id}" data-confirm>إلغاء الميعاد</button>`:""}</div>`,
-  ()=>watchNewPatient("ap","ap_pat"));
+  ${id&&["booked","arrived"].includes(a.status)?`<button class="btn" data-act="apptNoShow" data-id="${id}">محضرش</button><button class="btn danger" data-act="apptCancel" data-id="${id}" data-confirm>إلغاء الميعاد</button>`:""}</div>`,
+  ()=>{watchNewPatient("ap","ap_pat");const upd=()=>{const p=findPatient(val("ap_pat"));const el=document.getElementById("ap_info");
+      if(!p){el.textContent=val("ap_pat").trim()?"مريض جديد.":"اختار المريض.";return}
+      const k=radio("ap_kind")||"session";el.textContent=sessionInfo(p.id,k,id,val("ap_date"),val("ap_time")).label+(k==="exam"?"":activePacks(p.id).length?"":" · مفيش باكدج شغال للمريض ده")};
+    ["ap_pat","ap_date","ap_time"].forEach(x=>document.getElementById(x).addEventListener("input",upd));document.querySelectorAll('input[name="ap_kind"]').forEach(x=>x.addEventListener("change",upd));upd()});
 }
 async function saveAppt(id){
-  const pv=val("ap_pat").trim(),doc=val("ap_doc"),date=val("ap_date"),time=val("ap_time"),dur=num(val("ap_dur"))||60;
+  const pv=val("ap_pat").trim(),doc=val("ap_doc"),doc2=val("ap_doc2"),date=val("ap_date"),time=val("ap_time"),dur=num(val("ap_dur"))||60,kind=radio("ap_kind")||"session";
   if(!pv)return setErr("اختار المريض");if(!doc)return setErr("اختار الدكتور");if(!date||!time)return setErr("اختار اليوم والساعة");
-  const s0=mins(time),clash=Object.values(S.appts).find(x=>x.id!==id&&x.doctorSid===doc&&x.date===date&&!["cancelled","noshow"].includes(x.status)&&s0<mins(x.time)+(x.duration||60)&&mins(x.time)<s0+dur);
+  const s0=mins(time),clash=Object.values(S.appts).find(x=>x.id!==id&&apptDocs(x).includes(doc)&&x.date===date&&!["cancelled","noshow","done"].includes(x.status)&&s0<mins(x.time)+(x.duration||60)&&mins(x.time)<s0+dur);
   if(clash&&!apptWarned){apptWarned=true;return setErr(`${staffName(doc)} عنده ميعاد مع ${clash.patientName} الساعة ${clash.time}. لو متأكد دوس حفظ تاني.`)}
   const pat=await ensurePatient(pv,val("ap_phone"),val("ap_src"));const type=val("ap_type");
-  const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,date,time,duration:dur,typeId:type||null,typeName:type?typeName(type):"",note:val("ap_note").trim()};
+  const info=sessionInfo(pat.id,kind,id,date,time);
+  const docsList=[...new Set([doc,doc2].filter(Boolean))];
+  const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:docsList,kind,kindLabel:info.label,packId:info.packId||null,date,time,duration:dur,typeId:type||null,typeName:type?typeName(type):"",note:val("ap_note").trim()};
   if(id){await S.db.doc("appts/"+id).update(body);if(S.old.appts[id]){S.old.appts[id]={...S.old.appts[id],...body};merge()}}
   else await S.db.collection("appts").doc().set({...body,status:"booked",confirmed:false,createdAt:Date.now(),by:S.mySid});
   closeSheet();toast("الميعاد اتحفظ");
 }
-async function apptStart(id){await S.db.doc("appts/"+id).update({startAt:firebase.firestore.FieldValue.serverTimestamp(),status:"started"});toast("اتسجل وقت البداية")}
-function apptEnd(id){const a=S.appts[id];if(!a)return;
-  sheetEntry({patientName:a.patientName,patientId:a.patientId,typeId:a.typeId,date:a.date,time:a.start||a.time},a);
-  const h=document.querySelector(".sheet-h h2");if(h)h.textContent="خلصت الجلسة · سجّلها";}
-async function apptConfirm(ids){const b=S.db.batch();ids.forEach(id=>b.update(S.db.doc("appts/"+id),{confirmed:true,confirmedBy:S.mySid,confirmedAt:Date.now()}));await b.commit();toast(ids.length>1?`اتأكد ${ids.length} ميعاد`:"اتأكد")}
+const TSV=()=>firebase.firestore.FieldValue.serverTimestamp();
+async function apptArrive(id){await S.db.doc("appts/"+id).update({arrivedAt:TSV(),status:"arrived"});toast("اتسجل وصوله")}
+async function apptStart(id){await S.db.doc("appts/"+id).update({startAt:TSV(),startBy:S.mySid,status:"started"});toast("العدّاد اشتغل")}
+async function apptFinishByDesk(id){await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done"});toast("اتسجل إنها خلصت")}
+function apptEnd(id){ // doctor finishing: optional comment + photos, then stamp the end time
+  const a=S.appts[id];if(!a)return;entryAppt=a;
+  openSheet("خلصت الجلسة",`<div class="note">${esc(a.patientName)} · ${esc(a.kindLabel||"")}${a.start?` · بدأت ${esc(a.start)}${a.startBy&&a.startBy!==S.mySid?` مع ${esc(staffName(a.startBy))}`:""}`:""}</div>
+  <label class="f">كومنت (اختياري)<textarea id="e_note" placeholder="مثلاً الحالة اتحسنت، أو كملت الجلسة بدل د. سلمى"></textarea></label>
+  <div class="sec-title"><span class="sub">صور (لحد ${MEDIA_MAX})</span><label class="btn sm">+ صورة<input type="file" id="e_file" accept="image/*" multiple hidden></label></div>
+  <div class="photos" id="e_media"></div><div class="err" id="formErr"></div>
+  <button class="btn primary" data-act="saveApptEnd" data-id="${id}">سجّل إنها خلصت</button>`,
+  ()=>{entryMedia=[];drawEntryMedia(false);const f=document.getElementById("e_file");f.addEventListener("change",()=>addEntryMedia(f))});
+}
+async function saveApptEnd(id){
+  await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done",docNote:val("e_note").trim(),media:entryMedia.slice(0,MEDIA_MAX)});
+  entryAppt=null;closeSheet();toast("اتسجلت. ريهام هتأكدها.");
+}
+function sheetApptConfirm(id){
+  const a=S.appts[id];if(!a)return;const p=S.patients[a.patientId];const prov=provisionalCredit(a);
+  const involved=[...new Set([a.startBy,a.endBy,...apptDocs(a)].filter(x=>x&&isDoc(x)))];
+  const opts=[...involved.map(s=>({v:`full:${s}`,l:`حالة كاملة لـ ${staffName(s)}`}))];
+  if(involved.length>=2){const x=prov.mode==="split"?[prov.a,prov.b]:involved.slice(0,2);opts.push({v:`split:${x[0]}:${x[1]}`,l:`نص ونص: ${staffName(x[0])} و${staffName(x[1])}`})}
+  const def=prov.mode==="split"?`split:${prov.a}:${prov.b}`:`full:${prov.a}`;
+  const price=S.prices[a.typeId];
+  openSheet("تأكيد الجلسة",`
+  <div class="note"><b>${esc(a.patientName)}</b> · ${esc(a.kindLabel||"")}<br>${esc(apptTimes(a))}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
+  <div class="seg">${opts.map(o=>`<label><input type="radio" name="c_credit" value="${o.v}" ${o.v===def?"checked":""}> ${esc(o.l)}</label>`).join("")}</div>
+  <label class="f">نوع الجلسة<select id="c_type">${typeOptions(a.typeId)}</select></label>
+  <input type="hidden" id="c_pat" value="${esc(p?pLabel(p):a.patientName)}">
+  ${moneyFields("c",{price:price??"",paid:price??"",method:"cash"})}
+  <div class="err" id="formErr"></div>
+  <button class="btn primary" data-act="saveApptConfirm" data-id="${id}">تأكيد وتسجيل الجلسة</button>`,
+  ()=>{wireMoney("c","c_type");wirePack("c",a.kind==="exam"?{packId:null}:null)});
+}
+async function saveApptConfirm(id){
+  const a=S.appts[id];if(!a)return;const cv=radio("c_credit")||"";const [mode,x,y]=cv.split(":");
+  if(!x)return setErr("اختار الحالة تتحسب لمين");const type=val("c_type");if(!type)return setErr("اختار نوع الجلسة");
+  const mny=readMoney("c");const me=moneyError(mny);if(me)return setErr(me);
+  const credit=mode==="split"?{mode:"split",a:x,b:y}:{mode:"full",a:x};
+  const v={date:a.date,time:a.start||a.time,patientId:a.patientId,patientName:a.patientName,doctorId:credit.a,doctor2Id:credit.b||null,completion:credit.mode==="split"?"half":"full",typeId:type,typeName:typeName(type),...mny,apptId:id,createdAt:Date.now(),by:S.mySid};
+  const b=S.db.batch(),acc={};
+  b.set(S.db.doc("visits/"+id),v);visitEffect(acc,v,1);flushPatients(b,acc);
+  (a.media||[]).forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));
+  b.update(S.db.doc("appts/"+id),{confirmed:true,confirmedBy:S.mySid,confirmedAt:Date.now(),visitId:id,credit});
+  await b.commit();closeSheet();toast("اتأكدت واتسجلت الجلسة");
+}
 /* ---------- review ---------- */
 function sheetReview(id,done){
   const e=S.log[id];if(!e)return;
@@ -1096,15 +1185,18 @@ document.addEventListener("change",e=>{
   const id=e.target.id;
   if(id==="dayPick"&&e.target.value){S.ui.date=e.target.value;e.target.blur();render()}
   if(id==="attPick"&&e.target.value){S.ui.attDate=e.target.value;e.target.blur();render()}
+  if(id==="repPick"&&e.target.value){S.ui.repDay=e.target.value;e.target.blur();render()}
   if(id==="monthPick"&&e.target.value){S.ui.month=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const ADMIN_ACTS=new Set(["newAppt","editAppt","saveAppt","apptConfirm","apptConfirmAll","apptNoShow","apptCancel","setGeo","toggleGeo","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","editAtt","saveAtt","delAtt","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","editAtt","saveAtt","delAtt","saveCfg","backup","setupAlerts","toggleAlerts","testAlert"]);
+const ADMIN_ACTS=new Set(["newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
   if(a==="srcScope")return;
   if(ADMIN_ACTS.has(a)&&!isAdmin())return;
+  if(OWNER_ACTS.has(a)&&S.role!=="owner")return;
   if((a==="saveCfg"||a==="backup")&&S.role!=="owner")return;
   if(t.hasAttribute("data-confirm")&&!t.dataset.armed){t.dataset.armed="1";t.dataset.label=t.textContent;t.textContent="متأكد؟ اضغط تاني";setTimeout(()=>{if(t.isConnected){delete t.dataset.armed;t.textContent=t.dataset.label}},4000);return}
   const db=S.db;
@@ -1120,8 +1212,12 @@ document.addEventListener("click",async e=>{
     case "newAppt":sheetAppt(null);break;
     case "editAppt":sheetAppt(id);break;
     case "saveAppt":guard(t,()=>saveAppt(id));break;
-    case "apptConfirm":guard(t,()=>apptConfirm([id]));break;
-    case "apptConfirmAll":guard(t,()=>apptConfirm(Object.values(S.appts).filter(a=>a.status==="done"&&!a.confirmed).map(a=>a.id)));break;
+    case "apptConfirm":sheetApptConfirm(id);break;
+    case "saveApptConfirm":guard(t,()=>saveApptConfirm(id));break;
+    case "apptArrive":guard(t,()=>apptArrive(id));break;
+    case "apptFinish":guard(t,()=>apptFinishByDesk(id));break;
+    case "saveApptEnd":guard(t,()=>saveApptEnd(id));break;
+    case "repDay":S.ui.repDay=addDays(S.ui.repDay||today(),Number(t.dataset.n));render();break;
     case "apptNoShow":guard(t,async()=>{await db.doc("appts/"+id).update({status:"noshow"});closeSheet();toast("اتسجل إنه محضرش")});break;
     case "apptCancel":guard(t,async()=>{await db.doc("appts/"+id).update({status:"cancelled"});closeSheet();toast("الميعاد اتلغى")});break;
     case "apptStart":guard(t,()=>apptStart(id));break;
@@ -1198,4 +1294,5 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.querySelector(".sheet"))closeSheet()});
 if("serviceWorker" in navigator&&location.protocol==="https:")window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+setInterval(()=>{if(["appts","myappts"].includes(S.tab)&&Object.values(S.appts).some(a=>a.status==="started"))sched()},60000); // keeps "in session for N min" fresh
 boot();

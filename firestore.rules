@@ -52,7 +52,7 @@ service cloud.firestore {
 
     // ---- shared with every active staff member ----
     match /staff/{sid}  { allow read: if isStaff(); allow write: if isAdmin(); }
-    match /pub/{doc}    { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /pub/{doc}    { allow read: if isStaff(); allow write: if isOwner() || (isAdmin() && doc == 'types'); }
     match /pdir/{pid}   { allow read: if isStaff(); allow write: if isAdmin(); }
 
     // ---- owner + Reham only ----
@@ -81,35 +81,36 @@ service cloud.firestore {
         || (isStaff() && resource.data.doctorSid == mySid() && resource.data.status == 'pending');
     }
 
-    // ---- appointments: Reham books; the doctor only stamps start / end (server clock) ----
+    // ---- appointments: Reham books and confirms; doctors on the appointment stamp start / finish (server clock) ----
     function apptDoctorUpdate() {
       let ch = request.resource.data.diff(resource.data).affectedKeys();
-      return isStaff() && resource.data.doctorSid == mySid()
-        && ch.hasOnly(['startAt', 'endAt', 'status', 'logId'])
-        && (!ch.hasAny(['startAt']) || request.resource.data.startAt == request.time)
-        && (!ch.hasAny(['endAt']) || request.resource.data.endAt == request.time);
+      return isStaff() && mySid() in resource.data.doctors
+        && resource.data.get('confirmed', false) == false
+        && ch.hasOnly(['startAt', 'startBy', 'endAt', 'endBy', 'status', 'docNote', 'media'])
+        && (!ch.hasAny(['startAt']) || (request.resource.data.startAt == request.time && request.resource.data.startBy == mySid()))
+        && (!ch.hasAny(['endAt']) || (request.resource.data.endAt == request.time && request.resource.data.endBy == mySid()));
     }
     match /appts/{id} {
-      allow read: if isAdmin() || (isStaff() && resource.data.doctorSid == mySid());
+      allow read: if isAdmin() || (isStaff() && mySid() in resource.data.doctors);
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || apptDoctorUpdate();
     }
 
-    // ---- attendance: staff check themselves in/out with the server clock ----
+    // ---- attendance: everyone checks themselves in/out (server clock); only the owner sees or edits others ----
     match /att/{id} {
-      allow read: if isAdmin() || (isStaff() && resource.data.staffId == mySid());
-      allow create: if isAdmin()
+      allow read: if isOwner() || (isStaff() && resource.data.staffId == mySid());
+      allow create: if isOwner()
         || (isStaff() && request.resource.data.staffId == mySid()
             && id == request.resource.data.date + '_' + mySid()
             && request.resource.data.inAt == request.time
             && request.resource.data.out == ''
             && request.resource.data.keys().hasOnly(['date', 'staffId', 'inAt', 'in', 'out', 'note', 'by', 'inLoc']));
-      allow update: if isAdmin()
+      allow update: if isOwner()
         || (isStaff() && resource.data.staffId == mySid()
             && !('outAt' in resource.data)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt', 'outLoc'])
             && request.resource.data.outAt == request.time);
-      allow delete: if isAdmin();
+      allow delete: if isOwner();
     }
   }
 }
