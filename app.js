@@ -10,6 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
+const APP_VERSION="25 أكتوبر · 8";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -184,7 +185,7 @@ function vLogin(){
   <label class="f">اسم المستخدم<input id="l_user" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
   <label class="f">الباسورد<input id="l_pw" type="password" autocomplete="current-password"></label>
   <div class="err" id="loginErr"></div><button class="btn primary" type="submit">دخول</button>
-  <button class="btn ghost sm" type="button" data-act="forgotPw">نسيت الباسورد؟</button></form>`;
+  <button class="btn ghost sm" type="button" data-act="forgotPw">نسيت الباسورد؟</button><p class="sub" style="margin:0;text-align:center">إصدار ${APP_VERSION}</p></form>`;
 }
 async function forgotPw(){
   const err=document.getElementById("loginErr");const u=normUser(val("l_user"));
@@ -212,7 +213,8 @@ function sheetAccount(forced){
   ${forced?"":`<label class="f">الباسورد الحالي<input id="ac_old" type="password" autocomplete="current-password"></label>`}
   <label class="f">الباسورد الجديد ${forced?"":"<span class='sub'>(سيبه فاضي لو مش هتغيره)</span>"}<input id="ac_new" type="password" autocomplete="new-password"></label>
   <label class="f">اكتب الباسورد الجديد تاني<input id="ac_new2" type="password" autocomplete="new-password"></label>
-  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveAccount" data-forced="${forced?1:""}">حفظ</button>`);
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveAccount" data-forced="${forced?1:""}">حفظ</button>
+  ${forced?"":`<div class="hr"></div><div class="bar"><span class="sub grow">إصدار التطبيق: ${APP_VERSION}</span><button class="btn sm" data-act="forceUpdate">حدّث التطبيق</button></div>`}`);
 }
 async function saveAccount(forced){
   const u=S.auth.currentUser;if(!u)return;
@@ -1016,6 +1018,7 @@ document.addEventListener("click",async e=>{
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
+    case "forceUpdate":(async()=>{try{const rs=await navigator.serviceWorker?.getRegistrations?.()||[];await Promise.all(rs.map(r=>r.unregister()));const ks=await caches?.keys?.()||[];await Promise.all(ks.map(k=>caches.delete(k)))}catch(e){}location.reload()})();break;
     case "rmMedia":entryMedia.splice(Number(t.dataset.i),1);drawEntryMedia(false);break;
     case "setGeo":guard(t,async()=>{const m=document.getElementById("geoSetMsg");m.style.color="";m.textContent="بيحدد المكان…";
       let p;try{p=await getPos()}catch(e){m.style.color="var(--bad)";m.textContent=geoError(e);return}
