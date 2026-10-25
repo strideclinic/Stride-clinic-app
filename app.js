@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 أكتوبر · 14";
+const APP_VERSION="25 أكتوبر · 15";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -40,6 +40,16 @@ function patientsSorted(){return Object.values(S.patients).sort((a,b)=>(a.name||
 function doctors(){return Object.values(S.staff).filter(s=>s.role==="doctor"&&s.active!==false).sort((a,b)=>(a.order||0)-(b.order||0))}
 function activeStaff(){return Object.values(S.staff).filter(s=>s.active!==false).sort((a,b)=>(a.order||0)-(b.order||0))}
 function typeName(id){return S.types.find(t=>t.id===id)?.name||"—"}
+function isSepType(id){return !!(id&&S.types.find(t=>t.id===id)?.sep)}
+function sepNames(){return S.types.filter(t=>t.sep).map(t=>t.name).join(" و")}
+function packOf(pid,kid){return kid?(S.patients[pid]?.packs||[]).find(k=>k.id===kid):null}
+function visitSep(v){return isSepType(v.packId?(packOf(v.patientId,v.packId)?.typeId||v.typeId):v.typeId)} // money of a separate-account type stays out of clinic revenue
+function paySep(p){return !!(p.packId&&isSepType(packOf(p.patientId,p.packId)?.typeId))}
+function dayMoney(test){ // clinic vs separate-account money for visits + payments whose date passes test
+  const o={cash:0,insta:0,sepCash:0,sepInsta:0};const add=(sep,method,x)=>{if(!x)return;const ins=method==="instapay";if(sep)o[ins?"sepInsta":"sepCash"]+=x;else o[ins?"insta":"cash"]+=x};
+  for(const v of Object.values(S.visits))if(test(v.date||""))add(visitSep(v),v.method,v.paid||0);
+  for(const p of Object.values(S.payments))if(p.kind!=="discount"&&test(p.date||""))add(paySep(p),p.method,p.amount||0);
+  o.clinic=o.cash+o.insta;o.sep=o.sepCash+o.sepInsta;return o}
 function normUser(u){return nd(u||"").trim().toLowerCase()}
 function randPw(){const a=new Uint32Array(1);crypto.getRandomValues(a);return String(100000+a[0]%900000)}
 function randId(){const a=new Uint8Array(6);crypto.getRandomValues(a);return [...a].map(b=>b.toString(16).padStart(2,"0")).join("")}
@@ -280,12 +290,12 @@ function payroll(month){
   });
 }
 function revenue(month){
-  let cash=0,insta=0,charged=0,visitPaid=0,sessions=0;
-  for(const v of Object.values(S.visits))if((v.date||"").startsWith(month)){sessions++;charged+=v.net||0;visitPaid+=v.paid||0;v.method==="instapay"?insta+=v.paid||0:cash+=v.paid||0}
-  for(const p of Object.values(S.payments))if(p.kind!=="discount"&&(p.date||"").startsWith(month)){p.method==="instapay"?insta+=p.amount||0:cash+=p.amount||0}
-  for(const pt of Object.values(S.patients))for(const k of pt.packs||[])if((k.date||"").startsWith(month))charged+=k.price||0;
+  let charged=0,sessions=0,sepSessions=0;
+  for(const v of Object.values(S.visits))if((v.date||"").startsWith(month)){if(visitSep(v)){sepSessions++;continue}sessions++;charged+=v.net||0}
+  for(const pt of Object.values(S.patients))for(const k of pt.packs||[])if((k.date||"").startsWith(month)&&!isSepType(k.typeId))charged+=k.price||0;
+  const mo=dayMoney(d=>d.startsWith(month));
   const unpaid=Object.values(S.patients).reduce((s,p)=>s+Math.max(0,(p.charged||0)-(p.paid||0)),0);
-  return{cash,insta,collected:cash+insta,charged,sessions,unpaid};
+  return{cash:mo.cash,insta:mo.insta,collected:mo.clinic,charged,sessions,unpaid,sep:mo.sep,sepCash:mo.sepCash,sepInsta:mo.sepInsta,sepSessions};
 }
 function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)){o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}return{o,t}}
 function dayNav(act,pickId,d){return `<button class="btn sm" data-act="${act}" data-n="-1">اليوم اللي قبله</button><input type="date" id="${pickId}" value="${d}" style="max-width:170px" aria-label="اليوم"><button class="btn sm" data-act="${act}" data-n="1">اللي بعده</button>`}
@@ -430,16 +440,16 @@ function vReports(){
   const top=`<div class="bar"><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span></div>${loadingNote}`;
   if(!owner){
     const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
-    let cash=0,insta=0;for(const v of Object.values(S.visits))if(v.date===d)v.method==="instapay"?insta+=v.paid||0:cash+=v.paid||0;
-    for(const p of Object.values(S.payments))if(p.date===d&&p.kind!=="discount")p.method==="instapay"?insta+=p.amount||0:cash+=p.amount||0;
+    const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta;
     const dayExp=Object.values(S.expenses).filter(x=>x.date===d);const out=dayExp.reduce((t,x)=>t+(x.amount||0),0);
     return `<div class="bar">${dayNav("repDay","repPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span></div>
   <div class="stats">
-    <div class="stat"><div class="k">دخل اليوم</div><div class="v money">${money(cash+insta)}</div></div>
+    <div class="stat"><div class="k">دخل اليوم للمركز</div><div class="v money">${money(cash+insta)}</div></div>
     <div class="stat"><div class="k">منهم كاش</div><div class="v money">${money(cash)}</div></div>
     <div class="stat"><div class="k">منهم InstaPay</div><div class="v money">${money(insta)}</div></div>
     <div class="stat"><div class="k">خرج اليوم</div><div class="v money" style="color:${out?"var(--bad)":"inherit"}">${money(out)}</div></div>
   </div>
+  ${sepNames()?`<div class="stats"><div class="stat"><div class="k">${esc(sepNames())} (حساب منفصل)</div><div class="v money">${money(dm.sep)}</div><div class="sub">كاش ${money(dm.sepCash)} · InstaPay ${money(dm.sepInsta)}</div></div></div>`:""}
   ${dayExp.length?`<div class="list">${dayExp.map(x=>`<button class="row" data-act="editExp" data-id="${x.id}"><span class="t">${esc(x.category)}</span><span class="end money">${money(x.amount)}</span><span class="m">${esc(x.note||"")}</span><span></span></button>`).join("")}</div>`:""}
   <div class="bar"><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="شهر المصروفات"><span class="sub grow">مصروفات ${esc(monthLabel(m))}</span></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
@@ -456,11 +466,13 @@ function vReports(){
   else{vcls="c-bad";vt="المصروفات عالية الشهر ده";vs=`المصروفات ${Math.round(ratio*100)}% من الإيراد${net<0?"، والشهر خسران "+money(-net):""}.`}
   return `${top}<p class="sub" style="margin:0">المرتبات وتحليل المصروفات بيظهروا لك انت بس.</p>
   <div class="stats">
-    <div class="stat"><div class="k">اتحصّل فعلاً</div><div class="v money">${money(rv.collected)}</div></div>
+    <div class="stat"><div class="k">اتحصّل للمركز</div><div class="v money">${money(rv.collected)}</div></div>
     <div class="stat"><div class="k">مرتبات وأوفر تايم ونسب</div><div class="v money">${money(salTotal)}</div></div>
     <div class="stat"><div class="k">مصروفات تانية</div><div class="v money">${money(ex.t)}</div></div>
     <div class="stat"><div class="k">صافي الشهر</div><div class="v money" style="color:${net<0?"var(--bad)":"var(--ok)"}">${money(net)}</div></div>
   </div>
+  ${sepNames()||rv.sep?`<div class="panel"><div class="sec-title"><h2>حساب ${esc(sepNames()||"منفصل")}</h2><span class="chip c-acc">${money(rv.sep)}</span></div>
+  <p class="sub" style="margin:0">اتحصّل ${money(rv.sep)} (كاش ${money(rv.sepCash)} · InstaPay ${money(rv.sepInsta)}) من ${rv.sepSessions} جلسة. الفلوس دي مش داخلة في إيراد المركز ولا في صافي الشهر.</p></div>`:""}
   <div class="verdict ${vcls}"><b style="font-family:var(--f-display)">${vt}</b><span>${vs}</span></div>
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><h2>المرتبات</h2>
@@ -484,7 +496,7 @@ function vSettings(){
   <p class="sub" style="margin:0">كل واحد يقدر يغيّر اسم المستخدم والباسورد بتوعه من «حسابي». لو حد نسي الباسورد اضغط «باسورد جديد» وهيطلعلك باسورد مؤقت تديهوله.</p></div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   <p class="sub" style="margin:0">أسماء بس من غير فلوس. الفلوس كلها في الباكدجات تحت، وكل باكدج تابع لنوع جلسة.</p>
-  ${S.types.length?`<div class="list">${S.types.map(t=>{const n=(S.packTypes||[]).filter(k=>k.typeId===t.id).length;return `<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)}</span><span class="end sub">${n?`${n} باكدج`:"مفيش باكدجات"}</span></button>`}).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: علاج طبيعي، تيكار، ليمفيديما. الدكاترة بيشوفوا الأسماء بس.</div>`}</div>
+  ${S.types.length?`<div class="list">${S.types.map(t=>{const n=(S.packTypes||[]).filter(k=>k.typeId===t.id).length;return `<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)} ${t.sep?`<span class="chip c-acc">حساب منفصل</span>`:""}</span><span class="end sub">${n?`${n} باكدج`:"مفيش باكدجات"}</span></button>`}).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: علاج طبيعي، تيكار، ليمفيديما. الدكاترة بيشوفوا الأسماء بس.</div>`}</div>
   ${S.role==="owner"?`<div class="panel"><div class="sec-title"><h2>صلاحية مؤقتة لريهام</h2>${backfillOn()?`<span class="chip c-acc">شغالة</span>`:""}</div>
   ${backfillOn()?`<p class="sub" style="margin:0">ريهام تقدر تسجل حضور وانصراف الفريق من ${esc(S.backfill.from)} لحد ${esc(S.backfill.to)}، والصلاحية بتقفل لوحدها ${tsDate(S.backfill.until).toLocaleString("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",hour:"numeric",minute:"2-digit"})}.</p><button class="btn danger" data-act="stopBackfill">اقفلها دلوقتي</button>`
   :`<p class="sub" style="margin:0">عشان ريهام تسجل الحضور والانصراف القديم من غير GPS. الجلسات القديمة بتسجلها عادي من «الجلسات والفلوس».</p>
@@ -825,10 +837,8 @@ function vSessions(){
   const appts=Object.values(S.appts).filter(a=>a.date===d).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   const loose=Object.values(S.visits).filter(v=>v.date===d&&!(v.apptId&&S.appts[v.apptId])).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   const ps=Object.values(S.payments).filter(p=>p.date===d);
-  let cash=0,insta=0,remain=0;
-  Object.values(S.visits).filter(v=>v.date===d).forEach(v=>{v.method==="instapay"?insta+=v.paid||0:cash+=v.paid||0});
+  let remain=0;const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta;
   new Set([...appts.filter(a=>!["noshow","cancelled"].includes(a.status)).map(a=>a.patientId),...loose.map(v=>v.patientId)]).forEach(pid=>{const p=S.patients[pid];if(p)remain+=Math.max(0,(p.charged||0)-(p.paid||0))});
-  ps.forEach(p=>{if(p.kind==="discount")return;p.method==="instapay"?insta+=p.amount||0:cash+=p.amount||0});
   const came=appts.filter(a=>["arrived","started","done"].includes(a.status)).length+loose.length;
   const missing=Object.values(S.appts).filter(needsRecord);
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn" data-act="newPay">+ دفعة</button><button class="btn primary" data-act="newWalkin">+ جلسة من غير ميعاد</button></div>
@@ -836,7 +846,8 @@ function vSessions(){
   <div class="stats">
     <div class="stat"><div class="k">جم النهارده</div><div class="v num">${came}</div></div>
     <div class="stat"><div class="k">محضروش / كنسلوا</div><div class="v num">${appts.filter(a=>["noshow","cancelled"].includes(a.status)).length}</div></div>
-    <div class="stat"><div class="k">اتحصّل (كاش · InstaPay)</div><div class="v money">${money(cash+insta)}</div><div class="sub">${money(cash)} · ${money(insta)}</div></div>
+    <div class="stat"><div class="k">اتحصّل للمركز (كاش · InstaPay)</div><div class="v money">${money(cash+insta)}</div><div class="sub">${money(cash)} · ${money(insta)}</div></div>
+    ${sepNames()?`<div class="stat"><div class="k">${esc(sepNames())} (حساب منفصل)</div><div class="v money">${money(dm.sep)}</div><div class="sub">${money(dm.sepCash)} · ${money(dm.sepInsta)}</div></div>`:""}
     <div class="stat"><div class="k">لسه على اللي جم (حسابهم كله)</div><div class="v money" style="color:${remain?"var(--bad)":"inherit"}">${money(remain)}</div></div>
   </div>
   ${appts.length||loose.length?`<div class="list">${appts.map(sessionRow).join("")}${loose.map(v=>`<button class="row" data-act="editVisit" data-id="${v.id}"><span class="t">${esc(v.time||"")} · ${esc(v.patientName)} ${v.completion==="half"&&!v.doctor2Id?`<span class="chip c-warn">نص</span>`:""}</span><span class="end">${v.packId?`<span class="chip c-teal">من الباكدج</span>`:(v.net||0)-(v.paid||0)>0?`<span class="chip c-bad">عليه ${money((v.net||0)-(v.paid||0))}</span>`:`<span class="chip c-ok">مدفوعة</span>`}</span><span class="m">${esc(visitDocs(v))} · ${esc(v.typeName||"")}</span><span></span></button>`).join("")}</div>`
@@ -1328,7 +1339,7 @@ function showTempPw(name,user,pw){
 }
 function sheetType(id){
   const t=id?S.types.find(x=>x.id===id):{};
-  openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label><p class="sub" style="margin:0">من غير سعر. السعر بيتحدد في الباكدج، أو بيتكتب يدوي لو جلسة منفردة.</p><div class="err" id="formErr"></div>
+  openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label>${S.role==="owner"?`<div class="seg"><label><input type="checkbox" id="t_sep" ${t?.sep?"checked":""}> فلوسه حساب منفصل (مش من إيراد المركز)</label></div>`:""}<p class="sub" style="margin:0">من غير سعر. السعر بيتحدد في الباكدج، أو بيتكتب يدوي لو جلسة منفردة.</p><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveType" data-id="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delType" data-id="${id}" data-confirm>حذف</button>`:""}</div>`);
 }
 /* ---------- backup (owner) ---------- */
@@ -1461,7 +1472,7 @@ document.addEventListener("click",async e=>{
     case "delPackType":guard(t,async()=>{await db.doc("cfg/prices").set({packs:(S.packTypes||[]).filter(x=>x.id!==id)},{merge:true});closeSheet()});break;
     case "newType":sheetType(null);break;
     case "editType":sheetType(id);break;
-    case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
+    case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const sepEl=document.getElementById("t_sep");const sep=sepEl?sepEl.checked:!!S.types.find(x=>x.id===id)?.sep;const list=id?S.types.map(x=>x.id===id?{...x,name,sep}:x):[...S.types,{id:tid,name,sep}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
     case "saveCfg":guard(t,async()=>{const salary={},commission={};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)}});await db.doc("priv/config").set({salary,commission,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
