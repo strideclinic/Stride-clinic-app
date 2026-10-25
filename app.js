@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 20";
+const APP_VERSION="26 أكتوبر · 21";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -777,18 +777,30 @@ function sessionInfo(pid,kind,excludeId,date,time,typeId){ // "جلسة 4 من 1
   if(pack){const n=(pack.used||0)+before+1;return{label:`جلسة ${Math.min(n,pack.sessions)} من ${pack.sessions} · ${packTitle(pack)}`,packId:pack.id}}
   return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} منفردة`:""}`,packId:null};
 }
+function kindOf(a){ // the session's number is worked out live from the patient's current packages until the session is recorded
+  if(a.kind==="exam")return "كشف";
+  if(!isAdmin()||!S.patients[a.patientId]||S.visits[a.id]||a.confirmed||["cancelled","noshow"].includes(a.status))return a.kindLabel||"جلسة";
+  return sessionInfo(a.patientId,a.kind,a.id,a.date,a.time||"",a.typeId).label}
+const labelSyncing=new Set();
+function syncLabels(list){ // write the live session number back to the booking, so the doctor's screen shows it too
+  if(!isAdmin())return;for(const a of list){if(a.kind==="exam"||labelSyncing.has(a.id))continue;const l=kindOf(a);
+    if(l&&l!==a.kindLabel&&!S.visits[a.id]&&!a.confirmed){labelSyncing.add(a.id);const pk=packsFor(a.patientId,a.typeId)[0];
+      S.db.doc("appts/"+a.id).update({kindLabel:l,packId:pk?.id||null}).catch(()=>{}).finally(()=>setTimeout(()=>labelSyncing.delete(a.id),5000))}}}
+function packMismatch(a){ // has packages, but none of this session's type
+  if(a.kind==="exam"||!isAdmin()||S.visits[a.id]||!a.typeId)return "";const all=activePacks(a.patientId);if(!all.length||packsFor(a.patientId,a.typeId).length)return "";
+  return `<span class="chip c-warn">معاه ${esc(all.map(k=>k.typeId?typeName(k.typeId):packTitle(k)).join(" و"))} بس، ونوع الجلسة ${esc(typeName(a.typeId))}</span>`}
 function apptRow(a,view,showDoc){
   const doctorBtns=a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"";
   const adminBtns=`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} <span class="chip c-teal">${esc(a.kindLabel||(a.kind==="exam"?"كشف":"جلسة"))}</span> ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
 function vAppts(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
-  const list=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const list=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(list),0);
   const active=list.filter(a=>a.status!=="cancelled");
   const byDoc={};active.forEach(a=>{const k=apptDocs(a)[0]||"—";(byDoc[k]=byDoc[k]||[]).push(a)});
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn primary" data-act="newAppt">+ حجز</button></div>
@@ -866,7 +878,7 @@ function sheetApptConfirm(id){
   const def=prov.mode==="split"?`split:${prov.a}:${prov.b}`:`full:${prov.a}`;
   const price=S.prices[a.typeId];
   openSheet("تأكيد الجلسة",`
-  <div class="note"><b>${esc(a.patientName)}</b> · ${esc(a.kindLabel||"")}<br>${esc(apptTimes(a))}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
+  <div class="note"><b>${esc(a.patientName)}</b> · ${esc(kindOf(a))}<br>${esc(apptTimes(a))}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
   <div class="seg">${opts.map(o=>`<label><input type="radio" name="c_credit" value="${o.v}" ${o.v===def?"checked":""}> ${esc(o.l)}</label>`).join("")}</div>
   <label class="f">نوع الجلسة<select id="c_type">${typeOptions(a.typeId)}</select></label>
   <input type="hidden" id="c_pat" value="${esc(p?pLabel(p):a.patientName)}">
@@ -903,11 +915,11 @@ function sessionRow(a){
     +`<button class="btn sm ${needsRecord(a)?"teal":""}" data-act="openSession" data-id="${a.id}">${needsRecord(a)?"أكّد":"فتح"}</button>`;
   return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${lateChip(a)} ${payChip(a)}</span>
   <span class="end bar">${quick}</span>
-  <span class="m">${[a.kindLabel||"",docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
+  <span class="m">${packMismatch(a)} ${[kindOf(a),docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
 function vSessions(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
-  const appts=Object.values(S.appts).filter(a=>a.date===d).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const appts=Object.values(S.appts).filter(a=>a.date===d).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(appts),0);
   const loose=Object.values(S.visits).filter(v=>v.date===d&&!(v.apptId&&S.appts[v.apptId])).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   const ps=Object.values(S.payments).filter(p=>p.date===d);
   let remain=0;const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta;
@@ -934,7 +946,7 @@ function sheetSession(id){
   const docOpts=sel=>workerOpts().map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
   const price=S.prices[v?.typeId||a.typeId];
   openSheet(`${a.patientName}`,`
-  <div class="note">${esc(a.kindLabel||"")} · ميعاده ${esc(a.date)} ${esc(a.time||"")} ${lateChip(a)}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
+  <div class="note">${esc(kindOf(a))} · ميعاده ${esc(a.date)} ${esc(a.time||"")} ${lateChip(a)}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
   <label class="f">الحالة<select id="s_status">${SESS_STATUS.map(([k,l])=>`<option value="${k}" ${a.status===k?"selected":""}>${l}</option>`).join("")}</select></label>
   <label class="f" id="s_cancelbox" hidden>سبب الإلغاء<select id="s_creason">${["المريض لغى","المركز لغى","اتأجل لميعاد تاني"].map(r=>`<option ${a.cancelReason===r?"selected":""}>${r}</option>`).join("")}</select></label>
   <div id="s_body" style="display:grid;gap:12px">
@@ -972,7 +984,7 @@ async function saveSession(id){
     const mny=readMoney("s");const me=moneyError(mny);if(me)return setErr(me);
     const vis={date:a.date,time:val("s_start")||a.time,patientId:a.patientId,patientName:a.patientName,doctorId:doc1,doctor2Id:doc2||null,completion:doc2?"half":val("s_comp"),typeId:type,typeName:typeName(type),...mny,apptId:id,by:S.mySid};
     addPackPay(b,acc,{id:a.patientId,name:a.patientName},vis,a.date);
-    const lbl=a.kind==="exam"?null:sessionInfo(a.patientId,a.kind,id,a.date,a.time,type);if(lbl&&vis.packId!==(old?.packId||null)){const pk=(S.patients[a.patientId]?.packs||[]).find(k=>k.id===vis.packId);upd.kindLabel=pk?`جلسة ${Math.min((pk.used||0)+1,pk.sessions)} من ${pk.sessions} · ${packTitle(pk)}`:lbl.label;upd.packId=vis.packId||null}
+    const lbl=a.kind==="exam"?null:sessionInfo(a.patientId,a.kind,id,a.date,a.time,type);if(lbl&&(!old||vis.packId!==(old.packId||null))){const pk=(S.patients[a.patientId]?.packs||[]).find(k=>k.id===vis.packId);upd.kindLabel=pk?`جلسة ${Math.min((pk.used||0)+1,pk.sessions)} من ${pk.sessions} · ${packTitle(pk)}`:lbl.label;upd.packId=vis.packId||null}
     upd.typeId=type;upd.typeName=typeName(type);
     if(old)b.update(S.db.doc("visits/"+id),vis);else b.set(S.db.doc("visits/"+id),{...vis,createdAt:Date.now()});
     visitEffect(acc,old,-1);visitEffect(acc,vis,1);flushPatients(b,acc);
@@ -983,7 +995,7 @@ async function saveSession(id){
 }
 async function quickArrive(id){await S.db.doc("appts/"+id).update({status:"arrived",arrivedT:S.ui.date===today()?nowHM():(S.appts[id]?.time||null)});toast("اتسجل وصوله")}
 function sheetQuickCancel(id){const a=S.appts[id];if(!a)return;
-  openSheet(`إلغاء ${a.patientName}`,`<p class="sub" style="margin:0">${esc(a.time||"")} · ${esc(a.kindLabel||"")}</p>
+  openSheet(`إلغاء ${a.patientName}`,`<p class="sub" style="margin:0">${esc(a.time||"")} · ${esc(kindOf(a))}</p>
   <div style="display:grid;gap:8px">${["المريض لغى","المركز لغى","اتأجل لميعاد تاني","محضرش من غير ما يبلغ"].map(r=>`<button class="btn" data-act="doCancel" data-id="${id}" data-r="${r}">${r}</button>`).join("")}</div>`)}
 async function doCancel(id,reason){const a=S.appts[id],old=S.visits[id];const noshow=reason==="محضرش من غير ما يبلغ";
   const b=S.db.batch(),acc={};b.update(S.db.doc("appts/"+id),{status:noshow?"noshow":"cancelled",cancelReason:noshow?null:reason});
