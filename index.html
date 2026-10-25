@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Stride Clinic</title>
+<meta name="theme-color" content="#2A4288">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Stride">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;600;700&display=swap">
+<style>
+/* Stride Clinic. Layout: sticky header + scrollable tab strip; single centered column (max 880px) of lists and sheets that slide up from the bottom. */
+:root{
+  /* Stride Clinic brand: blue on white, one light look on every phone */
+  --bg:#F5F8FC; --surface:#FFFFFF; --sunk:#EAF0F8; --ink:#14213D; --muted:#5B6884; --line:#D8E1EF;
+  --accent:#2A4288; --accent-soft:#E5EBF6; --on-accent:#FFFFFF; --sky:#6CC4FF;
+  --teal:#1F3470; --teal-soft:#E1EEFB;
+  --ok:#1C7A4B; --ok-soft:#DDF1E5; --warn:#A86A12; --warn-soft:#F7EAD3; --bad:#B8362A; --bad-soft:#F7DEDA;
+  --shadow:0 10px 30px rgba(20,33,61,.16);
+  --f-display:"Readex Pro","IBM Plex Sans Arabic",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans Arabic","Segoe UI",Tahoma,system-ui,sans-serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-size:15px;-webkit-text-size-adjust:100%}
+html{padding-bottom:env(safe-area-inset-bottom,0px)}
+[hidden]{display:none!important}
+img{max-width:100%}
+.hbtns{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end}
+.login{max-width:400px;width:100%;margin:24px auto}
+.tips{margin:0;padding-inline-start:20px;display:grid;gap:8px}
+
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+.num,td,.money{font-variant-numeric:tabular-nums}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
+.wrap{max-width:880px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.brand{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:12px 6px}
+.brand{flex-wrap:wrap}
+.brand h1{white-space:nowrap;font-size:20px;font-weight:700;letter-spacing:.2px;display:flex;align-items:center;gap:10px}
+.logo{height:40px;width:auto;max-width:170px;object-fit:contain;display:block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.brand-name{color:var(--accent)}
+header.top{border-bottom:3px solid var(--sky)}
+.who{font-size:13px;color:var(--muted);text-align:left}
+.who b{color:var(--ink);font-weight:600}
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding-block:4px 0}
+.tabs::-webkit-scrollbar{display:none}
+.tab{border:0;background:none;padding:8px 12px 10px;border-bottom:3px solid transparent;color:var(--muted);font-weight:500;white-space:nowrap;cursor:pointer;display:flex;align-items:center;gap:6px}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.badge{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--accent);color:var(--on-accent);font-size:12px;display:inline-grid;place-items:center;font-weight:600}
+main{padding-block:16px 48px;display:grid;gap:16px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bar .grow{flex:1 1 160px;min-width:0}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:8px 14px;cursor:pointer;font-weight:500;display:inline-flex;align-items:center;gap:6px;justify-content:center}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.teal{background:var(--teal);border-color:var(--teal);color:var(--surface)}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.sm{padding:4px 10px;font-size:13px}
+.btn[disabled]{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+input,select,textarea{width:100%;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+textarea{min-height:76px;resize:vertical}
+label.f{display:grid;gap:4px;font-size:13px;color:var(--muted);font-weight:500}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.stat .k{font-size:12px;color:var(--muted)}
+.stat .v{font-family:var(--f-display);font-size:20px;font-weight:600}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;gap:12px;min-width:0}
+.panel h2{font-size:16px}
+.sub{font-size:13px;color:var(--muted)}
+.list{display:grid;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.row{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer;text-align:right;background:none;border-left:0;border-right:0;border-bottom:0;width:100%}
+.row:first-child{border-top:0}
+.row:hover{background:var(--sunk)}
+.row .t{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.row .m{font-size:13px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.row .end{text-align:left;font-variant-numeric:tabular-nums}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}
+.c-ok{background:var(--ok-soft);color:var(--ok)}.c-warn{background:var(--warn-soft);color:var(--warn)}.c-bad{background:var(--bad-soft);color:var(--bad)}.c-teal{background:var(--teal-soft);color:var(--teal)}.c-acc{background:var(--accent-soft);color:var(--accent)}.c-mute{background:var(--sunk);color:var(--muted)}
+.empty{padding:28px 18px;text-align:center;color:var(--muted);background:var(--surface);border:1px dashed var(--line);border-radius:14px}
+.empty b{display:block;color:var(--ink);font-family:var(--f-display);font-weight:600;margin-bottom:4px}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;min-width:560px;background:var(--surface)}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:600;background:var(--sunk)}
+tr:last-child td{border-bottom:0}
+tfoot td{font-weight:700;background:var(--sunk)}
+.verdict{border-radius:12px;padding:12px 14px;display:grid;gap:4px}
+.bars{display:grid;gap:8px}
+.brow{display:grid;grid-template-columns:minmax(90px,150px) 1fr auto;gap:10px;align-items:center;font-size:13px}
+.btrack{height:12px;background:var(--sunk);border-radius:6px;overflow:hidden}
+.bfill{height:100%;background:var(--teal);border-radius:6px}
+.bfill.top{background:var(--accent)}
+.bfill{background:var(--sky)}
+.sheet-bg{position:fixed;inset:0;background:rgba(10,18,16,.45);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--bg);width:100%;max-width:640px;max-height:92%;overflow:auto;border-radius:18px 18px 0 0;box-shadow:var(--shadow);padding:16px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:grid;gap:14px}
+@media (min-width:700px){.sheet-bg{align-items:center}.sheet{border-radius:18px;max-height:88%}}
+.sheet-h{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sheet-h h2{font-size:18px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg label{flex:1 1 120px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;gap:8px;align-items:center;cursor:pointer;background:var(--surface);font-size:14px}
+.seg input{width:auto}
+.seg label:has(input:checked){border-color:var(--teal);background:var(--teal-soft)}
+.err{color:var(--bad);font-size:13px;min-height:1em}
+.note{background:var(--sunk);border-radius:10px;padding:8px 10px;font-size:13px}
+.photos{display:flex;flex-wrap:wrap;gap:8px}
+.photos img{width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:zoom-in}
+.photos img.big{width:100%;height:auto;object-fit:contain;cursor:zoom-out}
+.toast{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:10px;z-index:30;font-size:14px;max-width:90%}
+.ai{white-space:pre-wrap;font-size:14px;line-height:1.8}
+.sec-title{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.hr{height:1px;background:var(--line)}
+@media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
+</style>
+</head>
+<body>
+<div dir="rtl" id="app">
+  <header class="top">
+    <div class="wrap">
+      <div class="brand">
+        <h1><img class="logo" src="icons/logo.png" alt="Stride Clinic"><span class="sr">Stride Clinic</span></h1>
+        <div class="who" id="who">المعادي</div>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+    </div>
+  </header>
+  <main class="wrap" id="main">
+    <div class="empty"><b>بيحمّل بيانات المركز…</b>لو الصفحة فضلت كده، افتحها من حسابك على Claude.</div>
+  </main>
+</div>
+<div id="sheetRoot"></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

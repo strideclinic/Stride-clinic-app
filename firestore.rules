@@ -1,0 +1,101 @@
+rules_version = '2';
+// Stride Clinic — قواعد الأمان
+// owner = د. محي (كل حاجة) · secretary = ريهام (كل حاجة ما عدا priv) · doctor = جلساته وحضوره بس
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function profilePath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function hasProfile() { return signedIn() && exists(profilePath()); }
+    function me() { return get(profilePath()).data; }
+    function active() { return hasProfile() && me().active == true; }
+    function isOwner() { return active() && me().role == 'owner'; }
+    function isAdmin() { return active() && (me().role == 'owner' || me().role == 'secretary'); }
+    function isStaff() { return active(); }
+    function mySid() { return me().staffId; }
+
+    // ---- first-time setup: the very first account becomes the owner ----
+    match /meta/setup {
+      allow get: if true;
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ---- login profiles (uid -> staffId + role) ----
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if
+          (signedIn() && uid == request.auth.uid
+            && request.resource.data.role == 'owner'
+            && request.resource.data.staffId == 'owner'
+            && !exists(/databases/$(database)/documents/meta/setup)
+            && getAfter(/databases/$(database)/documents/meta/setup).data.ownerUid == request.auth.uid)
+        || (isOwner() && request.resource.data.role in ['doctor', 'secretary'])
+        || (isAdmin() && request.resource.data.role == 'doctor');
+      allow update: if
+          (isOwner() && resource.data.role != 'owner')
+        || (isAdmin() && resource.data.role == 'doctor' && request.resource.data.role == 'doctor')
+        || (signedIn() && request.auth.uid == uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mustChange'])
+            && request.resource.data.mustChange == false);
+      allow delete: if false;
+    }
+
+    // ---- username -> internal login email (readable before login) ----
+    match /usernames/{name} {
+      allow get: if true;
+      allow list: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isAdmin() || (signedIn() && request.resource.data.uid == request.auth.uid);
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // ---- shared with every active staff member ----
+    match /staff/{sid}  { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /pub/{doc}    { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /pdir/{pid}   { allow read: if isStaff(); allow write: if isAdmin(); }
+
+    // ---- owner + Reham only ----
+    match /cfg/{doc}        { allow read, write: if isAdmin(); }
+    match /patients/{id}    { allow read, write: if isAdmin(); }
+    match /photos/{id}      { allow read, write: if isAdmin(); }
+    match /visits/{id}      { allow read, write: if isAdmin(); }
+    match /payments/{id}    { allow read, write: if isAdmin(); }
+    match /exp/{id}         { allow read, write: if isAdmin(); }
+
+    // ---- owner only: salaries, commissions ----
+    match /priv/{doc=**}    { allow read, write: if isOwner(); }
+
+    // ---- sessions the doctors log (no prices in here) ----
+    match /log/{id} {
+      allow read: if isAdmin() || (isStaff() && resource.data.doctorSid == mySid());
+      allow create: if isAdmin()
+        || (isStaff() && request.resource.data.doctorSid == mySid()
+            && request.resource.data.status == 'pending'
+            && !('review' in request.resource.data));
+      allow update: if isAdmin()
+        || (isStaff() && resource.data.doctorSid == mySid() && resource.data.status == 'pending'
+            && request.resource.data.doctorSid == mySid() && request.resource.data.status == 'pending'
+            && !('review' in request.resource.data));
+      allow delete: if isAdmin()
+        || (isStaff() && resource.data.doctorSid == mySid() && resource.data.status == 'pending');
+    }
+
+    // ---- attendance: staff check themselves in/out with the server clock ----
+    match /att/{id} {
+      allow read: if isAdmin() || (isStaff() && resource.data.staffId == mySid());
+      allow create: if isAdmin()
+        || (isStaff() && request.resource.data.staffId == mySid()
+            && id == request.resource.data.date + '_' + mySid()
+            && request.resource.data.inAt == request.time
+            && request.resource.data.out == ''
+            && request.resource.data.keys().hasOnly(['date', 'staffId', 'inAt', 'in', 'out', 'note', 'by']));
+      allow update: if isAdmin()
+        || (isStaff() && resource.data.staffId == mySid()
+            && !('outAt' in resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt'])
+            && request.resource.data.outAt == request.time);
+      allow delete: if isAdmin();
+    }
+  }
+}
