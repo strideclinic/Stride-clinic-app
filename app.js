@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 18";
+const APP_VERSION="26 أكتوبر · 19";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1581,5 +1581,17 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&document.querySelector(".sheet"))closeSheet()});
 if("serviceWorker" in navigator&&location.protocol==="https:")window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+/* pull down at the top of the page to reload (also picks up a new app version) */
+(function pullToRefresh(){
+  const TH=80;let y0=null,dy=0,el=null;
+  const bar=()=>el||(el=Object.assign(document.body.appendChild(document.createElement("div")),{id:"ptr"}));
+  const show=(d,txt)=>{const b=bar();b.textContent=txt;b.style.transform=`translate(-50%,${Math.min(d,TH+20)-50}px)`;b.style.opacity=Math.min(1,d/TH)};
+  document.addEventListener("touchstart",e=>{y0=(window.scrollY<=0&&!document.querySelector(".sheet")&&e.touches.length===1)?e.touches[0].clientY:null;dy=0},{passive:true});
+  document.addEventListener("touchmove",e=>{if(y0==null)return;dy=e.touches[0].clientY-y0;if(dy<=0){y0=null;show(0,"");return}show(dy*0.6,dy*0.6>=TH?"سيب عشان يتحدث":"اسحب لتحت للتحديث")},{passive:true});
+  document.addEventListener("touchend",async()=>{if(y0==null)return;y0=null;
+    if(dy*0.6<TH){show(0,"");return}show(TH,"بيتحدث…");
+    try{const r=await navigator.serviceWorker?.getRegistration?.();await r?.update?.()}catch(e){}
+    location.reload()});
+})();
 setInterval(()=>{if(["appts","myappts"].includes(S.tab)&&Object.values(S.appts).some(a=>a.status==="started"))sched()},60000); // keeps "in session for N min" fresh
 boot();
