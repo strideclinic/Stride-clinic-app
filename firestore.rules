@@ -81,6 +81,20 @@ service cloud.firestore {
         || (isStaff() && resource.data.doctorSid == mySid() && resource.data.status == 'pending');
     }
 
+    // ---- appointments: Reham books; the doctor only stamps start / end (server clock) ----
+    function apptDoctorUpdate() {
+      let ch = request.resource.data.diff(resource.data).affectedKeys();
+      return isStaff() && resource.data.doctorSid == mySid()
+        && ch.hasOnly(['startAt', 'endAt', 'status', 'logId'])
+        && (!ch.hasAny(['startAt']) || request.resource.data.startAt == request.time)
+        && (!ch.hasAny(['endAt']) || request.resource.data.endAt == request.time);
+    }
+    match /appts/{id} {
+      allow read: if isAdmin() || (isStaff() && resource.data.doctorSid == mySid());
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || apptDoctorUpdate();
+    }
+
     // ---- attendance: staff check themselves in/out with the server clock ----
     match /att/{id} {
       allow read: if isAdmin() || (isStaff() && resource.data.staffId == mySid());
