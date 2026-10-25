@@ -90,6 +90,7 @@ function setupRoleSubs(){
   clearSubs();const r=S.roleSubs,db=S.db,c=n=>db.collection(n);
   r.push(sub(c("staff"),o=>S.staff=o));
   r.push(subDoc("pub/types",d=>S.types=d?.list||[]));
+  r.push(subDoc("pub/geo",d=>S.geo=d||null));
   r.push(sub(c("pdir"),o=>S.pdir=o));
   r.push(c("usernames").where("uid","==",S.uid).onSnapshot(s=>{S.myUsername=s.docs[0]?.id||"";sched()},()=>{}));
   if(isAdmin()){
@@ -329,13 +330,14 @@ function vAtt(){
   const rows=st.map(s=>{const r=S.att[d+"_"+s.id];const w=r?attMinutes(r):null;const ot=w!=null&&w>base?w-base:0;
     return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span></span>
     <span class="end">${attChip(r,w,ot,base)}</span>
-    <span class="m">${r?`حضور ${esc(r.in||"—")} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
+    <span class="m">${r?`حضور ${esc(r.in||"—")} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
   const sum=st.map(s=>{let days=0,ot=0,short=0;for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(m)){const w=attMinutes(r);if(w==null)continue;days++;w>base?ot+=w-base:short+=base-w}return `<tr><td>${esc(s.name)}</td><td class="num">${days}</td><td>${hm(ot)}</td><td>${hm(short)}</td></tr>`}).join("");
   return `<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
   ${st.length?`<div class="list">${rows}</div>`:`<div class="empty"><b>مفيش فريق متسجل</b>ضيف الدكاترة والسكرتارية من الإعدادات.</div>`}
   <div class="panel"><h2>ملخص ${esc(monthLabel(m))}</h2><p class="sub" style="margin:0">اليوم الأساسي ${cfg().hoursBase} ساعات؛ أي دقيقة زيادة بتتحسب بدقيقة ونص في المرتب.</p>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>أيام متسجلة</th><th>أوفر تايم</th><th>ساعات ناقصة</th></tr></thead><tbody>${sum}</tbody></table></div></div>`;
 }
+function locNote(r){const parts=[];if(r.inLoc)parts.push(`حضور على بعد ${r.inLoc.d}م`);if(r.outLoc)parts.push(`انصراف على بعد ${r.outLoc.d}م`);return parts.length?` · ${parts.join("، ")}`:""}
 function attChip(r,w,ot,base){if(!r)return `<span class="chip c-mute">غايب / مش متسجل</span>`;if(ot)return `<span class="chip c-acc">أوفر تايم ${hm(ot)}</span>`;if(w!=null&&w<base)return `<span class="chip c-warn">ناقص ${hm(base-w)}</span>`;return `<span class="chip c-ok">${w!=null?"تمام":"لسه مقفلش"}</span>`}
 /* ---------- views: my attendance (doctor) ---------- */
 function vMyAtt(){
@@ -345,7 +347,8 @@ function vMyAtt(){
   return `<div class="panel"><h2>النهارده · ${esc(dayLabel(d))}</h2>
   <div class="stats"><div class="stat"><div class="k">حضور</div><div class="v num">${esc(r?.in||"—")}</div></div><div class="stat"><div class="k">انصراف</div><div class="v num">${esc(r?.out||"—")}</div></div></div>
   <div class="bar">${r?"":`<button class="btn primary grow" data-act="selfIn">سجّل حضوري دلوقتي</button>`}${r&&r.in&&!r.out?`<button class="btn teal grow" data-act="selfOut">سجّل انصرافي دلوقتي</button>`:""}</div>
-  <p class="sub" style="margin:0">الوقت بيتسجل من ساعة السيرفر، مش من ساعة الموبايل.${r?.in&&r?.out?" اليوم اتقفل، ولو فيه غلط قول لريهام تعدّله.":""}</p></div>
+  <p class="err" id="geoMsg" style="margin:0"></p>
+  <p class="sub" style="margin:0">الوقت بيتسجل من ساعة السيرفر${S.geo?.lat&&S.geo.required!==false?"، ومكانك بيتأكد إنه جوه المركز":""}.${r?.in&&r?.out?" اليوم اتقفل، ولو فيه غلط قول لريهام تعدّله.":""}</p></div>
   <div class="stats"><div class="stat"><div class="k">أيام حضور ${esc(monthLabel(m))}</div><div class="v num">${days}</div></div><div class="stat"><div class="k">أوفر تايم الشهر ده</div><div class="v">${hm(ot)}</div></div></div>
   ${recs.length?`<div class="list">${recs.map(x=>{const w=attMinutes(x);const o=w!=null&&w>base?w-base:0;return `<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(x.date))}</span><span class="end">${attChip(x,w,o,base)}</span><span class="m">حضور ${esc(x.in||"—")} · انصراف ${esc(x.out||"—")}${w!=null?" · "+hm(w):""}</span><span></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام متسجلة الشهر ده</b>اضغط «سجّل حضوري» أول ما توصل.</div>`}`;
 }
@@ -445,6 +448,10 @@ function vSettings(){
   <p class="sub" style="margin:0">كل واحد يقدر يغيّر اسم المستخدم والباسورد بتوعه من «حسابي». لو حد نسي الباسورد اضغط «باسورد جديد» وهيطلعلك باسورد مؤقت تديهوله.</p></div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات والأسعار</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   ${S.types.length?`<div class="list">${S.types.map(t=>`<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)}</span><span class="end money">${S.prices[t.id]!=null?money(S.prices[t.id]):"بدون سعر"}</span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: كشف، جلسة علاج طبيعي، جلسة تأهيل. الدكاترة بيشوفوا الأسماء بس، من غير أسعار.</div>`}</div>
+  <div class="panel"><div class="sec-title"><h2>مكان المركز للحضور</h2>${S.geo?.lat?`<span class="chip ${S.geo.required===false?"c-mute":"c-ok"}">${S.geo.required===false?"متوقف":"شغال"}</span>`:""}</div>
+  <p class="sub" style="margin:0">${S.geo?.lat?`متسجل. أي حد يسجل حضوره لازم يكون في حدود ${S.geo.radius||150} متر من المركز.`:"اقف جوه المركز ودوس الزرار، عشان الحضور والانصراف يتسجلوا من جوه المركز بس."}</p>
+  <div class="grid2"><label class="f">المسافة المسموحة (متر)<input id="geo_r" inputmode="numeric" value="${S.geo?.radius||150}"></label></div>
+  <div class="bar"><button class="btn primary" data-act="setGeo">${S.geo?.lat?"حدّث مكان المركز من مكاني دلوقتي":"سجّل مكان المركز من مكاني دلوقتي"}</button>${S.geo?.lat?`<button class="btn sm" data-act="toggleGeo">${S.geo.required===false?"شغّل التحقق":"وقّف التحقق"}</button>`:""}</div><p class="err" id="geoSetMsg" style="margin:0"></p></div>
   <div class="panel"><div class="sec-title"><h2>الباكدجات</h2><button class="btn sm" data-act="newPackType">+ باكدج</button></div>
   ${(S.packTypes||[]).length?`<div class="list">${S.packTypes.map(t=>`<button class="row" data-act="editPackType" data-id="${t.id}"><span class="t">${esc(t.name)}</span><span class="end money">${money(t.price)}</span><span class="m">${t.sessions} جلسة · الجلسة بـ ${money(t.price/t.sessions)}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش باكدجات</b>مثلاً «باكدج أ» 10 جلسات بـ 4800. بيتباع للمريض من ملفه، وكل جلسة بتتخصم منه.</div>`}</div>
   ${owner?`<div class="panel"><h2>المرتبات والنسب (ليك انت بس)</h2>
@@ -852,10 +859,26 @@ function sheetAtt(sid){
   <label class="f">ملاحظة<input id="a_note" value="${esc(r.note||"")}"></label><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveAtt" data-sid="${sid}">حفظ</button>${r.date?`<button class="btn danger" data-act="delAtt" data-sid="${sid}" data-confirm>مسح اليوم</button>`:""}</div>`);
 }
+/* ---------- location check for self check-in ---------- */
+function distM(a,b){const R=6371000,t=x=>x*Math.PI/180;const dLat=t(b.lat-a.lat),dLng=t(b.lng-a.lng);
+  const h=Math.sin(dLat/2)**2+Math.cos(t(a.lat))*Math.cos(t(b.lat))*Math.sin(dLng/2)**2;return Math.round(2*R*Math.asin(Math.sqrt(h)))}
+function getPos(){return new Promise((res,rej)=>{if(!navigator.geolocation)return rej({code:"nogeo"});
+  navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:Math.round(p.coords.accuracy||0)}),e=>rej(e),{enableHighAccuracy:true,timeout:20000,maximumAge:0})})}
+function geoError(e){return e?.code===1?"لازم تسمح للتطبيق يعرف مكانك. من إعدادات الموبايل: Privacy ← Location ← Safari (أو Chrome) ← While Using، وبعدين جرّب تاني.":e?.code==="nogeo"?"الموبايل ده مش بيدعم تحديد المكان.":"مقدرناش نحدد مكانك. اتأكد إن الـ Location شغال وجرّب تاني جوه المركز."}
+async function checkPlace(){ // returns location info, or throws a readable message when outside the clinic
+  const g=S.geo;if(!g||!g.lat||g.required===false)return null;
+  let p;try{p=await getPos()}catch(e){throw new Error(geoError(e))}
+  const d=distM(g,p),radius=g.radius||150;
+  if(d-Math.min(p.acc,100)>radius)throw new Error(`انت بعيد عن المركز حوالي ${d} متر. الحضور والانصراف بيتسجلوا من جوه المركز بس.`);
+  return{d,acc:p.acc};
+}
 async function selfAtt(kind){
   const sid=S.mySid,d=today(),ref=S.db.doc(`att/${d}_${sid}`);const TS=firebase.firestore.FieldValue.serverTimestamp();
-  if(kind==="in")await ref.set({date:d,staffId:sid,inAt:TS,in:"",out:"",note:"",by:sid});
-  else await ref.update({out:nowHM(),outAt:TS});
+  const msg=document.getElementById("geoMsg");if(msg){msg.textContent="بيحدد مكانك…";msg.style.color=""}
+  let loc;try{loc=await checkPlace()}catch(e){if(msg){msg.textContent=e.message;msg.style.color="var(--bad)"}return}
+  if(msg)msg.textContent="";
+  if(kind==="in")await ref.set({date:d,staffId:sid,inAt:TS,in:"",out:"",note:"",by:sid,...(loc?{inLoc:loc}:{})});
+  else await ref.update({out:nowHM(),outAt:TS,...(loc?{outLoc:loc}:{})});
   toast(kind==="in"?"اتسجل حضورك":"اتسجل انصرافك");
 }
 /* ---------- expenses ---------- */
@@ -961,7 +984,7 @@ document.addEventListener("change",e=>{
   if(id==="monthPick"&&e.target.value){S.ui.month=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const ADMIN_ACTS=new Set(["sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","editAtt","saveAtt","delAtt","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["setGeo","toggleGeo","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","editAtt","saveAtt","delAtt","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -975,6 +998,11 @@ document.addEventListener("click",async e=>{
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
+    case "setGeo":guard(t,async()=>{const m=document.getElementById("geoSetMsg");m.style.color="";m.textContent="بيحدد المكان…";
+      let p;try{p=await getPos()}catch(e){m.style.color="var(--bad)";m.textContent=geoError(e);return}
+      if(p.acc>60){m.textContent=`الدقة ${p.acc} متر بس، وده ضعيف. لو تقدر قف جنب شباك وجرّب تاني. اتسجل على كل حال.`}else m.textContent="";
+      await db.doc("pub/geo").set({lat:p.lat,lng:p.lng,radius:Math.max(50,num(val("geo_r"))||150),required:true,acc:p.acc,at:Date.now(),by:S.mySid});toast("مكان المركز اتسجل")});break;
+    case "toggleGeo":guard(t,async()=>{await db.doc("pub/geo").update({required:S.geo?.required===false,radius:Math.max(50,num(val("geo_r"))||150)});});break;
     case "myAccount":sheetAccount(false);break;
     case "saveAccount":guard(t,()=>saveAccount(!!t.dataset.forced));break;
     case "day":S.ui.date=addDays(S.ui.date,Number(t.dataset.n));render();break;

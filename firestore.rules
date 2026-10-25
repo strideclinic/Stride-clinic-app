@@ -89,11 +89,11 @@ service cloud.firestore {
             && id == request.resource.data.date + '_' + mySid()
             && request.resource.data.inAt == request.time
             && request.resource.data.out == ''
-            && request.resource.data.keys().hasOnly(['date', 'staffId', 'inAt', 'in', 'out', 'note', 'by']));
+            && request.resource.data.keys().hasOnly(['date', 'staffId', 'inAt', 'in', 'out', 'note', 'by', 'inLoc']));
       allow update: if isAdmin()
         || (isStaff() && resource.data.staffId == mySid()
             && !('outAt' in resource.data)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt', 'outLoc'])
             && request.resource.data.outAt == request.time);
       allow delete: if isAdmin();
     }
