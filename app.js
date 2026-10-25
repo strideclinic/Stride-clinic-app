@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 22";
+const APP_VERSION="26 أكتوبر · 23";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -275,7 +275,9 @@ function creditsOf(v){return v.doctor2Id?[[v.doctorId,"half"],[v.doctor2Id,"half
 function visitDocs(v){return v.doctor2Id?`${staffName(v.doctorId)} + ${staffName(v.doctor2Id)} (نص ونص)`:staffName(v.doctorId)}
 function payroll(month){
   const c=cfg();const base=c.hoursBase*60;
-  return activeStaff().map(s=>{
+  const worked=new Set();for(const r of Object.values(S.att))if((r.date||"").startsWith(month))worked.add(r.staffId);
+  for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))creditsOf(v).forEach(([d])=>worked.add(d));
+  return Object.values(S.staff).filter(s=>s.active!==false||worked.has(s.id)).sort((a,b)=>(a.order||0)-(b.order||0)).map(s=>{
     const sal=num(c.salary[s.id]);const minRate=sal/(c.daysBase*c.hoursBase*60);
     let ot=0,days=0,short=0;
     for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;if(w>base)ot+=w-base;else short+=base-w}
@@ -567,7 +569,7 @@ function vReports(){
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><h2>المرتبات</h2>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
-  ${pr.map(x=>`<tr><td>${esc(x.s.name)}</td><td>${money(x.sal)}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
+  ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td>${money(x.sal)}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
   <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (${cfg().daysBase} يوم × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم × ${cfg().otMult}. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
@@ -1440,8 +1442,16 @@ function sheetStaff(id){
   openSheet(id?"تعديل":"إضافة للفريق",`<label class="f">الاسم<input id="s_name" value="${esc(s.name||"")}"></label>
   ${owner?`<div class="seg"><label><input type="radio" name="s_role" value="doctor" ${s.role!=="secretary"?"checked":""}> دكتور</label><label><input type="radio" name="s_role" value="secretary" ${s.role==="secretary"?"checked":""}> استقبال / سكرتارية</label></div>`:""}
   ${id?"":`<label class="f">اسم المستخدم (بالإنجليزي، للدخول)<input id="s_user" autocapitalize="none" spellcheck="false" placeholder="مثلاً ahmed"></label>`}
-  ${id?`<div class="seg"><label><input type="radio" name="s_act" value="1" ${s.active!==false?"checked":""}> شغال</label><label><input type="radio" name="s_act" value="0" ${s.active===false?"checked":""}> متوقف (مايقدرش يدخل)</label></div>`:""}
-  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveStaff" data-id="${id||""}">حفظ</button>`);
+  ${id?`<div class="seg"><label><input type="radio" name="s_act" value="1" ${s.active!==false?"checked":""}> شغال</label><label><input type="radio" name="s_act" value="0" ${s.active===false?"checked":""}> متوقف (مايقدرش يدخل)</label></div>
+  <p class="sub" style="margin:0">لو حد ساب الشغل خليه «متوقف»: مش هيقدر يدخل، ومش هيظهر في اختيار الدكاترة، بس جلساته وحضوره ومرتب آخر شهر بيفضلوا محفوظين.</p>`:""}
+  <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveStaff" data-id="${id||""}">حفظ</button>${id&&owner&&!staffHasHistory(id)?`<button class="btn danger" data-act="delStaff" data-id="${id}" data-confirm>حذف نهائي</button>`:""}</div>`);
+}
+function staffHasHistory(sid){return Object.values(S.visits).some(v=>creditsOf(v).some(([d])=>d===sid))||Object.values(S.att).some(r=>r.staffId===sid)||Object.values(S.appts).some(a=>apptDocs(a).includes(sid))||Object.values(S.log).some(e=>e.doctorSid===sid)}
+async function delStaff(id){ // only for someone added by mistake: no sessions, attendance or bookings
+  const s=S.staff[id];if(!s||staffHasHistory(id))return setErr("ليه شغل متسجل، خليه «متوقف» بدل الحذف");
+  const b=S.db.batch();b.delete(S.db.doc("staff/"+id));
+  if(s.uid&&S.users[s.uid]){b.update(S.db.doc("users/"+s.uid),{active:false});const un=S.usernames[s.uid];if(un)b.delete(S.db.doc("usernames/"+un))}
+  await b.commit();closeSheet();toast("اتحذف");
 }
 async function saveStaff(id){
   const name=val("s_name").trim();if(!name)return setErr("اكتب الاسم");
@@ -1516,7 +1526,7 @@ document.addEventListener("change",e=>{
   if(id==="monthPick"&&e.target.value){S.ui.month=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newRate","editRate","saveRate","delRate","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -1612,6 +1622,7 @@ document.addEventListener("click",async e=>{
     case "delExp":guard(t,async()=>{await db.doc("exp/"+id).delete();forget("exp",id);closeSheet()});break;
     case "newStaff":sheetStaff(null);break;
     case "editStaff":sheetStaff(id);break;
+    case "delStaff":guard(t,()=>delStaff(id));break;
     case "saveStaff":guard(t,()=>saveStaff(id));break;
     case "makeLogin":sheetLogin(id);break;
     case "saveLogin":guard(t,()=>createLogin(id,normUser(val("lg_user"))));break;
@@ -1636,7 +1647,7 @@ document.addEventListener("click",async e=>{
     case "editType":sheetType(id);break;
     case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
-    case "saveCfg":guard(t,async()=>{const salary={},commission={};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)}});await db.doc("priv/config").set({salary,commission,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
+    case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id]});await db.doc("priv/config").set({salary,commission,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
     case "newEntry":sheetEntry(null);break;
     case "myEntry":sheetEntry(S.log[id]);break;
