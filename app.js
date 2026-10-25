@@ -877,8 +877,11 @@ async function selfAtt(kind){
   const msg=document.getElementById("geoMsg");if(msg){msg.textContent="بيحدد مكانك…";msg.style.color=""}
   let loc;try{loc=await checkPlace()}catch(e){if(msg){msg.textContent=e.message;msg.style.color="var(--bad)"}return}
   if(msg)msg.textContent="";
-  if(kind==="in")await ref.set({date:d,staffId:sid,inAt:TS,in:"",out:"",note:"",by:sid,...(loc?{inLoc:loc}:{})});
-  else await ref.update({out:nowHM(),outAt:TS,...(loc?{outLoc:loc}:{})});
+  const base=kind==="in"?{date:d,staffId:sid,inAt:TS,in:"",out:"",note:"",by:sid}:{out:nowHM(),outAt:TS};
+  const extra=loc?(kind==="in"?{inLoc:loc}:{outLoc:loc}):{};
+  const write=o=>kind==="in"?ref.set(o):ref.update(o);
+  try{await write({...base,...extra})}
+  catch(e){if(e?.code==="permission-denied"&&loc)await write(base);else throw e} // older security rules don't know the distance fields yet
   toast(kind==="in"?"اتسجل حضورك":"اتسجل انصرافك");
 }
 /* ---------- expenses ---------- */
