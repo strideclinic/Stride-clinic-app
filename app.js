@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 23";
+const APP_VERSION="26 أكتوبر · 24";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -577,7 +577,7 @@ function vReports(){
 /* ---------- views: settings ---------- */
 function vSettings(){
   const owner=S.role==="owner";
-  const st=Object.values(S.staff).sort((a,b)=>(a.order||0)-(b.order||0));
+  const st=Object.values(S.staff).filter(s=>!s.deleted).sort((a,b)=>(a.order||0)-(b.order||0));
   const c=cfg();const canManage=s=>owner||s.role==="doctor";
   return `
   <div class="panel"><div class="sec-title"><h2>الفريق والحسابات</h2><button class="btn sm" data-act="newStaff">+ إضافة</button></div>
@@ -1444,12 +1444,13 @@ function sheetStaff(id){
   ${id?"":`<label class="f">اسم المستخدم (بالإنجليزي، للدخول)<input id="s_user" autocapitalize="none" spellcheck="false" placeholder="مثلاً ahmed"></label>`}
   ${id?`<div class="seg"><label><input type="radio" name="s_act" value="1" ${s.active!==false?"checked":""}> شغال</label><label><input type="radio" name="s_act" value="0" ${s.active===false?"checked":""}> متوقف (مايقدرش يدخل)</label></div>
   <p class="sub" style="margin:0">لو حد ساب الشغل خليه «متوقف»: مش هيقدر يدخل، ومش هيظهر في اختيار الدكاترة، بس جلساته وحضوره ومرتب آخر شهر بيفضلوا محفوظين.</p>`:""}
-  <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveStaff" data-id="${id||""}">حفظ</button>${id&&owner&&!staffHasHistory(id)?`<button class="btn danger" data-act="delStaff" data-id="${id}" data-confirm>حذف نهائي</button>`:""}</div>`);
+  <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveStaff" data-id="${id||""}">حفظ</button>${id&&owner?`<button class="btn danger" data-act="delStaff" data-id="${id}" data-confirm>حذف</button>`:""}</div>
+  ${id&&owner&&staffHasHistory(id)?`<p class="sub" style="margin:0">ليه شغل متسجل: لو اتحذف هيختفي من الفريق والاختيارات وحساب دخوله هيتقفل، بس جلساته وحضوره اللي فاتوا بيفضلوا في الحسابات باسمه.</p>`:""}`);
 }
 function staffHasHistory(sid){return Object.values(S.visits).some(v=>creditsOf(v).some(([d])=>d===sid))||Object.values(S.att).some(r=>r.staffId===sid)||Object.values(S.appts).some(a=>apptDocs(a).includes(sid))||Object.values(S.log).some(e=>e.doctorSid===sid)}
 async function delStaff(id){ // only for someone added by mistake: no sessions, attendance or bookings
-  const s=S.staff[id];if(!s||staffHasHistory(id))return setErr("ليه شغل متسجل، خليه «متوقف» بدل الحذف");
-  const b=S.db.batch();b.delete(S.db.doc("staff/"+id));
+  const s=S.staff[id];if(!s)return;const keep=staffHasHistory(id);
+  const b=S.db.batch();if(keep)b.update(S.db.doc("staff/"+id),{active:false,deleted:true});else b.delete(S.db.doc("staff/"+id)); // with history: hidden, but past records keep the name
   if(s.uid&&S.users[s.uid]){b.update(S.db.doc("users/"+s.uid),{active:false});const un=S.usernames[s.uid];if(un)b.delete(S.db.doc("usernames/"+un))}
   await b.commit();closeSheet();toast("اتحذف");
 }
