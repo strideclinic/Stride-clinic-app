@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 أكتوبر · 16";
+const APP_VERSION="25 أكتوبر · 17";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -400,21 +400,25 @@ function extRows(sid,test){ // every session the outside doctor worked, with its
 }
 function dnum(d){const [y,m,x]=d.split("-").map(Number);return Math.round(Date.UTC(y,m-1,x)/864e5)}
 function dstr(n){return new Date(n*864e5).toISOString().slice(0,10)}
-function extPeriod(x,date){const c=x.cycle||7,a=dnum(x.anchor||today());const i=Math.floor((dnum(date)-a)/c);const f=a+i*c;return{from:dstr(f),to:dstr(f+c-1)}}
+function extPeriod(x,date){ // the pay period that contains date: calendar month, or 7 / 14 days counted from the anchor
+  if(x.cycle==="m"){const m=date.slice(0,7);return{from:m+"-01",to:dstr(dnum(nextMonth(m)+"-01")-1)}}
+  const c=x.cycle||7,a=dnum(x.anchor||today());const i=Math.floor((dnum(date)-a)/c);const f=a+i*c;return{from:dstr(f),to:dstr(f+c-1)}}
+function nextMonth(m){let [y,mo]=m.split("-").map(Number);mo++;if(mo>12){mo=1;y++}return `${y}-${String(mo).padStart(2,"0")}`}
+function cycleLabel(x){return x.cycle==="m"?"كل شهر":x.cycle===14?"كل أسبوعين":"كل أسبوع"}
 function extPaid(sid,from){return (S.ext?.pays||[]).filter(p=>p.sid===sid&&p.from===from)}
 function extMonthShare(m){let t=0;for(const x of exts(true))t+=extRows(x.id,d=>d.startsWith(m)).reduce((s,r)=>s+r.share,0);return t}
 function vExt(){
   const list=exts();if(!list.length)return `<div class="empty"><b>مفيش دكاترة من بره</b>ضيفهم من الإعدادات.</div>`;
   return `<p class="sub" style="margin:0">النسبة على الجلسات اللي اتعملت بس (الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته). «مين جاب الحالة» بيتحدد من ملف المريض.</p>`+list.map(x=>{
     const cur=extPeriod(x,today());const periods=[];let p=cur;
-    for(let i=0;i<6;i++){periods.push(p);p={from:dstr(dnum(p.from)-(x.cycle||7)),to:dstr(dnum(p.from)-1)};if(p.to<(x.anchor||""))break}
+    for(let i=0;i<6;i++){periods.push(p);p=extPeriod(x,dstr(dnum(p.from)-1));if(x.cycle!=="m"&&p.to<(x.anchor||""))break;if(x.cycle==="m"&&i>=2)break}
     periods.forEach(q=>{ensureMonth(q.from.slice(0,7));ensureMonth(q.to.slice(0,7))});
     const rowsHtml=periods.map(q=>{const rows=extRows(x.id,d=>d>=q.from&&d<=q.to);const due=rows.reduce((s,r)=>s+r.share,0);const paid=extPaid(x.id,q.from).reduce((s,r)=>s+(r.amount||0),0);const left=due-paid;const miss=rows.some(r=>r.pct==null);
       if(!rows.length&&!paid&&q.from!==cur.from)return "";
       return `<div class="row stack" style="cursor:default"><span class="t">${esc(fmtRange(q))}${q.from===cur.from?` <span class="chip c-acc">الفترة الحالية</span>`:""} ${paid&&left<=0?`<span class="chip c-ok">اتصرفلها</span>`:left>0&&paid?`<span class="chip c-warn">فاضل ${money(left)}</span>`:""} ${miss?`<span class="chip c-bad">فيه جلسة من غير نسبة</span>`:""}</span>
       <span class="end bar"><button class="btn sm" data-act="extPeriod" data-id="${x.id}" data-from="${q.from}">التفاصيل</button>${left>0?`<button class="btn sm teal" data-act="extPay" data-id="${x.id}" data-from="${q.from}" data-confirm>اتصرفلها ${money(left)}</button>`:""}</span>
       <span class="m">${rows.length} جلسة · حقها ${money(due)}${paid?` · اتصرف ${money(paid)}`:""}</span><span></span></div>`}).join("");
-    return `<div class="panel"><div class="sec-title"><h2>${esc(x.name)}</h2><span class="sub">بتتحاسب ${x.cycle===14?"كل أسبوعين":"كل أسبوع"}</span></div><div class="list">${rowsHtml}</div></div>`}).join("");
+    return `<div class="panel"><div class="sec-title"><h2>${esc(x.name)}</h2><span class="sub">بتتحاسب ${cycleLabel(x)}</span></div><div class="list">${rowsHtml}</div></div>`}).join("");
 }
 function fmtRange(q){const f=d=>new Date(d+"T12:00").toLocaleDateString("ar-EG-u-nu-latn",{day:"numeric",month:"short"});return `${f(q.from)} ← ${f(q.to)}`}
 function sheetExtPeriod(sid,from){
@@ -439,20 +443,21 @@ function sheetExt(id){
   const x=id?extById(id):{cycle:7,anchor:today(),rates:[{by:"any"}]};if(!x)return;
   openSheet(id?x.name:"دكتور من بره",`<p class="sub" style="margin:0">دكتور مش من فريق المركز، بيشتغل بنسبة. مالوش مرتب ولا حضور ولا حساب دخول، وريهام بتسجل جلساته زي أي دكتور.</p>
   <label class="f">الاسم<input id="x_name" value="${esc(x.name||"")}" placeholder="مثلاً د. هدير"></label>
-  <div class="grid2"><label class="f">بيتحاسب<select id="x_cycle"><option value="7" ${x.cycle!==14?"selected":""}>كل أسبوع</option><option value="14" ${x.cycle===14?"selected":""}>كل أسبوعين</option></select></label>
-  <label class="f">أول يوم في أول فترة حساب<input type="date" id="x_anchor" value="${x.anchor||today()}"></label></div>
+  <div class="grid2"><label class="f">بيتحاسب<select id="x_cycle"><option value="7" ${x.cycle===7||!x.cycle?"selected":""}>كل أسبوع</option><option value="14" ${x.cycle===14?"selected":""}>كل أسبوعين</option><option value="m" ${x.cycle==="m"?"selected":""}>كل شهر</option></select></label>
+  <label class="f" id="x_anchorbox">أول يوم في أول فترة حساب<input type="date" id="x_anchor" value="${x.anchor||today()}"></label></div>
   <h3 style="font-size:15px;margin:0">النسب (نسبة الدكتور، والباقي للمركز)</h3>
   <div id="x_rates" style="display:grid;gap:10px">${(x.rates||[]).map(extRateRow).join("")}</div>
   <button class="btn sm" data-act="addRate" type="button">+ نسبة</button>
   <p class="sub" style="margin:0">«أي حد» بتتطبق لو مفيش نسبة مخصوصة لمين جاب الحالة.</p>
   ${id?`<div class="seg"><label><input type="radio" name="x_act" value="1" ${x.active!==false?"checked":""}> شغال معانا</label><label><input type="radio" name="x_act" value="0" ${x.active===false?"checked":""}> وقف</label></div>`:""}
-  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveExt" data-id="${id||""}">حفظ</button>`);
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveExt" data-id="${id||""}">حفظ</button>`,
+  ()=>{const c=document.getElementById("x_cycle"),s=()=>document.getElementById("x_anchorbox").hidden=c.value==="m";c.addEventListener("change",s);s()});
 }
 async function saveExt(id){
   const name=val("x_name").trim();if(!name)return setErr("اكتب الاسم");
   const rates=[...document.querySelectorAll("#x_rates .extrate")].map(r=>({typeId:r.querySelector(".er_type").value,by:r.querySelector(".er_by").value,pct:num(r.querySelector(".er_pct").value)})).filter(r=>r.typeId);
   if(rates.some(r=>r.pct<=0||r.pct>100))return setErr("اكتب النسبة من 1 لـ 100");
-  const body={name,cycle:num(val("x_cycle"))===14?14:7,anchor:val("x_anchor")||today(),rates,active:id?radio("x_act")!=="0":true};
+  const body={name,cycle:val("x_cycle")==="m"?"m":num(val("x_cycle"))===14?14:7,anchor:val("x_anchor")||today(),rates,active:id?radio("x_act")!=="0":true};
   const list=id?exts(true).map(x=>x.id===id?{...x,...body}:x):[...exts(true),{id:"x"+randId(),...body}];
   await S.db.doc("cfg/ext").set({list},{merge:true});closeSheet();toast("اتحفظ");
 }
@@ -560,7 +565,7 @@ function vSettings(){
     <span class="m">${acc?`اسم المستخدم: ${esc(un||"—")}${acc.mustChange?" · لسه مغيّرش الباسورد المؤقت":""}`:"مفيش حساب دخول"}</span><span></span></div>`}).join("")}</div>
   <p class="sub" style="margin:0">كل واحد يقدر يغيّر اسم المستخدم والباسورد بتوعه من «حسابي». لو حد نسي الباسورد اضغط «باسورد جديد» وهيطلعلك باسورد مؤقت تديهوله.</p></div>
   <div class="panel"><div class="sec-title"><h2>الدكاترة من بره</h2>${owner?`<button class="btn sm" data-act="newExt">+ إضافة</button>`:""}</div>
-  ${exts(true).length?`<div class="list">${exts(true).map(x=>`<${owner?"button":"div"} class="row" ${owner?`data-act="editExt" data-id="${x.id}"`:`style="cursor:default"`}><span class="t">${esc(x.name)} ${x.active===false?`<span class="chip c-bad">وقف</span>`:""}</span><span class="end sub">${x.cycle===14?"كل أسبوعين":"كل أسبوع"}</span><span class="m">${(x.rates||[]).map(r=>`${typeName(r.typeId)}${r.by!=="any"?` (لو جابها ${BY_LABEL[r.by]})`:""}: ${r.pct}%`).map(esc).join(" · ")||"مفيش نسب"}</span><span></span></${owner?"button":"div"}>`).join("")}</div>`:`<div class="empty"><b>مفيش دكاترة من بره</b>زي د. هدير ود. منة: بيشتغلوا بنسبة وبيتحاسبوا كل أسبوع أو أسبوعين.</div>`}</div>
+  ${exts(true).length?`<div class="list">${exts(true).map(x=>`<${owner?"button":"div"} class="row" ${owner?`data-act="editExt" data-id="${x.id}"`:`style="cursor:default"`}><span class="t">${esc(x.name)} ${x.active===false?`<span class="chip c-bad">وقف</span>`:""}</span><span class="end sub">${cycleLabel(x)}</span><span class="m">${(x.rates||[]).map(r=>`${typeName(r.typeId)}${r.by!=="any"?` (لو جابها ${BY_LABEL[r.by]})`:""}: ${r.pct}%`).map(esc).join(" · ")||"مفيش نسب"}</span><span></span></${owner?"button":"div"}>`).join("")}</div>`:`<div class="empty"><b>مفيش دكاترة من بره</b>زي د. هدير ود. منة: بيشتغلوا بنسبة وبيتحاسبوا كل أسبوع أو أسبوعين.</div>`}</div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   <p class="sub" style="margin:0">أسماء بس من غير فلوس. الفلوس كلها في الباكدجات تحت، وكل باكدج تابع لنوع جلسة.</p>
   ${S.types.length?`<div class="list">${S.types.map(t=>{const n=(S.packTypes||[]).filter(k=>k.typeId===t.id).length;return `<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)} </span><span class="end sub">${n?`${n} باكدج`:"مفيش باكدجات"}</span></button>`}).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: علاج طبيعي، تيكار، ليمفيديما. الدكاترة بيشوفوا الأسماء بس.</div>`}</div>
