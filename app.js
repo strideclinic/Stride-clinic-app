@@ -176,7 +176,7 @@ async function doSetup(){
       await b2.commit();
     }
     S.setupDone=true;S.settingUp=false;toast("السيستم جاهز. اعمل حسابات الفريق من الإعدادات.");
-  }catch(e){console.error(e);S.settingUp=false;err.textContent=e.code==="permission-denied"?"السيستم ده متعمله إعداد قبل كده. ادخل بالحساب الموجود.":e.code==="auth/operation-not-allowed"?"لازم تفعّل Email/Password في Authentication الأول (الخطوة 2 في الدليل).":"حصلت مشكلة: "+(e.code||e.message)}
+  }catch(e){console.error(e);S.settingUp=false;err.textContent=e.code==="permission-denied"?"السيستم ده متعمله إعداد قبل كده. ادخل بالحساب الموجود.":(e.code==="auth/operation-not-allowed"||e.code==="auth/configuration-not-found")?"لازم تفعّل Email/Password في Authentication الأول (الخطوة 2 في الدليل).":"حصلت مشكلة: "+(e.code||e.message)}
 }
 function vLogin(){
   return `<form class="panel login" id="loginForm" autocomplete="on"><img src="icons/logo.png" alt="Stride Clinic" style="height:72px;width:auto;justify-self:center"><h2>تسجيل الدخول</h2>
