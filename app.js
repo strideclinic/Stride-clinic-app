@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 أكتوبر · 15";
+const APP_VERSION="25 أكتوبر · 16";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -31,7 +31,7 @@ function monthLabel(m){try{return new Date(m+"-15T12:00:00").toLocaleDateString(
 function prevMonth(m,n=1){const [y,mo]=m.split("-").map(Number);const d=new Date(y,mo-1-n,15);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")}
 function mins(t){if(!t)return null;const [h,m]=nd(t).split(":").map(Number);return isFinite(h)?h*60+(m||0):null}
 function hm(m){m=Math.round(m||0);const h=Math.floor(m/60),r=m%60;return h?(h+" س"+(r?" "+r+" د":"")):r+" د"}
-function staffName(sid){return sid==="owner"?"د. محي":(S.staff[sid]?.name||"—")}
+function staffName(sid){return sid==="owner"?"د. محي":(S.staff[sid]?.name||(S.ext?.list||[]).find(x=>x.id===sid)?.name||"—")}
 function isAdmin(){return S.role==="owner"||S.role==="secretary"}
 function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v)}catch(e){return null}}
 function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2800)}
@@ -40,16 +40,11 @@ function patientsSorted(){return Object.values(S.patients).sort((a,b)=>(a.name||
 function doctors(){return Object.values(S.staff).filter(s=>s.role==="doctor"&&s.active!==false).sort((a,b)=>(a.order||0)-(b.order||0))}
 function activeStaff(){return Object.values(S.staff).filter(s=>s.active!==false).sort((a,b)=>(a.order||0)-(b.order||0))}
 function typeName(id){return S.types.find(t=>t.id===id)?.name||"—"}
-function isSepType(id){return !!(id&&S.types.find(t=>t.id===id)?.sep)}
-function sepNames(){return S.types.filter(t=>t.sep).map(t=>t.name).join(" و")}
-function packOf(pid,kid){return kid?(S.patients[pid]?.packs||[]).find(k=>k.id===kid):null}
-function visitSep(v){return isSepType(v.packId?(packOf(v.patientId,v.packId)?.typeId||v.typeId):v.typeId)} // money of a separate-account type stays out of clinic revenue
-function paySep(p){return !!(p.packId&&isSepType(packOf(p.patientId,p.packId)?.typeId))}
-function dayMoney(test){ // clinic vs separate-account money for visits + payments whose date passes test
-  const o={cash:0,insta:0,sepCash:0,sepInsta:0};const add=(sep,method,x)=>{if(!x)return;const ins=method==="instapay";if(sep)o[ins?"sepInsta":"sepCash"]+=x;else o[ins?"insta":"cash"]+=x};
-  for(const v of Object.values(S.visits))if(test(v.date||""))add(visitSep(v),v.method,v.paid||0);
-  for(const p of Object.values(S.payments))if(p.kind!=="discount"&&test(p.date||""))add(paySep(p),p.method,p.amount||0);
-  o.clinic=o.cash+o.insta;o.sep=o.sepCash+o.sepInsta;return o}
+function dayMoney(test){ // cash / InstaPay collected from visits + payments whose date passes test
+  const o={cash:0,insta:0};const add=(method,x)=>{if(x)o[method==="instapay"?"insta":"cash"]+=x};
+  for(const v of Object.values(S.visits))if(test(v.date||""))add(v.method,v.paid||0);
+  for(const p of Object.values(S.payments))if(p.kind!=="discount"&&test(p.date||""))add(p.method,p.amount||0);
+  o.clinic=o.cash+o.insta;return o}
 function normUser(u){return nd(u||"").trim().toLowerCase()}
 function randPw(){const a=new Uint32Array(1);crypto.getRandomValues(a);return String(100000+a[0]%900000)}
 function randId(){const a=new Uint8Array(6);crypto.getRandomValues(a);return [...a].map(b=>b.toString(16).padStart(2,"0")).join("")}
@@ -115,6 +110,7 @@ function setupRoleSubs(){
     r.push(sub(c("payments").where("date",">=",winStart()),setLive("payments")));
     r.push(sub(c("exp").where("date",">=",winStart()),setLive("exp")));
     r.push(subDoc("cfg/prices",d=>{S.prices=d?.p||{};S.packTypes=d?.packs||[]}));
+    r.push(subDoc("cfg/ext",d=>{S.ext=d||{}}));
     r.push(sub(c("patients"),o=>S.patients=o));
     r.push(sub(c("users"),o=>S.users=o));
     r.push(c("usernames").onSnapshot(s=>{const m={};s.docs.forEach(d=>m[d.data().uid]=d.id);S.usernames=m;sched()},()=>{}));
@@ -160,7 +156,7 @@ function defaultTab(){return {owner:"sessions",secretary:"sessions",doctor:"myap
 function tabsFor(){
   if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),["myatt","حضوري"]]}
   const pend=pendingEntries().length;
-  const base=[["sessions","جلسات اليوم",Object.values(S.appts).filter(needsRecord).length],["appts","الحجز"],...(pend?[["review","تسجيلات الدكاترة",pend]]:[]),["patients","المرضى والكشف"]];
+  const base=[["sessions","جلسات اليوم",Object.values(S.appts).filter(needsRecord).length],["appts","الحجز"],...(pend?[["review","تسجيلات الدكاترة",pend]]:[]),["patients","المرضى والكشف"],...(exts().length?[["ext","الدكاترة من بره"]]:[])];
   if(S.role==="owner")return [...base,["att","الحضور"],["reports","الحسابات والمرتبات"],["settings","الإعدادات"]];
   return [...base,["myatt","حضوري"],...(backfillOn()?[["att","حضور الفريق (مؤقت)"]]:[]),["reports","دخل وخرج اليوم"],["settings","الإعدادات"]];
 }
@@ -174,7 +170,7 @@ function render(){
   const tl=tabsFor();
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
-  const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,settings:vSettings,mine:vMine,myatt:vMyAtt}[S.tab];
+  const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,ext:vExt,settings:vSettings,mine:vMine,myatt:vMyAtt}[S.tab];
   main.innerHTML=fn?fn():"";
   if(S.tab==="patients")renderPatientList();
 }
@@ -290,12 +286,12 @@ function payroll(month){
   });
 }
 function revenue(month){
-  let charged=0,sessions=0,sepSessions=0;
-  for(const v of Object.values(S.visits))if((v.date||"").startsWith(month)){if(visitSep(v)){sepSessions++;continue}sessions++;charged+=v.net||0}
-  for(const pt of Object.values(S.patients))for(const k of pt.packs||[])if((k.date||"").startsWith(month)&&!isSepType(k.typeId))charged+=k.price||0;
+  let charged=0,sessions=0;
+  for(const v of Object.values(S.visits))if((v.date||"").startsWith(month)){sessions++;charged+=v.net||0}
+  for(const pt of Object.values(S.patients))for(const k of pt.packs||[])if((k.date||"").startsWith(month))charged+=k.price||0;
   const mo=dayMoney(d=>d.startsWith(month));
   const unpaid=Object.values(S.patients).reduce((s,p)=>s+Math.max(0,(p.charged||0)-(p.paid||0)),0);
-  return{cash:mo.cash,insta:mo.insta,collected:mo.clinic,charged,sessions,unpaid,sep:mo.sep,sepCash:mo.sepCash,sepInsta:mo.sepInsta,sepSessions};
+  return{cash:mo.cash,insta:mo.insta,collected:mo.clinic,charged,sessions,unpaid};
 }
 function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)){o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}return{o,t}}
 function dayNav(act,pickId,d){return `<button class="btn sm" data-act="${act}" data-n="-1">اليوم اللي قبله</button><input type="date" id="${pickId}" value="${d}" style="max-width:170px" aria-label="اليوم"><button class="btn sm" data-act="${act}" data-n="1">اللي بعده</button>`}
@@ -389,6 +385,77 @@ function vMyAtt(){
   <div class="stats"><div class="stat"><div class="k">أيام حضور ${esc(monthLabel(m))}</div><div class="v num">${days}</div></div><div class="stat"><div class="k">أوفر تايم الشهر ده</div><div class="v">${hm(ot)}</div></div></div>
   ${recs.length?`<div class="list">${recs.map(x=>{const w=attMinutes(x);const o=w!=null&&w>base?w-base:0;return `<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(x.date))}</span><span class="end">${attChip(x,w,o,base)}</span><span class="m">حضور ${esc(x.in||"—")} · انصراف ${esc(x.out||"—")}${w!=null?" · "+hm(w):""}</span><span></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام متسجلة الشهر ده</b>اضغط «سجّل حضوري» أول ما توصل.</div>`}`;
 }
+/* ---------- doctors from outside (on a percentage, paid weekly / every two weeks) ---------- */
+function exts(all){return (S.ext?.list||[]).filter(x=>all||x.active!==false)}
+function extById(id){return (S.ext?.list||[]).find(x=>x.id===id)}
+const BY_LABEL={any:"أي حد",self:"هي/هو",clinic:"المركز"};
+function extRate(x,typeId,self){const r=x.rates||[];const m=r.find(q=>q.typeId===typeId&&q.by===(self?"self":"clinic"))||r.find(q=>q.typeId===typeId&&q.by==="any");return m?num(m.pct):null}
+function extRows(sid,test){ // every session the outside doctor worked, with its value and her share
+  const x=extById(sid);if(!x)return[];const rows=[];
+  for(const v of Object.values(S.visits)){if(!test(v.date||""))continue;
+    for(const [d] of creditsOf(v))if(d===sid){const value=(v.packId?(v.packValue||0):(v.net||0))*(v.doctor2Id?0.5:1);
+      const self=S.patients[v.patientId]?.broughtBy===sid;const pct=extRate(x,v.typeId,self);
+      rows.push({v,value,pct,self,share:pct==null?0:Math.round(value*pct/100)})}}
+  return rows.sort((a,b)=>((a.v.date||"")+(a.v.time||"")).localeCompare((b.v.date||"")+(b.v.time||"")));
+}
+function dnum(d){const [y,m,x]=d.split("-").map(Number);return Math.round(Date.UTC(y,m-1,x)/864e5)}
+function dstr(n){return new Date(n*864e5).toISOString().slice(0,10)}
+function extPeriod(x,date){const c=x.cycle||7,a=dnum(x.anchor||today());const i=Math.floor((dnum(date)-a)/c);const f=a+i*c;return{from:dstr(f),to:dstr(f+c-1)}}
+function extPaid(sid,from){return (S.ext?.pays||[]).filter(p=>p.sid===sid&&p.from===from)}
+function extMonthShare(m){let t=0;for(const x of exts(true))t+=extRows(x.id,d=>d.startsWith(m)).reduce((s,r)=>s+r.share,0);return t}
+function vExt(){
+  const list=exts();if(!list.length)return `<div class="empty"><b>مفيش دكاترة من بره</b>ضيفهم من الإعدادات.</div>`;
+  return `<p class="sub" style="margin:0">النسبة على الجلسات اللي اتعملت بس (الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته). «مين جاب الحالة» بيتحدد من ملف المريض.</p>`+list.map(x=>{
+    const cur=extPeriod(x,today());const periods=[];let p=cur;
+    for(let i=0;i<6;i++){periods.push(p);p={from:dstr(dnum(p.from)-(x.cycle||7)),to:dstr(dnum(p.from)-1)};if(p.to<(x.anchor||""))break}
+    periods.forEach(q=>{ensureMonth(q.from.slice(0,7));ensureMonth(q.to.slice(0,7))});
+    const rowsHtml=periods.map(q=>{const rows=extRows(x.id,d=>d>=q.from&&d<=q.to);const due=rows.reduce((s,r)=>s+r.share,0);const paid=extPaid(x.id,q.from).reduce((s,r)=>s+(r.amount||0),0);const left=due-paid;const miss=rows.some(r=>r.pct==null);
+      if(!rows.length&&!paid&&q.from!==cur.from)return "";
+      return `<div class="row stack" style="cursor:default"><span class="t">${esc(fmtRange(q))}${q.from===cur.from?` <span class="chip c-acc">الفترة الحالية</span>`:""} ${paid&&left<=0?`<span class="chip c-ok">اتصرفلها</span>`:left>0&&paid?`<span class="chip c-warn">فاضل ${money(left)}</span>`:""} ${miss?`<span class="chip c-bad">فيه جلسة من غير نسبة</span>`:""}</span>
+      <span class="end bar"><button class="btn sm" data-act="extPeriod" data-id="${x.id}" data-from="${q.from}">التفاصيل</button>${left>0?`<button class="btn sm teal" data-act="extPay" data-id="${x.id}" data-from="${q.from}" data-confirm>اتصرفلها ${money(left)}</button>`:""}</span>
+      <span class="m">${rows.length} جلسة · حقها ${money(due)}${paid?` · اتصرف ${money(paid)}`:""}</span><span></span></div>`}).join("");
+    return `<div class="panel"><div class="sec-title"><h2>${esc(x.name)}</h2><span class="sub">بتتحاسب ${x.cycle===14?"كل أسبوعين":"كل أسبوع"}</span></div><div class="list">${rowsHtml}</div></div>`}).join("");
+}
+function fmtRange(q){const f=d=>new Date(d+"T12:00").toLocaleDateString("ar-EG-u-nu-latn",{day:"numeric",month:"short"});return `${f(q.from)} ← ${f(q.to)}`}
+function sheetExtPeriod(sid,from){
+  const x=extById(sid);if(!x)return;const q=extPeriod(x,from);const rows=extRows(sid,d=>d>=q.from&&d<=q.to);const pays=extPaid(sid,q.from);
+  openSheet(`${x.name} · ${fmtRange(q)}`,`
+  ${rows.length?`<div class="tblwrap"><table><thead><tr><th>اليوم</th><th>المريض</th><th>النوع</th><th>جابها</th><th>قيمة الجلسة</th><th>النسبة</th><th>حقها</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.v.date)}</td><td>${esc(r.v.patientName)}</td><td>${esc(r.v.typeName||"")}</td><td>${r.self?esc(x.name):"المركز"}</td><td>${money(r.value)}</td><td>${r.pct==null?`<span class="chip c-bad">مش متسجلة</span>`:r.pct+"%"}</td><td><b>${money(r.share)}</b></td></tr>`).join("")}</tbody>
+  <tfoot><tr><td colspan="4">الإجمالي</td><td>${money(rows.reduce((s,r)=>s+r.value,0))}</td><td></td><td>${money(rows.reduce((s,r)=>s+r.share,0))}</td></tr></tfoot></table></div>`:`<div class="empty"><b>مفيش جلسات في الفترة دي</b></div>`}
+  ${rows.some(r=>r.pct==null)?`<div class="note">فيه جلسات نوعها ملوش نسبة متسجلة لـ ${esc(x.name)}. ظبطها من الإعدادات ← الدكاترة من بره.</div>`:""}
+  ${pays.length?`<div class="list">${pays.map(p=>`<div class="row" style="cursor:default"><span class="t">اتصرف ${money(p.amount)}</span><span class="end">${S.role==="owner"?`<button class="btn sm danger" data-act="extUnpay" data-id="${p.id}" data-confirm>إلغاء</button>`:""}</span><span class="m">${esc(p.date)} · ${esc(staffName(p.by))}</span><span></span></div>`).join("")}</div>`:""}`);
+}
+async function extPay(sid,from){
+  const x=extById(sid);const q=extPeriod(x,from);const rows=extRows(sid,d=>d>=q.from&&d<=q.to);
+  const due=rows.reduce((s,r)=>s+r.share,0),left=due-extPaid(sid,q.from).reduce((s,r)=>s+(r.amount||0),0);if(left<=0)return;
+  const pays=[...(S.ext?.pays||[]),{id:randId(),sid,from:q.from,to:q.to,amount:left,sessions:rows.length,date:today(),by:S.mySid,at:Date.now()}];
+  await S.db.doc("cfg/ext").set({pays},{merge:true});toast(`اتسجل إن ${x.name} خدت ${money(left)}`);
+}
+async function extUnpay(pid){await S.db.doc("cfg/ext").set({pays:(S.ext?.pays||[]).filter(p=>p.id!==pid)},{merge:true});closeSheet();toast("اتلغى")}
+function extRateRow(r){const t=S.types;return `<div class="grid2 extrate" style="align-items:end"><label class="f">نوع الجلسة<select class="er_type">${t.map(y=>`<option value="${y.id}" ${y.id===r.typeId?"selected":""}>${esc(y.name)}</option>`).join("")}</select></label>
+  <label class="f">لو الحالة جايبها<select class="er_by">${Object.entries(BY_LABEL).map(([k,l])=>`<option value="${k}" ${k===(r.by||"any")?"selected":""}>${l}</option>`).join("")}</select></label>
+  <label class="f">نسبتها %<input class="er_pct" inputmode="decimal" value="${r.pct??""}"></label><button class="btn sm danger" data-act="rmRate" type="button">شيل</button></div>`}
+function sheetExt(id){
+  const x=id?extById(id):{cycle:7,anchor:today(),rates:[{by:"any"}]};if(!x)return;
+  openSheet(id?x.name:"دكتور من بره",`<p class="sub" style="margin:0">دكتور مش من فريق المركز، بيشتغل بنسبة. مالوش مرتب ولا حضور ولا حساب دخول، وريهام بتسجل جلساته زي أي دكتور.</p>
+  <label class="f">الاسم<input id="x_name" value="${esc(x.name||"")}" placeholder="مثلاً د. هدير"></label>
+  <div class="grid2"><label class="f">بيتحاسب<select id="x_cycle"><option value="7" ${x.cycle!==14?"selected":""}>كل أسبوع</option><option value="14" ${x.cycle===14?"selected":""}>كل أسبوعين</option></select></label>
+  <label class="f">أول يوم في أول فترة حساب<input type="date" id="x_anchor" value="${x.anchor||today()}"></label></div>
+  <h3 style="font-size:15px;margin:0">النسب (نسبة الدكتور، والباقي للمركز)</h3>
+  <div id="x_rates" style="display:grid;gap:10px">${(x.rates||[]).map(extRateRow).join("")}</div>
+  <button class="btn sm" data-act="addRate" type="button">+ نسبة</button>
+  <p class="sub" style="margin:0">«أي حد» بتتطبق لو مفيش نسبة مخصوصة لمين جاب الحالة.</p>
+  ${id?`<div class="seg"><label><input type="radio" name="x_act" value="1" ${x.active!==false?"checked":""}> شغال معانا</label><label><input type="radio" name="x_act" value="0" ${x.active===false?"checked":""}> وقف</label></div>`:""}
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveExt" data-id="${id||""}">حفظ</button>`);
+}
+async function saveExt(id){
+  const name=val("x_name").trim();if(!name)return setErr("اكتب الاسم");
+  const rates=[...document.querySelectorAll("#x_rates .extrate")].map(r=>({typeId:r.querySelector(".er_type").value,by:r.querySelector(".er_by").value,pct:num(r.querySelector(".er_pct").value)})).filter(r=>r.typeId);
+  if(rates.some(r=>r.pct<=0||r.pct>100))return setErr("اكتب النسبة من 1 لـ 100");
+  const body={name,cycle:num(val("x_cycle"))===14?14:7,anchor:val("x_anchor")||today(),rates,active:id?radio("x_act")!=="0":true};
+  const list=id?exts(true).map(x=>x.id===id?{...x,...body}:x):[...exts(true),{id:"x"+randId(),...body}];
+  await S.db.doc("cfg/ext").set({list},{merge:true});closeSheet();toast("اتحفظ");
+}
 /* ---------- views: reports ---------- */
 function expenseTips(m,rv,ex,pr,flags){
   const tips=[];const salBase=pr.reduce((s,x)=>s+x.sal,0),otNow=pr.reduce((s,x)=>s+x.otPay,0);
@@ -441,7 +508,7 @@ function vReports(){
   if(!owner){
     const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
     const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta;
-    const dayExp=Object.values(S.expenses).filter(x=>x.date===d);const out=dayExp.reduce((t,x)=>t+(x.amount||0),0);
+    const dayExp=Object.values(S.expenses).filter(x=>x.date===d);const dayExt=(S.ext?.pays||[]).filter(p=>p.date===d);const out=dayExp.reduce((t,x)=>t+(x.amount||0),0)+dayExt.reduce((t,x)=>t+(x.amount||0),0);
     return `<div class="bar">${dayNav("repDay","repPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span></div>
   <div class="stats">
     <div class="stat"><div class="k">دخل اليوم للمركز</div><div class="v money">${money(cash+insta)}</div></div>
@@ -449,12 +516,11 @@ function vReports(){
     <div class="stat"><div class="k">منهم InstaPay</div><div class="v money">${money(insta)}</div></div>
     <div class="stat"><div class="k">خرج اليوم</div><div class="v money" style="color:${out?"var(--bad)":"inherit"}">${money(out)}</div></div>
   </div>
-  ${sepNames()?`<div class="stats"><div class="stat"><div class="k">${esc(sepNames())} (حساب منفصل)</div><div class="v money">${money(dm.sep)}</div><div class="sub">كاش ${money(dm.sepCash)} · InstaPay ${money(dm.sepInsta)}</div></div></div>`:""}
-  ${dayExp.length?`<div class="list">${dayExp.map(x=>`<button class="row" data-act="editExp" data-id="${x.id}"><span class="t">${esc(x.category)}</span><span class="end money">${money(x.amount)}</span><span class="m">${esc(x.note||"")}</span><span></span></button>`).join("")}</div>`:""}
+  ${dayExp.length||dayExt.length?`<div class="list">${dayExp.map(x=>`<button class="row" data-act="editExp" data-id="${x.id}"><span class="t">${esc(x.category)}</span><span class="end money">${money(x.amount)}</span><span class="m">${esc(x.note||"")}</span><span></span></button>`).join("")}${dayExt.map(p=>`<div class="row" style="cursor:default"><span class="t">حق ${esc(staffName(p.sid))}</span><span class="end money">${money(p.amount)}</span><span class="m">${esc(fmtRange(p))} · ${p.sessions} جلسة</span><span></span></div>`).join("")}</div>`:""}
   <div class="bar"><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="شهر المصروفات"><span class="sub grow">مصروفات ${esc(monthLabel(m))}</span></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
   }
-  const pr=payroll(m);const salTotal=pr.reduce((s,x)=>s+x.total,0);const totalExp=salTotal+ex.t;const net=rv.collected-totalExp;
+  const pr=payroll(m);const salTotal=pr.reduce((s,x)=>s+x.total,0);const extShare=extMonthShare(m);const totalExp=salTotal+ex.t+extShare;const net=rv.collected-totalExp;
   const ratio=rv.collected?totalExp/rv.collected:null;
   const prevWith=[1,2,3].map(n=>expByCat(prevMonth(m,n))).filter(p=>p.t>0);const flags=[];
   if(prevWith.length)for(const c of new Set([...Object.keys(ex.o),...prevWith.flatMap(p=>Object.keys(p.o))])){const avg=prevWith.reduce((s,p)=>s+(p.o[c]||0),0)/prevWith.length;const cur=ex.o[c]||0;if(cur>avg*1.25&&cur-avg>=300)flags.push({c,cur,avg})}
@@ -468,11 +534,10 @@ function vReports(){
   <div class="stats">
     <div class="stat"><div class="k">اتحصّل للمركز</div><div class="v money">${money(rv.collected)}</div></div>
     <div class="stat"><div class="k">مرتبات وأوفر تايم ونسب</div><div class="v money">${money(salTotal)}</div></div>
+    ${extShare||exts(true).length?`<div class="stat"><div class="k">حق الدكاترة من بره</div><div class="v money">${money(extShare)}</div></div>`:""}
     <div class="stat"><div class="k">مصروفات تانية</div><div class="v money">${money(ex.t)}</div></div>
     <div class="stat"><div class="k">صافي الشهر</div><div class="v money" style="color:${net<0?"var(--bad)":"var(--ok)"}">${money(net)}</div></div>
   </div>
-  ${sepNames()||rv.sep?`<div class="panel"><div class="sec-title"><h2>حساب ${esc(sepNames()||"منفصل")}</h2><span class="chip c-acc">${money(rv.sep)}</span></div>
-  <p class="sub" style="margin:0">اتحصّل ${money(rv.sep)} (كاش ${money(rv.sepCash)} · InstaPay ${money(rv.sepInsta)}) من ${rv.sepSessions} جلسة. الفلوس دي مش داخلة في إيراد المركز ولا في صافي الشهر.</p></div>`:""}
   <div class="verdict ${vcls}"><b style="font-family:var(--f-display)">${vt}</b><span>${vs}</span></div>
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><h2>المرتبات</h2>
@@ -494,9 +559,11 @@ function vSettings(){
     <span class="end bar">${canManage(s)?`<button class="btn sm" data-act="editStaff" data-id="${s.id}">تعديل</button><button class="btn sm ${acc?"":"teal"}" data-act="makeLogin" data-id="${s.id}">${acc?"باسورد جديد":"اعمل حساب دخول"}</button>`:""}</span>
     <span class="m">${acc?`اسم المستخدم: ${esc(un||"—")}${acc.mustChange?" · لسه مغيّرش الباسورد المؤقت":""}`:"مفيش حساب دخول"}</span><span></span></div>`}).join("")}</div>
   <p class="sub" style="margin:0">كل واحد يقدر يغيّر اسم المستخدم والباسورد بتوعه من «حسابي». لو حد نسي الباسورد اضغط «باسورد جديد» وهيطلعلك باسورد مؤقت تديهوله.</p></div>
+  <div class="panel"><div class="sec-title"><h2>الدكاترة من بره</h2>${owner?`<button class="btn sm" data-act="newExt">+ إضافة</button>`:""}</div>
+  ${exts(true).length?`<div class="list">${exts(true).map(x=>`<${owner?"button":"div"} class="row" ${owner?`data-act="editExt" data-id="${x.id}"`:`style="cursor:default"`}><span class="t">${esc(x.name)} ${x.active===false?`<span class="chip c-bad">وقف</span>`:""}</span><span class="end sub">${x.cycle===14?"كل أسبوعين":"كل أسبوع"}</span><span class="m">${(x.rates||[]).map(r=>`${typeName(r.typeId)}${r.by!=="any"?` (لو جابها ${BY_LABEL[r.by]})`:""}: ${r.pct}%`).map(esc).join(" · ")||"مفيش نسب"}</span><span></span></${owner?"button":"div"}>`).join("")}</div>`:`<div class="empty"><b>مفيش دكاترة من بره</b>زي د. هدير ود. منة: بيشتغلوا بنسبة وبيتحاسبوا كل أسبوع أو أسبوعين.</div>`}</div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   <p class="sub" style="margin:0">أسماء بس من غير فلوس. الفلوس كلها في الباكدجات تحت، وكل باكدج تابع لنوع جلسة.</p>
-  ${S.types.length?`<div class="list">${S.types.map(t=>{const n=(S.packTypes||[]).filter(k=>k.typeId===t.id).length;return `<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)} ${t.sep?`<span class="chip c-acc">حساب منفصل</span>`:""}</span><span class="end sub">${n?`${n} باكدج`:"مفيش باكدجات"}</span></button>`}).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: علاج طبيعي، تيكار، ليمفيديما. الدكاترة بيشوفوا الأسماء بس.</div>`}</div>
+  ${S.types.length?`<div class="list">${S.types.map(t=>{const n=(S.packTypes||[]).filter(k=>k.typeId===t.id).length;return `<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)} </span><span class="end sub">${n?`${n} باكدج`:"مفيش باكدجات"}</span></button>`}).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: علاج طبيعي، تيكار، ليمفيديما. الدكاترة بيشوفوا الأسماء بس.</div>`}</div>
   ${S.role==="owner"?`<div class="panel"><div class="sec-title"><h2>صلاحية مؤقتة لريهام</h2>${backfillOn()?`<span class="chip c-acc">شغالة</span>`:""}</div>
   ${backfillOn()?`<p class="sub" style="margin:0">ريهام تقدر تسجل حضور وانصراف الفريق من ${esc(S.backfill.from)} لحد ${esc(S.backfill.to)}، والصلاحية بتقفل لوحدها ${tsDate(S.backfill.until).toLocaleString("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",hour:"numeric",minute:"2-digit"})}.</p><button class="btn danger" data-act="stopBackfill">اقفلها دلوقتي</button>`
   :`<p class="sub" style="margin:0">عشان ريهام تسجل الحضور والانصراف القديم من غير GPS. الجلسات القديمة بتسجلها عادي من «الجلسات والفلوس».</p>
@@ -690,7 +757,8 @@ function apptTimes(a){const p=[];if(a.arrived)p.push(`وصل ${a.arrived}`);
   if(a.end){const d=apptDur(a);p.push(`خلص ${a.end}${a.endBy&&a.endBy!==a.startBy?` (${staffName(a.endBy)})`:""}${d!=null?` · ${hm(d)}`:""}`)}
   else if(a.status==="started"){const e=apptElapsed(a);if(e!=null)p.push(`شغّال من ${hm(e)}`)}
   return p.join(" · ")}
-function isDoc(sid){return sid==="owner"||S.staff[sid]?.role==="doctor"}
+function isDoc(sid){return sid==="owner"||S.staff[sid]?.role==="doctor"||!!extById(sid)}
+function workerOpts(){return [...doctors().map(x=>[x.id,x.name]),["owner","د. محي"],...exts().map(x=>[x.id,x.name+" (من بره)"])]}
 function provisionalCredit(a){ // who gets the session until Reham confirms
   if(!a.startBy)return{mode:"full",a:apptDocs(a)[0]};
   if(a.endBy&&isDoc(a.endBy)&&a.endBy!==a.startBy)return{mode:"split",a:a.startBy,b:a.endBy};
@@ -733,7 +801,7 @@ function vMyAppts(){
 function sheetAppt(id){
   const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session"};if(!a)return;apptWarned=false;
   const cur=a.patientId&&S.patients[a.patientId]?pLabel(S.patients[a.patientId]):(a.patientName||"");
-  const docOpts=sel=>[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
+  const docOpts=sel=>workerOpts().map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
   const ds=apptDocs(a);
   openSheet(id?"تعديل الحجز":"حجز جديد",`
   <label class="f">المريض${patientPicker("ap_pat",cur)}</label>${newPatientFields("ap")}
@@ -847,7 +915,6 @@ function vSessions(){
     <div class="stat"><div class="k">جم النهارده</div><div class="v num">${came}</div></div>
     <div class="stat"><div class="k">محضروش / كنسلوا</div><div class="v num">${appts.filter(a=>["noshow","cancelled"].includes(a.status)).length}</div></div>
     <div class="stat"><div class="k">اتحصّل للمركز (كاش · InstaPay)</div><div class="v money">${money(cash+insta)}</div><div class="sub">${money(cash)} · ${money(insta)}</div></div>
-    ${sepNames()?`<div class="stat"><div class="k">${esc(sepNames())} (حساب منفصل)</div><div class="v money">${money(dm.sep)}</div><div class="sub">${money(dm.sepCash)} · ${money(dm.sepInsta)}</div></div>`:""}
     <div class="stat"><div class="k">لسه على اللي جم (حسابهم كله)</div><div class="v money" style="color:${remain?"var(--bad)":"inherit"}">${money(remain)}</div></div>
   </div>
   ${appts.length||loose.length?`<div class="list">${appts.map(sessionRow).join("")}${loose.map(v=>`<button class="row" data-act="editVisit" data-id="${v.id}"><span class="t">${esc(v.time||"")} · ${esc(v.patientName)} ${v.completion==="half"&&!v.doctor2Id?`<span class="chip c-warn">نص</span>`:""}</span><span class="end">${v.packId?`<span class="chip c-teal">من الباكدج</span>`:(v.net||0)-(v.paid||0)>0?`<span class="chip c-bad">عليه ${money((v.net||0)-(v.paid||0))}</span>`:`<span class="chip c-ok">مدفوعة</span>`}</span><span class="m">${esc(visitDocs(v))} · ${esc(v.typeName||"")}</span><span></span></button>`).join("")}</div>`
@@ -859,7 +926,7 @@ function sheetSession(id){
   const prov=provisionalCredit(a);const useVisit=v&&(a.creditSet||!a.startBy);
   const d1=(useVisit?v.doctorId:prov.a)||apptDocs(a)[0]||"";const d2=useVisit?(v.doctor2Id||""):(prov.mode==="split"?prov.b:"");
   const comp=v&&!v.doctor2Id?(v.completion||"full"):"full";
-  const docOpts=sel=>[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
+  const docOpts=sel=>workerOpts().map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
   const price=S.prices[v?.typeId||a.typeId];
   openSheet(`${a.patientName}`,`
   <div class="note">${esc(a.kindLabel||"")} · ميعاده ${esc(a.date)} ${esc(a.time||"")} ${lateChip(a)}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
@@ -920,7 +987,7 @@ async function doCancel(id,reason){const a=S.appts[id],old=S.visits[id];const no
 function sheetWalkin(){
   openSheet("جلسة من غير ميعاد",`<label class="f">المريض${patientPicker("w_pat","")}</label>${newPatientFields("w")}
   <div class="seg"><label><input type="radio" name="w_kind" value="exam"> كشف</label><label><input type="radio" name="w_kind" value="session" checked> جلسة</label></div>
-  <div class="grid2"><label class="f">الدكتور<select id="w_doc"><option value="">اختار الدكتور</option>${[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}">${esc(n)}</option>`).join("")}</select></label>
+  <div class="grid2"><label class="f">الدكتور<select id="w_doc"><option value="">اختار الدكتور</option>${workerOpts().map(([k,n])=>`<option value="${k}">${esc(n)}</option>`).join("")}</select></label>
   <label class="f">نوع الجلسة<select id="w_type">${typeOptions("")}</select></label><label class="f">الساعة<input type="time" id="w_time" value="${S.ui.date===today()?nowHM():""}"></label></div>
   <div class="err" id="formErr"></div><button class="btn primary" data-act="saveWalkin">كمّل</button>`,()=>watchNewPatient("w","w_pat"));
 }
@@ -974,7 +1041,7 @@ async function approveEntry(id,reject){
 async function sheetVisit(id){
   let v=id?S.visits[id]:{date:S.ui.date,time:nowHM(),method:"cash"};
   if(id&&!v){const d=await S.db.doc("visits/"+id).get();if(!d.exists)return toast("الجلسة دي مش موجودة");v={id,...d.data()};S.old.visits[id]=v;merge()}
-  const docOpts=[...doctors().map(d=>[d.id,d.name]),["owner","د. محي"]];
+  const docOpts=workerOpts();
   openSheet(id?"تعديل جلسة":"جلسة جديدة",`
   <label class="f">الحالة${patientPicker("v_pat",v.patientId&&S.patients[v.patientId]?pLabel(S.patients[v.patientId]):v.patientName)}</label>${newPatientFields("v")}
   <div class="grid2"><label class="f">الدكتور<select id="v_doc">${docOpts.map(([k,n])=>`<option value="${k}" ${v.doctorId===k?"selected":""}>${esc(n)}</option>`).join("")}</select></label>
@@ -1160,7 +1227,8 @@ function sheetPatient(id){
   ${packsHtml(id)}`:""}
   <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
   <label class="f">النوع<select id="pt_gender"><option value="">—</option><option ${p.gender==="ذكر"?"selected":""}>ذكر</option><option ${p.gender==="أنثى"?"selected":""}>أنثى</option></select></label>
-  <label class="f">عرف المركز منين<select id="pt_source">${sourceOptions(p.source)}</select></label>${F("sourceDetail","تفاصيل المصدر (اسم اللي رشّح…)")}
+  <label class="f">عرف المركز منين<select id="pt_source">${sourceOptions(p.source)}</select></label>
+  ${exts(true).length?`<label class="f">الحالة جايبها مين (للنسبة)<select id="pt_broughtBy"><option value="">المركز</option>${exts(true).map(x=>`<option value="${x.id}" ${p.broughtBy===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label>`:""}${F("sourceDetail","تفاصيل المصدر (اسم اللي رشّح…)")}
   <label class="f">تاريخ الكشف<input type="date" id="pt_examDate" value="${p.examDate||""}"></label>
   <label class="f">الدكتور اللي كشف<select id="pt_examDoctor"><option value="">—</option>${docOpts.map(([k,n])=>`<option value="${k}" ${p.examDoctor===k?"selected":""}>${esc(n)}</option>`).join("")}</select></label></div>
   <div class="hr"></div><h3 style="font-size:15px">شيت الكشف</h3>
@@ -1207,7 +1275,7 @@ async function uploadSheet(id,input){
 }
 async function savePatient(id){
   const keys=["name","phone","age","gender","source","sourceDetail","examDate","examDoctor","complaint","history","findings","diagnosis","plan","notes"];
-  const body={};keys.forEach(k=>body[k]=(val("pt_"+k)||"").trim());body.phone=nd(body.phone);body.age=nd(body.age);
+  const body={};keys.forEach(k=>body[k]=(val("pt_"+k)||"").trim());if(document.getElementById("pt_broughtBy"))body.broughtBy=val("pt_broughtBy");body.phone=nd(body.phone);body.age=nd(body.age);
   if(!body.name)return setErr("اكتب اسم المريض");
   const b=S.db.batch();
   if(id)b.update(S.db.doc("patients/"+id),body);else{const ref=S.db.collection("patients").doc();b.set(ref,{...body,createdAt:Date.now(),charged:0,paid:0,count:0});id=ref.id}
@@ -1339,7 +1407,7 @@ function showTempPw(name,user,pw){
 }
 function sheetType(id){
   const t=id?S.types.find(x=>x.id===id):{};
-  openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label>${S.role==="owner"?`<div class="seg"><label><input type="checkbox" id="t_sep" ${t?.sep?"checked":""}> فلوسه حساب منفصل (مش من إيراد المركز)</label></div>`:""}<p class="sub" style="margin:0">من غير سعر. السعر بيتحدد في الباكدج، أو بيتكتب يدوي لو جلسة منفردة.</p><div class="err" id="formErr"></div>
+  openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label><p class="sub" style="margin:0">من غير سعر. السعر بيتحدد في الباكدج، أو بيتكتب يدوي لو جلسة منفردة.</p><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveType" data-id="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delType" data-id="${id}" data-confirm>حذف</button>`:""}</div>`);
 }
 /* ---------- backup (owner) ---------- */
@@ -1366,9 +1434,9 @@ document.addEventListener("change",e=>{
   if(id==="monthPick"&&e.target.value){S.ui.month=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -1429,6 +1497,14 @@ document.addEventListener("click",async e=>{
     case "newPay":sheetPay(null);break;
     case "payFor":sheetPay(null,id);break;
     case "payPack":sheetPay(null,id,t.dataset.k);break;
+    case "extPeriod":sheetExtPeriod(id,t.dataset.from);break;
+    case "extPay":guard(t,()=>extPay(id,t.dataset.from));break;
+    case "extUnpay":guard(t,()=>extUnpay(id));break;
+    case "newExt":sheetExt(null);break;
+    case "editExt":sheetExt(id);break;
+    case "saveExt":guard(t,()=>saveExt(id));break;
+    case "addRate":document.getElementById("x_rates").insertAdjacentHTML("beforeend",extRateRow({by:"any"}));break;
+    case "rmRate":t.closest(".extrate").remove();break;
     case "editPay":sheetPay(id);break;
     case "savePay":guard(t,()=>savePay(id));break;
     case "delPay":guard(t,()=>delPay(id));break;
@@ -1472,7 +1548,7 @@ document.addEventListener("click",async e=>{
     case "delPackType":guard(t,async()=>{await db.doc("cfg/prices").set({packs:(S.packTypes||[]).filter(x=>x.id!==id)},{merge:true});closeSheet()});break;
     case "newType":sheetType(null);break;
     case "editType":sheetType(id);break;
-    case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const sepEl=document.getElementById("t_sep");const sep=sepEl?sepEl.checked:!!S.types.find(x=>x.id===id)?.sep;const list=id?S.types.map(x=>x.id===id?{...x,name,sep}:x):[...S.types,{id:tid,name,sep}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
+    case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
     case "saveCfg":guard(t,async()=>{const salary={},commission={};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)}});await db.doc("priv/config").set({salary,commission,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
