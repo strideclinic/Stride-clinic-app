@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 أكتوبر · 9";
+const APP_VERSION="25 أكتوبر · 10";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -92,6 +92,7 @@ function setupRoleSubs(){
   r.push(sub(c("staff"),o=>S.staff=o));
   r.push(subDoc("pub/types",d=>S.types=d?.list||[]));
   r.push(subDoc("pub/geo",d=>S.geo=d||null));
+  r.push(subDoc("pub/notify",d=>S.notify=d||null));
   r.push(sub(c("pdir"),o=>S.pdir=o));
   r.push(c("usernames").where("uid","==",S.uid).onSnapshot(s=>{S.myUsername=s.docs[0]?.id||"";sched()},()=>{}));
   if(isAdmin()){
@@ -459,6 +460,12 @@ function vSettings(){
   <p class="sub" style="margin:0">كل واحد يقدر يغيّر اسم المستخدم والباسورد بتوعه من «حسابي». لو حد نسي الباسورد اضغط «باسورد جديد» وهيطلعلك باسورد مؤقت تديهوله.</p></div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات والأسعار</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   ${S.types.length?`<div class="list">${S.types.map(t=>`<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)}</span><span class="end money">${S.prices[t.id]!=null?money(S.prices[t.id]):"بدون سعر"}</span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: كشف، جلسة علاج طبيعي، جلسة تأهيل. الدكاترة بيشوفوا الأسماء بس، من غير أسعار.</div>`}</div>
+  ${S.role==="owner"?`<div class="panel"><div class="sec-title"><h2>إشعارات على موبايلك</h2>${S.notify?.topic?`<span class="chip ${S.notify.on===false?"c-mute":"c-ok"}">${S.notify.on===false?"متوقفة":"شغالة"}</span>`:""}</div>
+  ${S.notify?.topic?`<p class="sub" style="margin:0">بيوصلك إشعار لو حد حاول يسجل حضور أو انصراف من بره المركز، أو رفض يدّي مكانه.</p>
+  <ol class="sub" style="margin:0;padding-inline-start:20px;display:grid;gap:4px"><li>نزّل تطبيق <b>ntfy</b> من App Store أو Google Play، وهو مجاني.</li><li>افتحه ودوس <b>+</b> واكتب اسم القناة ده بالظبط:</li></ol>
+  <div class="bar"><code id="ntfyTopic" style="direction:ltr;background:var(--sunk);padding:6px 10px;border-radius:8px;user-select:all">${esc(S.notify.topic)}</code><button class="btn sm" data-act="copyTopic">نسخ</button></div>
+  <div class="bar"><button class="btn sm" data-act="testAlert">ابعت إشعار تجربة</button><button class="btn sm" data-act="toggleAlerts">${S.notify.on===false?"شغّل الإشعارات":"وقّف الإشعارات"}</button></div>`
+  :`<p class="sub" style="margin:0">لو حد حاول يسجل حضور من بره المركز يوصلك إشعار على موبايلك حتى لو التطبيق مقفول.</p><button class="btn primary" data-act="setupAlerts">فعّل الإشعارات</button>`}</div>`:""}
   <div class="panel"><div class="sec-title"><h2>مكان المركز للحضور</h2>${S.geo?.lat?`<span class="chip ${S.geo.required===false?"c-mute":"c-ok"}">${S.geo.required===false?"متوقف":"شغال"}</span>`:""}</div>
   <p class="sub" style="margin:0">${S.geo?.lat?`متسجل. أي حد يسجل حضوره لازم يكون في حدود ${S.geo.radius||150} متر من المركز.`:"اقف جوه المركز ودوس الزرار، عشان الحضور والانصراف يتسجلوا من جوه المركز بس."}</p>
   <div class="grid2"><label class="f">المسافة المسموحة (متر)<input id="geo_r" inputmode="numeric" value="${S.geo?.radius||150}"></label></div>
@@ -960,17 +967,27 @@ function distM(a,b){const R=6371000,t=x=>x*Math.PI/180;const dLat=t(b.lat-a.lat)
 function getPos(){return new Promise((res,rej)=>{if(!navigator.geolocation)return rej({code:"nogeo"});
   navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:Math.round(p.coords.accuracy||0)}),e=>rej(e),{enableHighAccuracy:true,timeout:20000,maximumAge:0})})}
 function geoError(e){return e?.code===1?"لازم تسمح للتطبيق يعرف مكانك. من إعدادات الموبايل: Privacy ← Location ← Safari (أو Chrome) ← While Using، وبعدين جرّب تاني.":e?.code==="nogeo"?"الموبايل ده مش بيدعم تحديد المكان.":"مقدرناش نحدد مكانك. اتأكد إن الـ Location شغال وجرّب تاني جوه المركز."}
-async function checkPlace(){ // returns location info, or throws a readable message when outside the clinic
+/* owner alerts go through ntfy (free push app); the topic name lives in the staff-only settings, not in the code */
+function alertOwner(title,message,priority=4){
+  const topic=S.notify?.topic;if(!topic||S.notify.on===false)return;
+  fetch("https://ntfy.sh/",{method:"POST",body:JSON.stringify({topic,title,message,priority,tags:["warning"]})}).catch(()=>{});
+}
+async function checkPlace(kind){ // returns location info, or throws a readable message when outside the clinic
   const g=S.geo;if(!g||!g.lat||g.required===false)return null;
-  let p;try{p=await getPos()}catch(e){throw new Error(geoError(e))}
+  const what=kind==="in"?"حضور":"انصراف",who=staffName(S.mySid),at=nowHM();
+  let p;try{p=await getPos()}catch(e){
+    if(e?.code===1)alertOwner(`${who}: رفض يدّي مكانه`,`${who} حاول يسجل ${what} الساعة ${at} ورفض يسمح للتطبيق يعرف مكانه.`);
+    throw new Error(geoError(e))}
   const d=distM(g,p),radius=g.radius||150;
-  if(d-Math.min(p.acc,100)>radius)throw new Error(`انت بعيد عن المركز حوالي ${d} متر. الحضور والانصراف بيتسجلوا من جوه المركز بس.`);
+  if(d-Math.min(p.acc,100)>radius){
+    alertOwner(`${who}: ${what} من بعيد`,`${who} حاول يسجل ${what} الساعة ${at} وهو على بعد ${d>=1000?(d/1000).toFixed(1)+" كم":d+" متر"} من المركز. الحضور ماتسجلش.`);
+    throw new Error(`انت بعيد عن المركز حوالي ${d} متر. الحضور والانصراف بيتسجلوا من جوه المركز بس.`)}
   return{d,acc:p.acc};
 }
 async function selfAtt(kind){
   const sid=S.mySid,d=today(),ref=S.db.doc(`att/${d}_${sid}`);const TS=firebase.firestore.FieldValue.serverTimestamp();
   const msg=document.getElementById("geoMsg");if(msg){msg.textContent="بيحدد مكانك…";msg.style.color=""}
-  let loc;try{loc=await checkPlace()}catch(e){if(msg){msg.textContent=e.message;msg.style.color="var(--bad)"}return}
+  let loc;try{loc=await checkPlace(kind)}catch(e){if(msg){msg.textContent=e.message;msg.style.color="var(--bad)"}return}
   if(msg)msg.textContent="";
   const base=kind==="in"?{date:d,staffId:sid,inAt:TS,in:"",out:"",note:"",by:sid}:{out:nowHM(),outAt:TS};
   const extra=loc?(kind==="in"?{inLoc:loc}:{outLoc:loc}):{};
@@ -1096,6 +1113,10 @@ document.addEventListener("click",async e=>{
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
+    case "setupAlerts":if(S.role==="owner")guard(t,async()=>{await db.doc("pub/notify").set({topic:"stride-"+randId()+randId(),on:true,at:Date.now()});toast("الإشعارات اتفعّلت. كمّل الخطوات اللي ظهرت.")});break;
+    case "toggleAlerts":if(S.role==="owner")guard(t,async()=>{await db.doc("pub/notify").update({on:S.notify?.on===false})});break;
+    case "testAlert":if(S.role==="owner"){const n=S.notify;if(n?.topic)fetch("https://ntfy.sh/",{method:"POST",body:JSON.stringify({topic:n.topic,title:"Stride Clinic",message:"الإشعارات شغالة. هيوصلك تنبيه هنا لو حد سجل حضور من بره المركز.",priority:3})}).then(r=>toast(r.ok?"اتبعت. بص على موبايلك.":"مااتبعتش، جرب تاني.")).catch(()=>toast("مااتبعتش. اتأكد من النت."))}break;
+    case "copyTopic":{const tp=S.notify?.topic||"";navigator.clipboard?.writeText(tp).then(()=>toast("اتنسخ")).catch(()=>{const el=document.getElementById("ntfyTopic");const r=document.createRange();r.selectNodeContents(el);const sel=getSelection();sel.removeAllRanges();sel.addRange(r)})}break;
     case "newAppt":sheetAppt(null);break;
     case "editAppt":sheetAppt(id);break;
     case "saveAppt":guard(t,()=>saveAppt(id));break;
