@@ -302,7 +302,7 @@ function vReview(){
     <span class="t">${esc(e.patientName)} ${e.completion==="half"?`<span class="chip c-warn">نص حالة</span>`:""}</span>
     <span class="end">${statusChip(e.status)}</span>
     <span class="m">${esc(staffName(e.doctorSid))} · ${esc(e.typeName||"")} · ${esc(e.date)} ${esc(e.time||"")}</span>
-    <span class="end m">${e.note?"فيه كومنت":""}</span></button>`;
+    <span class="end m">${[e.note?"فيه كومنت":"",e.media?.length?`${e.media.length} صورة`:""].filter(Boolean).join(" · ")}</span></button>`;
   return `
   <div class="sec-title"><h2>مستني المراجعة</h2><span class="sub">اعتمد أو عدّل أو ارفض، والدكتور هيشوف النتيجة عنده</span></div>
   ${pend.length?`<div class="list">${pend.map(e=>card(e,"review")).join("")}</div>`:`<div class="empty"><b>مفيش حاجة مستنية مراجعة</b>لما دكتور يسجل جلسة من حسابه هتظهر هنا.</div>`}
@@ -574,14 +574,28 @@ function sheetEntry(e){
   <label class="f">نوع الجلسة<select id="e_type" ${ro?"disabled":""}>${typeOptions(e?.typeId)}</select></label>
   ${ro?"":compSeg("e_comp",e?.completion)}
   <label class="f">كومنت (اختياري)<textarea id="e_note" placeholder="مثلاً الحالة اتحسنت، أو د. سلمى ساعدتني في نص الجلسة" ${ro?"disabled":""}>${esc(e?.note||"")}</textarea></label>
+  <div class="sec-title"><span class="sub">صور مع الكومنت (لحد ${MEDIA_MAX})</span>${ro?"":`<label class="btn sm">+ صورة<input type="file" id="e_file" accept="image/*" multiple hidden></label>`}</div>
+  <div class="photos" id="e_media"></div>
   <div class="err" id="formErr"></div>
-  ${ro?"":`<div class="bar"><button class="btn primary grow" data-act="saveEntry" data-id="${e?.id||""}">${e?"حفظ التعديل":"ابعت للمراجعة"}</button>${e?`<button class="btn danger" data-act="delEntry" data-id="${e.id}" data-confirm>حذف</button>`:""}</div>`}`);
+  ${ro?"":`<div class="bar"><button class="btn primary grow" data-act="saveEntry" data-id="${e?.id||""}">${e?"حفظ التعديل":"ابعت للمراجعة"}</button>${e?`<button class="btn danger" data-act="delEntry" data-id="${e.id}" data-confirm>حذف</button>`:""}</div>`}`,
+  ()=>{entryMedia=[...(e?.media||[])];drawEntryMedia(ro);const f=document.getElementById("e_file");if(f)f.addEventListener("change",()=>addEntryMedia(f))});
+}
+/* photos attached to a session comment live inside the log entry itself (small, compressed) */
+const MEDIA_MAX=3;let entryMedia=[];
+function mediaImgs(list){return (list||[]).filter(u=>/^data:image\/(jpeg|png|webp);base64,/.test(u)).map(u=>`<img src="${u}" alt="صورة مع الكومنت" data-act="zoom">`).join("")}
+function drawEntryMedia(ro){const el=document.getElementById("e_media");if(!el)return;
+  el.innerHTML=entryMedia.length?entryMedia.map((u,i)=>`<span style="position:relative;display:inline-block"><img src="${u}" alt="صورة مع الكومنت" data-act="zoom">${ro?"":`<button class="btn sm danger" data-act="rmMedia" data-i="${i}" style="position:absolute;top:4px;left:4px;padding:0 8px" aria-label="شيل الصورة">✕</button>`}</span>`).join(""):(ro?`<span class="sub">مفيش صور.</span>`:`<span class="sub">مثلاً صورة أشعة، أو وضع الحالة، أو ورقة من الدكتور المعالج.</span>`)}
+async function addEntryMedia(input){
+  const files=[...input.files].slice(0,MEDIA_MAX-entryMedia.length);input.value="";
+  if(!files.length)return setErr(`أقصى عدد ${MEDIA_MAX} صور للجلسة`);setErr("بيجهّز الصور…");
+  try{for(const f of files)entryMedia.push(await compressImage(f,280000,1280));setErr("")}catch(e){setErr("صورة منهم مترفعتش، جرب تصوّرها تاني.")}
+  drawEntryMedia(false);
 }
 async function saveEntry(id){
   const name=val("e_pat").trim(),type=val("e_type");
   if(!name)return setErr("اكتب اسم الحالة");if(!type)return setErr("اختار نوع الجلسة");
   const pd=Object.entries(S.pdir).find(([k,p])=>p.name===name);
-  const body={patientName:name,patientId:pd?pd[0]:null,date:val("e_date")||today(),time:val("e_time"),typeId:type,typeName:typeName(type),completion:radio("e_comp")||"full",note:val("e_note").trim(),status:"pending",doctorSid:S.mySid};
+  const body={patientName:name,patientId:pd?pd[0]:null,date:val("e_date")||today(),time:val("e_time"),typeId:type,typeName:typeName(type),completion:radio("e_comp")||"full",note:val("e_note").trim(),media:entryMedia.slice(0,MEDIA_MAX),status:"pending",doctorSid:S.mySid};
   if(id)await S.db.doc("log/"+id).update(body);else await S.db.collection("log").doc().set({...body,createdAt:Date.now()});
   closeSheet();toast("اتبعتت للمراجعة");
 }
@@ -591,7 +605,7 @@ function sheetReview(id,done){
   const pat=e.patientId&&S.patients[e.patientId]?pLabel(S.patients[e.patientId]):(findPatient(e.patientName)?pLabel(findPatient(e.patientName)):e.patientName);
   const price=S.prices[e.typeId];
   openSheet(done?"جلسة اتراجعت":"مراجعة جلسة",`
-  <div class="note"><b>${esc(staffName(e.doctorSid))}</b> سجّل: ${esc(e.patientName)} · ${esc(e.typeName)} · ${e.completion==="half"?"نص حالة":"حالة كاملة"} · ${esc(e.date)} ${esc(e.time||"")}${e.note?`<br>الكومنت: ${esc(e.note)}`:""}</div>
+  <div class="note"><b>${esc(staffName(e.doctorSid))}</b> سجّل: ${esc(e.patientName)} · ${esc(e.typeName)} · ${e.completion==="half"?"نص حالة":"حالة كاملة"} · ${esc(e.date)} ${esc(e.time||"")}${e.note?`<br>الكومنت: ${esc(e.note)}`:""}${e.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(e.media)}</div>`:""}</div>
   ${done?`<div class="note">${statusChip(e.status)} ${(e.review?.changes||[]).map(esc).join(" · ")}${e.review?.note?`<br>ردك: ${esc(e.review.note)}`:""}</div>${e.status!=="rejected"?`<button class="btn" data-act="editVisit" data-id="${id}">فتح الجلسة والفلوس</button>`:""}`:`
   <label class="f">الحالة${patientPicker("r_pat",pat)}</label>${newPatientFields("r")}
   <div class="grid2"><label class="f">التاريخ<input type="date" id="r_date" value="${e.date}"></label><label class="f">الساعة<input type="time" id="r_time" value="${e.time||""}"></label></div>
@@ -618,6 +632,7 @@ async function approveEntry(id,reject){
   const v={date,time:val("r_time"),patientId:pat.id,patientName:pat.name,doctorId:e.doctorSid,typeId:type,typeName:typeName(type),...mny,completion:comp,logId:id,createdAt:Date.now(),by:S.mySid};
   const b=S.db.batch(),acc={};
   b.set(S.db.doc("visits/"+id),v);visitEffect(acc,v,1);flushPatients(b,acc);
+  (e.media||[]).forEach((data,i)=>b.set(S.db.doc(`photos/${id}_${i}`),{patientId:pat.id,data,at:Date.now(),from:"session",date,by:e.doctorSid,note:e.note||""}));
   b.update(ref,{status:changes.length?"edited":"approved",patientId:pat.id,review:{note,at:Date.now(),changes,by:S.mySid}});
   await b.commit();
   closeSheet();toast(changes.length?"اتعتمدت بتعديل":"اتعتمدت");
@@ -798,7 +813,7 @@ function sheetPatient(id){
   <label class="f">الدكتور اللي كشف<select id="pt_examDoctor"><option value="">—</option>${docOpts.map(([k,n])=>`<option value="${k}" ${p.examDoctor===k?"selected":""}>${esc(n)}</option>`).join("")}</select></label></div>
   <div class="hr"></div><h3 style="font-size:15px">شيت الكشف</h3>
   ${F("complaint","الشكوى الأساسية","ta")}${F("history","التاريخ المرضي والعمليات والأدوية","ta")}${F("findings","الفحص (ROM، القوة، الألم من 10، الاختبارات الخاصة)","ta")}${F("diagnosis","التشخيص")}${F("plan","خطة العلاج وعدد الجلسات","ta")}${F("notes","ملاحظات","ta")}
-  <div class="hr"></div><div class="sec-title"><h3 style="font-size:15px">صورة ورقة الكشف</h3>${id?`<label class="btn sm">رفع صورة<input type="file" id="pt_file" accept="image/*" hidden></label>`:""}</div>
+  <div class="hr"></div><div class="sec-title"><h3 style="font-size:15px">صور الكشف والجلسات</h3>${id?`<label class="btn sm">رفع صورة<input type="file" id="pt_file" accept="image/*" hidden></label>`:""}</div>
   ${id?`<div class="photos" id="pt_photos"><span class="sub">بيحمّل الصور…</span></div>`:`<span class="sub">احفظ الملف الأول، وبعدها تقدر ترفع صورة الورقة.</span>`}
   <div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="savePatient" data-id="${id||""}">حفظ الملف</button>${id&&!b?`<button class="btn danger" data-act="delPatient" data-id="${id}" data-confirm>حذف</button>`:""}</div>
@@ -822,12 +837,12 @@ async function loadPhotos(id){
   }catch(e){el.innerHTML=`<span class="sub">الصور مش متاحة دلوقتي.</span>`}
 }
 function loadImg(file){return new Promise((res,rej)=>{const u=URL.createObjectURL(file);const i=new Image();i.onload=()=>{URL.revokeObjectURL(u);res(i)};i.onerror=()=>{URL.revokeObjectURL(u);rej(new Error("img"))};i.src=u})}
-async function compressImage(file){ // keeps each photo well under Firestore's 1 MB document limit
-  const img=await loadImg(file);let max=1600;
+async function compressImage(file,limit=850000,startMax=1600){ // keeps photos under Firestore's 1 MB document limit
+  const img=await loadImg(file);let max=startMax;
   for(let round=0;round<4;round++){
     const k=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));const c=document.createElement("canvas");c.width=Math.round(img.naturalWidth*k);c.height=Math.round(img.naturalHeight*k);
     const g=c.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);
-    for(const q of [0.72,0.6,0.5,0.4]){const u=c.toDataURL("image/jpeg",q);if(u.length<850000)return u}
+    for(const q of [0.72,0.6,0.5,0.4]){const u=c.toDataURL("image/jpeg",q);if(u.length<limit)return u}
     max=Math.round(max*0.75);
   }
   throw new Error("too big");
@@ -1001,6 +1016,7 @@ document.addEventListener("click",async e=>{
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
+    case "rmMedia":entryMedia.splice(Number(t.dataset.i),1);drawEntryMedia(false);break;
     case "setGeo":guard(t,async()=>{const m=document.getElementById("geoSetMsg");m.style.color="";m.textContent="بيحدد المكان…";
       let p;try{p=await getPos()}catch(e){m.style.color="var(--bad)";m.textContent=geoError(e);return}
       if(p.acc>60){m.textContent=`الدقة ${p.acc} متر بس، وده ضعيف. لو تقدر قف جنب شباك وجرّب تاني. اتسجل على كل حال.`}else m.textContent="";
