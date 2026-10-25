@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 21";
+const APP_VERSION="26 أكتوبر · 22";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -109,7 +109,7 @@ function setupRoleSubs(){
     r.push(sub(c("visits").where("date",">=",winStart()),setLive("visits")));
     r.push(sub(c("payments").where("date",">=",winStart()),setLive("payments")));
     r.push(sub(c("exp").where("date",">=",winStart()),setLive("exp")));
-    r.push(subDoc("cfg/prices",d=>{S.prices=d?.p||{};S.packTypes=d?.packs||[]}));
+    r.push(subDoc("cfg/prices",d=>{S.prices={};S.packTypes=d?.packs||[]}));
     r.push(subDoc("cfg/ext",d=>{S.ext=d||{}}));
     r.push(sub(c("patients"),o=>S.patients=o));
     r.push(sub(c("users"),o=>S.users=o));
@@ -492,6 +492,25 @@ function discountsPanel(m){
   ${rows.length?`<div class="tblwrap"><table><thead><tr><th>التاريخ</th><th>المريض</th><th>على إيه</th><th>الخصم</th><th>السبب</th><th>مين عمله</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.date)}</td><td>${esc(r.patient)}</td><td>${esc(r.what)}</td><td>${money(r.amount)}</td><td style="white-space:normal;min-width:140px">${esc(r.reason)}</td><td>${esc(r.by?staffName(r.by):"—")}</td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>مفيش خصومات الشهر ده</b>أي خصم على جلسة أو باكدج أو حساب هيظهر هنا بسببه ومين عمله.</div>`}</div>`;
 }
+function planPanel(m){ // which works better: packages or paying per session
+  const DAY=864e5,stale=d=>!d||(Date.now()-new Date(d+"T12:00").getTime())>30*DAY;
+  let pk={n:0,done:0,stop:0,on:0},ps={n:0,stop:0,on:0,sess:0};
+  for(const p of Object.values(S.patients)){
+    for(const k of p.packs||[]){pk.n++;if((k.used||0)>=k.sessions)pk.done++;else if(stale(p.last||k.date))pk.stop++;else pk.on++}
+    if(Object.keys(p.rates||{}).length){ps.n++;ps.sess+=p.count||0;stale(p.last)?ps.stop++:ps.on++}}
+  let vPk=0,vPs=0;for(const v of Object.values(S.visits))if((v.date||"").startsWith(m))v.packId?vPk++:vPs++;
+  if(!pk.n&&!ps.n)return "";
+  const pct=(a,b)=>b?Math.round(a/b*100)+"%":"—";
+  return `<div class="panel"><h2>باكدج ولا بالجلسة؟</h2>
+  <div class="tblwrap"><table><thead><tr><th></th><th>باكدج</th><th>بالجلسة</th></tr></thead><tbody>
+  <tr><td>جلسات الشهر ده</td><td class="num">${vPk}</td><td class="num">${vPs}</td></tr>
+  <tr><td>العدد من الأول</td><td class="num">${pk.n} باكدج</td><td class="num">${ps.n} مريض</td></tr>
+  <tr><td>لسه شغالين</td><td class="num">${pk.on}</td><td class="num">${ps.on}</td></tr>
+  <tr><td>كمّلوا للآخر</td><td class="num">${pk.done} (${pct(pk.done,pk.n)})</td><td class="num">—</td></tr>
+  <tr><td>وقفوا (مجوش من 30 يوم)</td><td class="num">${pk.stop} (${pct(pk.stop,pk.n)})</td><td class="num">${ps.stop} (${pct(ps.stop,ps.n)})</td></tr>
+  ${ps.n?`<tr><td>متوسط جلسات المريض بالجلسة</td><td></td><td class="num">${(ps.sess/ps.n).toFixed(1)}</td></tr>`:""}
+  </tbody></table></div>
+  <p class="sub" style="margin:0">لو اللي بالجلسة بيوقفوا أكتر بكتير من اللي بالباكدج، يبقى يستاهل تشجع الناس على الباكدج، بخصم بسيط مثلاً.</p></div>`}
 function vReports(){
   const owner=S.role==="owner";const m=S.ui.month;
   [m,prevMonth(m),prevMonth(m,2),prevMonth(m,3)].forEach(x=>ensureMonth(x));
@@ -544,6 +563,7 @@ function vReports(){
     <div class="stat"><div class="k">صافي الشهر</div><div class="v money" style="color:${net<0?"var(--bad)":"var(--ok)"}">${money(net)}</div></div>
   </div>
   <div class="verdict ${vcls}"><b style="font-family:var(--f-display)">${vt}</b><span>${vs}</span></div>
+  ${planPanel(m)}
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><h2>المرتبات</h2>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
@@ -688,8 +708,14 @@ function packMoneyChip(k){const o=packOwed(k);return o==null?"":o>0?`<span class
 function patBalChip(pid){const p=S.patients[pid];if(!p)return "";const d=Math.round((p.charged||0)-(p.paid||0));return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-ok">خالص</span>`}
 function wirePack(prefix,cur,typeSel){ // pick the session type first; the patient's package of that type is used, otherwise it's a single paid session
   const box=document.getElementById(prefix+"_packbox"),moneyEl=document.getElementById(prefix+"_money"),pick=document.getElementById(prefix+"_pat"),tsel=typeSel&&document.getElementById(typeSel);
+  const prIn=document.getElementById(prefix+"_price");if(prIn)prIn.addEventListener("input",e=>{if(e.isTrusted)prIn.dataset.auto=""}); // typed by hand: keep it
   const draw=()=>{const pat=findPatient(pick.value);const tid=tsel?tsel.value:"";const list=pat?packsFor(pat.id,tid,cur?.packId):[];
-    if(!list.length){box.innerHTML=pat&&tid?`<div class="note">مفيش باكدج ${esc(typeName(tid))} شغال للمريض ده، فدي جلسة منفردة: اكتب سعرها تحت. أو اقفل وبيع له باكدج من ملفه.</div>`:"";moneyEl.hidden=false;return}
+    if(!list.length){const rate=pat&&tid?S.patients[pat.id]?.rates?.[tid]:null;
+      box.innerHTML=!pat||!tid?"":rate!=null?`<div class="note">${esc(typeName(tid))} بالجلسة للمريض ده: سعر الجلسة <b>${money(rate)}</b>. اكتب دفع كام، والباقي بيتحسب عليه.</div>`
+        :`<div class="note">مفيش باكدج ${esc(typeName(tid))} ولا سعر بالجلسة للمريض ده، فاكتب سعر الجلسة تحت. وعشان متكتبوش كل مرة، حدد له نظام من ملفه (+ باكدج أو + بالجلسة).</div>`;
+      moneyEl.hidden=false;const pr=document.getElementById(prefix+"_price");
+      if(pr&&rate!=null&&(!pr.value||pr.dataset.auto==="1")){pr.value=rate;pr.dataset.auto="1";pr.dispatchEvent(new Event("input"))}
+      return}
     const on=cur?!!cur.packId:true;
     box.innerHTML=`<div class="seg"><label><input type="checkbox" id="${prefix}_usepack" style="width:auto" ${on?"checked":""}> الجلسة دي من الباكدج</label><select id="${prefix}_pack" style="flex:1 1 200px">${list.map(k=>{const o=packOwed(k);return `<option value="${k.id}" ${k.id===cur?.packId?"selected":""}>${esc(packTitle(k))} · فاضل ${k.sessions-(k.used||0)} من ${k.sessions}${o>0?` · عليه ${money(o)}`:o===0?" · خالص":""}</option>`}).join("")}</select></div>
     <div id="${prefix}_kpaybox" class="grid2"><label class="f">دفع دلوقتي على الباكدج (لو دفع)<input id="${prefix}_kpay" inputmode="decimal" placeholder="0"></label><label class="f">طريقة الدفع<select id="${prefix}_kmethod"><option value="cash">كاش</option><option value="instapay">InstaPay</option></select></label></div>`;
@@ -775,7 +801,8 @@ function sessionInfo(pid,kind,excludeId,date,time,typeId){ // "جلسة 4 من 1
   const pack=packsFor(pid,typeId)[0];
   const before=Object.values(S.appts).filter(x=>x.id!==excludeId&&x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!S.visits[x.id]&&!["cancelled","noshow"].includes(x.status)&&((x.date||"")+(x.time||""))<(date+time)&&(!pack||x.packId===pack.id)).length;
   if(pack){const n=(pack.used||0)+before+1;return{label:`جلسة ${Math.min(n,pack.sessions)} من ${pack.sessions} · ${packTitle(pack)}`,packId:pack.id}}
-  return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} منفردة`:""}`,packId:null};
+  const rate=typeId?S.patients[pid]?.rates?.[typeId]:null;
+  return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} ${rate!=null?"بالجلسة":"منفردة"}`:""}`,packId:null};
 }
 function kindOf(a){ // the session's number is worked out live from the patient's current packages until the session is recorded
   if(a.kind==="exam")return "كشف";
@@ -786,8 +813,8 @@ function syncLabels(list){ // write the live session number back to the booking,
   if(!isAdmin())return;for(const a of list){if(a.kind==="exam"||labelSyncing.has(a.id))continue;const l=kindOf(a);
     if(l&&l!==a.kindLabel&&!S.visits[a.id]&&!a.confirmed){labelSyncing.add(a.id);const pk=packsFor(a.patientId,a.typeId)[0];
       S.db.doc("appts/"+a.id).update({kindLabel:l,packId:pk?.id||null}).catch(()=>{}).finally(()=>setTimeout(()=>labelSyncing.delete(a.id),5000))}}}
-function packMismatch(a){ // has packages, but none of this session's type
-  if(a.kind==="exam"||!isAdmin()||S.visits[a.id]||!a.typeId)return "";const all=activePacks(a.patientId);if(!all.length||packsFor(a.patientId,a.typeId).length)return "";
+function packMismatch(a){ // has packages, but none of this session's type (and no per-session rate for it)
+  if(a.kind==="exam"||!isAdmin()||S.visits[a.id]||!a.typeId)return "";const all=activePacks(a.patientId);if(!all.length||packsFor(a.patientId,a.typeId).length||S.patients[a.patientId]?.rates?.[a.typeId]!=null)return "";
   return `<span class="chip c-warn">معاه ${esc(all.map(k=>k.typeId?typeName(k.typeId):packTitle(k)).join(" و"))} بس، ونوع الجلسة ${esc(typeName(a.typeId))}</span>`}
 function apptRow(a,view,showDoc){
   const doctorBtns=a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"";
@@ -1256,6 +1283,20 @@ function packsHtml(pid){
     <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}${(k.used||0)===(k.preUsed||0)&&(k.paid||0)===(k.prePaid||0)?`<button class="btn sm danger" data-act="delPack" data-id="${pid}" data-k="${k.id}" data-confirm>شيل</button>`:""}</span>
     <span class="m">${[k.date||"",`السعر ${k.discount?`${money(k.listPrice)} ← `:""}${money(k.price)}`,k.paid!=null?`دفع ${money(k.paid)}`:"",k.old?`من قبل السيستم (كان عمل ${k.preUsed||0}${k.prePaid?`، ودفع ${money(k.prePaid)} قبل الشهر اللي اتسجل فيه`:""})`:"",k.discount?`خصم ${money(k.discount)}: ${[k.reason,...(k.discHist||[]).map(h=>h.reason)].filter(Boolean).join("، ")}`:""].filter(Boolean).map(esc).join(" · ")}</span><span></span></div>`}).join("")}</div>`;
 }
+function ratesHtml(pid){
+  const r=S.patients[pid]?.rates||{};const ks=Object.keys(r);if(!ks.length)return "";
+  return `<div class="list">${ks.map(t=>`<div class="row" style="cursor:default"><span class="t">${esc(typeName(t))} بالجلسة <span class="chip c-acc">${money(r[t])} للجلسة</span></span><span class="end bar"><button class="btn sm" data-act="editRate" data-id="${pid}" data-k="${t}">تعديل</button></span><span class="m">كل جلسة ${esc(typeName(t))} من غير باكدج بتتحسب عليه بالسعر ده</span><span></span></div>`).join("")}</div>`}
+function sheetRate(pid,tid){
+  const p=S.patients[pid];if(!p)return;const r=p.rates||{};
+  openSheet(`${p.name} بالجلسة`,`<p class="sub" style="margin:0">للمريض اللي بيدفع كل جلسة لوحدها. بتحدد السعر مرة واحدة، وكل جلسة من النوع ده بتتحسب عليه لوحدها، وريهام بتكتب دفع كام بس.</p>
+  <div class="grid2"><label class="f">نوع الجلسة<select id="rt_type" ${tid?"disabled":""}>${typeOptions(tid||"")}</select></label><label class="f">سعر الجلسة<input id="rt_price" inputmode="decimal" value="${tid?r[tid]??"":""}"></label></div>
+  <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveRate" data-id="${pid}" data-k="${tid||""}">حفظ</button>${tid?`<button class="btn danger" data-act="delRate" data-id="${pid}" data-k="${tid}" data-confirm>شيل</button>`:""}</div>`);
+}
+async function saveRate(pid,tid,del){
+  const p=S.patients[pid];const r={...(p.rates||{})};
+  if(del)delete r[tid];else{const t=tid||val("rt_type");const price=num(val("rt_price"));if(!t)return setErr("اختار نوع الجلسة");if(!price)return setErr("اكتب سعر الجلسة");r[t]=price}
+  await S.db.doc("patients/"+pid).update({rates:r});toast(del?"اتشال":"اتحفظ");reopenPatient(pid);
+}
 function sheetPatient(id){
   const p=id?S.patients[id]:{examDate:today()};if(!p)return;
   const b=balances()[id];
@@ -1263,9 +1304,9 @@ function sheetPatient(id){
   const F=(k,l,t="input",extra="")=>t==="ta"?`<label class="f">${l}<textarea id="pt_${k}">${esc(p[k]||"")}</textarea></label>`:`<label class="f">${l}<input id="pt_${k}" value="${esc(p[k]||"")}" ${extra}></label>`;
   openSheet(id?p.name:"ملف مريض جديد",`
   ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b?`${b.count} جلسة · إجمالي ${money(b.charged)} · دفع ${money(b.paid)}`:""}</span></div>
-  <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
+  <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
-  ${packsHtml(id)}`:""}
+  ${packsHtml(id)}${ratesHtml(id)}`:""}
   <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
   <label class="f">النوع<select id="pt_gender"><option value="">—</option><option ${p.gender==="ذكر"?"selected":""}>ذكر</option><option ${p.gender==="أنثى"?"selected":""}>أنثى</option></select></label>
   <label class="f">عرف المركز منين<select id="pt_source">${sourceOptions(p.source)}</select></label>
@@ -1477,7 +1518,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newRate","editRate","saveRate","delRate","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -1575,6 +1616,10 @@ document.addEventListener("click",async e=>{
     case "makeLogin":sheetLogin(id);break;
     case "saveLogin":guard(t,()=>createLogin(id,normUser(val("lg_user"))));break;
     case "sellPack":sheetSellPack(id);break;
+    case "newRate":sheetRate(id,null);break;
+    case "editRate":sheetRate(id,t.dataset.k);break;
+    case "saveRate":guard(t,()=>saveRate(id,t.dataset.k||null,false));break;
+    case "delRate":guard(t,()=>saveRate(id,t.dataset.k,true));break;
     case "saveSellPack":guard(t,()=>saveSellPack(id));break;
     case "delPack":guard(t,()=>delPack(id,t.dataset.k));break;
     case "discount":sheetDiscount(id);break;
