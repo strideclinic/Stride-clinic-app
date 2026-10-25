@@ -183,7 +183,16 @@ function vLogin(){
   <label class="f">اسم المستخدم<input id="l_user" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
   <label class="f">الباسورد<input id="l_pw" type="password" autocomplete="current-password"></label>
   <div class="err" id="loginErr"></div><button class="btn primary" type="submit">دخول</button>
-  <p class="sub" style="margin:0">نسيت الباسورد؟ د. محي يقدر يعملك باسورد جديد من الإعدادات.</p></form>`;
+  <button class="btn ghost sm" type="button" data-act="forgotPw">نسيت الباسورد؟</button></form>`;
+}
+async function forgotPw(){
+  const err=document.getElementById("loginErr");const u=normUser(val("l_user"));
+  if(!USER_RE.test(u)){err.textContent="اكتب اسم المستخدم الأول، وبعدين دوس «نسيت الباسورد»";return}
+  let d;try{d=await S.db.doc("usernames/"+u).get()}catch(e){err.textContent="مفيش اتصال بالنت.";return}
+  const email=d.exists?d.data().email:"";
+  if(!email||email.endsWith("@"+DOMAIN)){err.textContent="اطلب من د. محي يعملك باسورد جديد من الإعدادات.";return}
+  try{await S.auth.sendPasswordResetEmail(email);err.textContent="بعتنا لينك تغيير الباسورد على إيميلك. لو مش لاقيه بص في Spam."}
+  catch(e){err.textContent="مقدرناش نبعت الإيميل دلوقتي، جرب كمان شوية."}
 }
 async function doLogin(){
   const u=normUser(val("l_user")),pw=nd(val("l_pw"));const err=document.getElementById("loginErr");
@@ -965,6 +974,7 @@ document.addEventListener("click",async e=>{
     case "tab":S.tab=t.dataset.k;render();window.scrollTo(0,0);break;
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
+    case "forgotPw":forgotPw();break;
     case "myAccount":sheetAccount(false);break;
     case "saveAccount":guard(t,()=>saveAccount(!!t.dataset.forced));break;
     case "day":S.ui.date=addDays(S.ui.date,Number(t.dataset.n));render();break;
