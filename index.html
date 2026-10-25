@@ -85,6 +85,9 @@ label.f{display:grid;gap:4px;font-size:13px;color:var(--muted);font-weight:500}
 .list{display:grid;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 .row{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer;text-align:right;background:none;border-left:0;border-right:0;border-bottom:0;width:100%}
 .row:first-child{border-top:0}
+.row.stack{grid-template-columns:minmax(0,1fr)}
+.row.stack .end{text-align:right}
+.row.stack .end.bar{justify-content:flex-start;order:5}
 .row:hover{background:var(--sunk)}
 .row .t{font-weight:600;min-width:0;overflow-wrap:anywhere}
 .row .m{font-size:13px;color:var(--muted);min-width:0;overflow-wrap:anywhere}

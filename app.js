@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 أكتوبر · 12";
+const APP_VERSION="25 أكتوبر · 13";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -81,7 +81,7 @@ async function checkSetup(){if(S.setupDone)return;try{const d=await S.db.doc("me
 function clearSubs(){S.roleSubs.forEach(u=>{try{u()}catch(e){}});S.roleSubs=[];if(backfillUnsub){backfillUnsub();backfillUnsub=null}
   Object.assign(S,{staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",loadedMonths:{},
     live:{visits:{},payments:{},att:{},exp:{},appts:{}},old:{visits:{},payments:{},att:{},exp:{},appts:{}}});merge()}
-function rowOf(d){const x={id:d.id,...d.data({serverTimestamps:"estimate"})};if(x.inAt)x.in=fmtTs(x.inAt);if(x.outAt)x.out=fmtTs(x.outAt);if(x.arrivedAt)x.arrived=fmtTs(x.arrivedAt);if(x.startAt)x.start=fmtTs(x.startAt);if(x.endAt)x.end=fmtTs(x.endAt);return x}
+function rowOf(d){const x={id:d.id,...d.data({serverTimestamps:"estimate"})};if(x.inAt)x.in=fmtTs(x.inAt);if(x.outAt)x.out=fmtTs(x.outAt);if(x.arrivedAt)x.arrived=fmtTs(x.arrivedAt);if(x.startAt)x.start=fmtTs(x.startAt);if(x.endAt)x.end=fmtTs(x.endAt);if(x.arrivedT)x.arrived=x.arrivedT;if(x.startT)x.start=x.startT;if(x.endT)x.end=x.endT;return x}
 function toObj(snap){const o={};snap.docs.forEach(d=>o[d.id]=rowOf(d));return o}
 function sub(q,set){return q.onSnapshot(snap=>{set(toObj(snap));sched()},e=>console.warn("sub",e))}
 function subDoc(path,set){return S.db.doc(path).onSnapshot(d=>{set(d.exists?d.data():null);sched()},e=>console.warn(path,e))}
@@ -145,13 +145,12 @@ function syncBackfillSub(){
   if(!backfillOn()&&backfillUnsub){backfillUnsub();backfillUnsub=null;S.live.attAll={};merge()}
   sched();
 }
-function defaultTab(){return {owner:"appts",secretary:"appts",doctor:"myappts"}[S.role]}
+function defaultTab(){return {owner:"sessions",secretary:"sessions",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
-  if(S.role==="doctor"){return [["myappts","مواعيدي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)).length],["mine","جلسات من غير ميعاد",myFresh()],["myatt","حضوري"]]}
+  if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),["myatt","حضوري"]]}
   const pend=pendingEntries().length;
-  const toConfirm=Object.values(S.appts).filter(a=>a.status==="done"&&!a.confirmed).length;
-  const base=[["appts","المواعيد",toConfirm],["visits","الجلسات والفلوس"],["review","جلسات من غير ميعاد",pend],["patients","المرضى والكشف"]];
+  const base=[["sessions","جلسات اليوم",Object.values(S.appts).filter(needsRecord).length],["appts","الحجز"],...(pend?[["review","تسجيلات الدكاترة",pend]]:[]),["patients","المرضى والكشف"]];
   if(S.role==="owner")return [...base,["att","الحضور"],["reports","الحسابات والمرتبات"],["settings","الإعدادات"]];
   return [...base,["myatt","حضوري"],...(backfillOn()?[["att","حضور الفريق (مؤقت)"]]:[]),["reports","دخل وخرج اليوم"],["settings","الإعدادات"]];
 }
@@ -165,7 +164,7 @@ function render(){
   const tl=tabsFor();
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
-  const fn={appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,settings:vSettings,mine:vMine,myatt:vMyAtt}[S.tab];
+  const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,settings:vSettings,mine:vMine,myatt:vMyAtt}[S.tab];
   main.innerHTML=fn?fn():"";
   if(S.tab==="patients")renderPatientList();
 }
@@ -683,27 +682,23 @@ function sessionInfo(pid,kind,excludeId,date,time){ // "جلسة 4 من 10 · ب
 }
 function apptRow(a,view,showDoc){
   const doctorBtns=a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"";
-  const adminBtns=(a.status==="booked"&&a.date===today()?`<button class="btn sm" data-act="apptArrive" data-id="${a.id}">وصل</button>`:"")
-    +(a.status==="started"?`<button class="btn sm" data-act="apptFinish" data-id="${a.id}">خلّصها</button>`:"")
-    +(a.status==="done"&&!a.confirmed?`<button class="btn sm teal" data-act="apptConfirm" data-id="${a.id}">تأكيد</button>`:"")
-    +`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
+  const adminBtns=`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} <span class="chip c-teal">${esc(a.kindLabel||(a.kind==="exam"?"كشف":"جلسة"))}</span> ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} <span class="chip c-teal">${esc(a.kindLabel||(a.kind==="exam"?"كشف":"جلسة"))}</span> ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
 function vAppts(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
-  const list=Object.values(S.appts).filter(a=>a.date===d).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const list=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   const active=list.filter(a=>a.status!=="cancelled");
-  const pend=Object.values(S.appts).filter(a=>a.status==="done"&&!a.confirmed).sort((a,b)=>((a.date||"")+(a.time||"")).localeCompare((b.date||"")+(b.time||"")));
   const byDoc={};active.forEach(a=>{const k=apptDocs(a)[0]||"—";(byDoc[k]=byDoc[k]||[]).push(a)});
-  return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn primary" data-act="newAppt">+ ميعاد</button></div>
-  ${pend.length?`<div class="panel"><h2>مستني تأكيدك <span class="sub">${pend.length}</span></h2><div class="list">${pend.map(a=>apptRow({...a,time:(a.date!==d?a.date+" ":"")+(a.time||"")},"admin",true)).join("")}</div></div>`:""}
-  <div class="stats"><div class="stat"><div class="k">مواعيد اليوم</div><div class="v num">${active.length}</div></div><div class="stat"><div class="k">جوه دلوقتي</div><div class="v num">${active.filter(a=>a.status==="started").length}</div></div><div class="stat"><div class="k">خلصت</div><div class="v num">${active.filter(a=>a.status==="done").length}</div></div><div class="stat"><div class="k">محضروش</div><div class="v num">${active.filter(a=>a.status==="noshow").length}</div></div></div>
-  ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} ميعاد</span></h2><div class="list">${arr.map(a=>apptRow(a,"admin",apptDocs(a).length>1)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش مواعيد اليوم ده</b>اضغط «+ ميعاد» واختار المريض والدكتور والساعة.</div>`}
-  ${list.length>active.length?`<p class="sub">${list.length-active.length} ميعاد اتلغى.</p>`:""}`;
+  return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn primary" data-act="newAppt">+ حجز</button></div>
+  <p class="sub" style="margin:0">هنا الحجز بس. اللي حصل فعلاً (جه، كنسل، دفع، دخل إمتى) بيتسجل في «جلسات اليوم».</p>
+  <div class="stats"><div class="stat"><div class="k">محجوز اليوم ده</div><div class="v num">${active.length}</div></div>${Object.entries(byDoc).map(([sid,arr])=>`<div class="stat"><div class="k">${esc(staffName(sid))}</div><div class="v num">${arr.length}</div></div>`).join("")}</div>
+  ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} حجز</span></h2><div class="list">${arr.map(a=>apptRow(a,"admin",apptDocs(a).length>1)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش حجوزات اليوم ده</b>اضغط «+ حجز» واختار المريض والدكتور والساعة.</div>`}
+  ${list.length>active.length?`<p class="sub">${list.length-active.length} حجز اتلغى.</p>`:""}`;
 }
 function vMyAppts(){
   const d=S.ui.date;const list=Object.values(S.appts).filter(a=>a.date===d&&a.status!=="cancelled"&&apptDocs(a).includes(S.mySid)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
@@ -716,7 +711,7 @@ function sheetAppt(id){
   const cur=a.patientId&&S.patients[a.patientId]?pLabel(S.patients[a.patientId]):(a.patientName||"");
   const docOpts=sel=>[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
   const ds=apptDocs(a);
-  openSheet(id?"تعديل ميعاد":"ميعاد جديد",`
+  openSheet(id?"تعديل الحجز":"حجز جديد",`
   <label class="f">المريض${patientPicker("ap_pat",cur)}</label>${newPatientFields("ap")}
   <div class="seg"><label><input type="radio" name="ap_kind" value="exam" ${a.kind==="exam"?"checked":""}> كشف</label><label><input type="radio" name="ap_kind" value="session" ${a.kind!=="exam"?"checked":""}> جلسة</label></div>
   <div class="note" id="ap_info"></div>
@@ -793,6 +788,123 @@ async function saveApptConfirm(id){
   (a.media||[]).forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));
   b.update(S.db.doc("appts/"+id),{confirmed:true,confirmedBy:S.mySid,confirmedAt:Date.now(),visitId:id,credit});
   await b.commit();closeSheet();toast("اتأكدت واتسجلت الجلسة");
+}
+/* ---------- sessions of the day: what actually happened (came / cancelled, when, with whom, paid) ---------- */
+const SESS_STATUS=[["booked","مستني"],["arrived","وصل"],["started","جوه الجلسة"],["done","خلصت"],["noshow","محضرش"],["cancelled","كنسل"]];
+function lateMin(a){const b=mins(a.time),x=mins(a.arrived);return b!=null&&x!=null?x-b:null}
+function lateChip(a){const l=lateMin(a);return l!=null&&l>10?`<span class="chip c-warn">اتأخر ${hm(l)}</span>`:""}
+function payChip(a){
+  if(["noshow","cancelled"].includes(a.status))return "";
+  const v=S.visits[a.id];if(!v)return `<span class="chip c-mute">لسه ما اتسجلش</span>`;
+  if(v.packId)return `<span class="chip c-teal">من الباكدج</span>`;
+  const d=Math.round((v.net||0)-(v.paid||0));return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-ok">مدفوعة</span>`;
+}
+function needsRecord(a){return a.status==="done"&&(!S.visits[a.id]||!a.creditSet)} // finished, but Reham hasn't settled doctor + money yet
+function sessionRow(a){
+  const v=S.visits[a.id];const docs=v?visitDocs(v):apptDocs(a).map(staffName).join(" + ");
+  const quick=(a.status==="booked"?`<button class="btn sm" data-act="quickArrive" data-id="${a.id}">وصل</button>`:"")
+    +(["booked","arrived"].includes(a.status)?`<button class="btn sm danger" data-act="quickCancel" data-id="${a.id}">لغى</button>`:"")
+    +`<button class="btn sm ${needsRecord(a)?"teal":""}" data-act="openSession" data-id="${a.id}">${needsRecord(a)?"أكّد":"فتح"}</button>`;
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${lateChip(a)} ${payChip(a)}</span>
+  <span class="end bar">${quick}</span>
+  <span class="m">${[a.kindLabel||"",docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
+}
+function vSessions(){
+  const d=S.ui.date;ensureMonth(d.slice(0,7));
+  const appts=Object.values(S.appts).filter(a=>a.date===d).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const loose=Object.values(S.visits).filter(v=>v.date===d&&!(v.apptId&&S.appts[v.apptId])).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const ps=Object.values(S.payments).filter(p=>p.date===d);
+  let cash=0,insta=0,remain=0;
+  Object.values(S.visits).filter(v=>v.date===d).forEach(v=>{v.method==="instapay"?insta+=v.paid||0:cash+=v.paid||0;remain+=Math.max(0,(v.net||0)-(v.paid||0))});
+  ps.forEach(p=>{if(p.kind==="discount")return;p.method==="instapay"?insta+=p.amount||0:cash+=p.amount||0});
+  const came=appts.filter(a=>["arrived","started","done"].includes(a.status)).length+loose.length;
+  const missing=Object.values(S.appts).filter(needsRecord);
+  return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn" data-act="newPay">+ دفعة</button><button class="btn primary" data-act="newWalkin">+ جلسة من غير ميعاد</button></div>
+  ${missing.length?`<div class="note">فيه ${missing.length} جلسة خلصت ومستنية تأكيدك للدكتور والفلوس${missing.some(a=>a.date!==d)?"، منهم في أيام تانية":""}. دوس «أكّد» جنبها.</div>`:""}
+  <div class="stats">
+    <div class="stat"><div class="k">جم النهارده</div><div class="v num">${came}</div></div>
+    <div class="stat"><div class="k">محضروش / كنسلوا</div><div class="v num">${appts.filter(a=>["noshow","cancelled"].includes(a.status)).length}</div></div>
+    <div class="stat"><div class="k">اتحصّل (كاش · InstaPay)</div><div class="v money">${money(cash+insta)}</div><div class="sub">${money(cash)} · ${money(insta)}</div></div>
+    <div class="stat"><div class="k">لسه على الحالات</div><div class="v money" style="color:${remain?"var(--bad)":"inherit"}">${money(remain)}</div></div>
+  </div>
+  ${appts.length||loose.length?`<div class="list">${appts.map(sessionRow).join("")}${loose.map(v=>`<button class="row" data-act="editVisit" data-id="${v.id}"><span class="t">${esc(v.time||"")} · ${esc(v.patientName)} ${v.completion==="half"&&!v.doctor2Id?`<span class="chip c-warn">نص</span>`:""}</span><span class="end">${v.packId?`<span class="chip c-teal">من الباكدج</span>`:(v.net||0)-(v.paid||0)>0?`<span class="chip c-bad">عليه ${money((v.net||0)-(v.paid||0))}</span>`:`<span class="chip c-ok">مدفوعة</span>`}</span><span class="m">${esc(visitDocs(v))} · ${esc(v.typeName||"")}</span><span></span></button>`).join("")}</div>`
+  :`<div class="empty"><b>مفيش جلسات اليوم ده</b>المواعيد اللي اتحجزت لليوم ده بتظهر هنا لوحدها، والحالة اللي جت من غير ميعاد ضيفها من «+ جلسة من غير ميعاد».</div>`}
+  ${ps.length?`<div class="panel"><h2>دفعات وخصومات اليوم ده</h2><div class="list">${ps.map(p=>`<button class="row" data-act="editPay" data-id="${p.id}"><span class="t">${esc(p.patientName)} ${p.kind==="discount"?`<span class="chip c-acc">خصم</span>`:""}</span><span class="end money">${money(p.amount)}</span><span class="m">${p.kind==="discount"?esc(p.reason||""):(METHODS[p.method]||"")}${p.kind!=="discount"&&p.note?" · "+esc(p.note):""}</span><span></span></button>`).join("")}</div></div>`:""}`;
+}
+function sheetSession(id){
+  const a=S.appts[id];if(!a)return;const v=S.visits[id];const p=S.patients[a.patientId];
+  const prov=provisionalCredit(a);const useVisit=v&&(a.creditSet||!a.startBy);
+  const d1=(useVisit?v.doctorId:prov.a)||apptDocs(a)[0]||"";const d2=useVisit?(v.doctor2Id||""):(prov.mode==="split"?prov.b:"");
+  const comp=v&&!v.doctor2Id?(v.completion||"full"):"full";
+  const docOpts=sel=>[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
+  const price=S.prices[v?.typeId||a.typeId];
+  openSheet(`${a.patientName}`,`
+  <div class="note">${esc(a.kindLabel||"")} · ميعاده ${esc(a.date)} ${esc(a.time||"")} ${lateChip(a)}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
+  <label class="f">الحالة<select id="s_status">${SESS_STATUS.map(([k,l])=>`<option value="${k}" ${a.status===k?"selected":""}>${l}</option>`).join("")}</select></label>
+  <label class="f" id="s_cancelbox" hidden>سبب الإلغاء<select id="s_creason">${["المريض لغى","المركز لغى","اتأجل لميعاد تاني"].map(r=>`<option ${a.cancelReason===r?"selected":""}>${r}</option>`).join("")}</select></label>
+  <div id="s_body" style="display:grid;gap:12px">
+  <div class="grid2"><label class="f">وصل الساعة<input type="time" id="s_arr" value="${a.arrived||""}"></label><label class="f">دخل الساعة<input type="time" id="s_start" value="${a.start||""}"></label><label class="f">خلص الساعة<input type="time" id="s_end" value="${a.end||""}"></label></div>
+  <div class="grid2"><label class="f">الدكتور اللي اشتغل<select id="s_doc1"><option value="">—</option>${docOpts(d1)}</select></label>
+  <label class="f">اشتغلها<select id="s_comp"><option value="full" ${comp==="full"?"selected":""}>حالة كاملة</option><option value="half" ${comp==="half"?"selected":""}>نص حالة</option></select></label>
+  <label class="f">دكتور تاني (نص ونص)<select id="s_doc2"><option value="">مفيش</option>${docOpts(d2)}</select></label></div>
+  <div class="hr"></div>
+  <label class="f">نوع الجلسة<select id="s_type">${typeOptions(v?.typeId||a.typeId)}</select></label>
+  <input type="hidden" id="s_pat" value="${esc(p?pLabel(p):a.patientName)}">
+  ${moneyFields("s",v||{price:price??"",paid:"",method:"cash"})}
+  <p class="sub" style="margin:0">الفلوس تقدر تسجلها في أي وقت، قبل الجلسة أو بعدها، وتعدّلها لما يدفع الباقي.</p></div>
+  <div class="err" id="formErr"></div>
+  <button class="btn primary" data-act="saveSession" data-id="${id}">حفظ</button>`,
+  ()=>{wireMoney("s","s_type");wirePack("s",v?{packId:v.packId}:(a.kind==="exam"?{packId:null}:null));
+    const st=document.getElementById("s_status");const sync=()=>{const x=st.value;document.getElementById("s_cancelbox").hidden=x!=="cancelled";document.getElementById("s_body").hidden=["noshow","cancelled"].includes(x)};
+    st.addEventListener("change",()=>{const x=st.value,set=(i)=>{const el=document.getElementById(i);if(!el.value&&S.ui.date===today())el.value=nowHM()};
+      if(["arrived","started","done"].includes(x))set("s_arr");if(["started","done"].includes(x))set("s_start");if(x==="done")set("s_end");sync()});
+    document.getElementById("s_doc2").addEventListener("change",e=>{if(e.target.value)document.getElementById("s_comp").value="half"});sync()});
+}
+async function saveSession(id){
+  const a=S.appts[id];if(!a)return;const old=S.visits[id];const status=val("s_status");
+  const b=S.db.batch(),acc={};const ref=S.db.doc("appts/"+id);
+  if(["noshow","cancelled"].includes(status)){
+    b.update(ref,{status,cancelReason:status==="cancelled"?val("s_creason"):null});
+    if(old){b.delete(S.db.doc("visits/"+id));visitEffect(acc,old,-1);flushPatients(b,acc)}
+    await b.commit();if(old){delete S.live.visits[id];forget("visits",id)}closeSheet();toast(status==="cancelled"?"اتسجل إنه كنسل":"اتسجل إنه محضرش");return;
+  }
+  const doc1=val("s_doc1"),doc2=val("s_doc2")&&val("s_doc2")!==doc1?val("s_doc2"):"";
+  const upd={status,arrivedT:val("s_arr")||null,startT:val("s_start")||null,endT:val("s_end")||null,cancelReason:null,doctors:[...new Set([...apptDocs(a),doc1,doc2].filter(Boolean))]};
+  if(doc1&&!a.startBy)upd.startBy=doc1;
+  const type=val("s_type");
+  if(type){
+    if(!doc1)return setErr("اختار الدكتور اللي اشتغل");
+    const mny=readMoney("s");const me=moneyError(mny);if(me)return setErr(me);
+    const vis={date:a.date,time:val("s_start")||a.time,patientId:a.patientId,patientName:a.patientName,doctorId:doc1,doctor2Id:doc2||null,completion:doc2?"half":val("s_comp"),typeId:type,typeName:typeName(type),...mny,apptId:id,by:S.mySid};
+    if(old)b.update(S.db.doc("visits/"+id),vis);else b.set(S.db.doc("visits/"+id),{...vis,createdAt:Date.now()});
+    visitEffect(acc,old,-1);visitEffect(acc,vis,1);flushPatients(b,acc);
+    if(a.media?.length&&!a.photosCopied){a.media.forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));upd.photosCopied=true}
+    upd.visitId=id;upd.credit=doc2?{mode:"split",a:doc1,b:doc2}:{mode:"full",a:doc1};upd.creditSet=status==="done";
+  }
+  b.update(ref,upd);await b.commit();closeSheet();toast("اتحفظت");
+}
+async function quickArrive(id){await S.db.doc("appts/"+id).update({status:"arrived",arrivedT:S.ui.date===today()?nowHM():(S.appts[id]?.time||null)});toast("اتسجل وصوله")}
+function sheetQuickCancel(id){const a=S.appts[id];if(!a)return;
+  openSheet(`إلغاء ${a.patientName}`,`<p class="sub" style="margin:0">${esc(a.time||"")} · ${esc(a.kindLabel||"")}</p>
+  <div style="display:grid;gap:8px">${["المريض لغى","المركز لغى","اتأجل لميعاد تاني","محضرش من غير ما يبلغ"].map(r=>`<button class="btn" data-act="doCancel" data-id="${id}" data-r="${r}">${r}</button>`).join("")}</div>`)}
+async function doCancel(id,reason){const a=S.appts[id],old=S.visits[id];const noshow=reason==="محضرش من غير ما يبلغ";
+  const b=S.db.batch(),acc={};b.update(S.db.doc("appts/"+id),{status:noshow?"noshow":"cancelled",cancelReason:noshow?null:reason});
+  if(old){b.delete(S.db.doc("visits/"+id));visitEffect(acc,old,-1);flushPatients(b,acc)}
+  await b.commit();if(old){delete S.live.visits[id];forget("visits",id)}closeSheet();toast(noshow?"اتسجل إنه محضرش":"اتلغى")}
+function sheetWalkin(){
+  openSheet("جلسة من غير ميعاد",`<label class="f">المريض${patientPicker("w_pat","")}</label>${newPatientFields("w")}
+  <div class="seg"><label><input type="radio" name="w_kind" value="exam"> كشف</label><label><input type="radio" name="w_kind" value="session" checked> جلسة</label></div>
+  <div class="grid2"><label class="f">الدكتور<select id="w_doc"><option value="">اختار الدكتور</option>${[...doctors().map(x=>[x.id,x.name]),["owner","د. محي"]].map(([k,n])=>`<option value="${k}">${esc(n)}</option>`).join("")}</select></label>
+  <label class="f">نوع الجلسة<select id="w_type">${typeOptions("")}</select></label><label class="f">الساعة<input type="time" id="w_time" value="${S.ui.date===today()?nowHM():""}"></label></div>
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveWalkin">كمّل</button>`,()=>watchNewPatient("w","w_pat"));
+}
+async function saveWalkin(){
+  const pv=val("w_pat").trim(),doc=val("w_doc"),time=val("w_time"),kind=radio("w_kind")||"session",date=S.ui.date;
+  if(!pv)return setErr("اختار المريض");if(!doc)return setErr("اختار الدكتور");if(!time)return setErr("اكتب الساعة");
+  const pat=await ensurePatient(pv,val("w_phone"),val("w_src"));const type=val("w_type");const info=sessionInfo(pat.id,kind,null,date,time);
+  const ref=S.db.collection("appts").doc();
+  const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:[doc],kind,kindLabel:info.label,packId:info.packId||null,date,time,duration:60,typeId:type||null,typeName:type?typeName(type):"",note:"من غير ميعاد",walkin:true,status:"arrived",arrivedT:time,confirmed:false,createdAt:Date.now(),by:S.mySid};
+  await ref.set(body);S.live.appts[ref.id]={id:ref.id,...body,arrived:time};merge();sheetSession(ref.id);
 }
 /* ---------- review ---------- */
 function sheetReview(id,done){
@@ -1212,7 +1324,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -1228,6 +1340,13 @@ document.addEventListener("click",async e=>{
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
+    case "openSession":sheetSession(id);break;
+    case "quickArrive":guard(t,()=>quickArrive(id));break;
+    case "quickCancel":sheetQuickCancel(id);break;
+    case "doCancel":guard(t,()=>doCancel(id,t.dataset.r));break;
+    case "saveSession":guard(t,()=>saveSession(id));break;
+    case "newWalkin":sheetWalkin();break;
+    case "saveWalkin":guard(t,saveWalkin);break;
     case "setBackfill":guard(t,async()=>{const from=val("bf_from"),to=val("bf_to");if(!from||!to||from>to)return toast("اختار فترة صح");
       const until=new Date(Date.now()+num(val("bf_days"))*864e5);await db.doc("pub/backfill").set({on:true,from,to,until,by:S.mySid,at:Date.now()});toast("الصلاحية اتفعّلت")});break;
     case "stopBackfill":guard(t,async()=>{await db.doc("pub/backfill").set({on:false,at:Date.now()});toast("الصلاحية اتقفلت")});break;
