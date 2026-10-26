@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 32";
+const APP_VERSION="26 أكتوبر · 33";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -266,6 +266,7 @@ function pendingEntries(){return Object.values(S.log).filter(e=>e.status==="pend
 function reviewedEntries(){return Object.values(S.log).filter(e=>e.status!=="pending").sort((a,b)=>(b.review?.at||0)-(a.review?.at||0))}
 function myEntriesList(){return Object.values(S.log).filter(e=>e.doctorSid===S.mySid)}
 function myFresh(){const seen=num(ls("seen_"+S.mySid)||0);return myEntriesList().filter(e=>e.review?.at>seen).length}
+function doneCount(p){return (p?.count||0)+(p?.packs||[]).reduce((s,k)=>s+(k.preUsed||0),0)} // sessions done: recorded here + done on packages before the system
 function balances(){const b={};for(const p of Object.values(S.patients))if(p.count||p.charged||p.paid)b[p.id]={charged:p.charged||0,paid:p.paid||0,count:p.count||0};return b}
 function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات</span>`;const d=Math.round(x.charged-x.paid);
   return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">خالص</span>`}
@@ -404,7 +405,7 @@ function renderPatientList(){
   const owe=Object.values(b).reduce((s,x)=>s+Math.max(0,x.charged-x.paid),0);
   const shown=ps.slice(0,200);
   el.innerHTML=(Object.keys(S.patients).length?`<div class="stats" style="margin-bottom:12px"><div class="stat"><div class="k">عدد الملفات</div><div class="v num">${Object.keys(S.patients).length}</div></div><div class="stat"><div class="k">إجمالي اللي على الحالات</div><div class="v money">${money(owe)}</div></div></div>`:"")+
-  (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${b[p.id]?b[p.id].count+" جلسة":""}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
+  (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${(n=>n?`خلص ${n} جلسة`:"")(doneCount(p))}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
   :`<div class="empty"><b>${q?"مفيش مريض بالاسم ده":"لسه مفيش ملفات مرضى"}</b>${q?"جرب جزء من الاسم أو رقم الموبايل.":"اضغط «+ مريض جديد» واملا شيت الكشف، وصوّر الورقة كمان عشان لو ضاعت."}</div>`);
 }
 /* ---------- views: attendance (admin) ---------- */
@@ -1492,7 +1493,7 @@ function sheetPatient(id){
   const docOpts=[["owner","د. محي"],...doctors().map(d=>[d.id,d.name])];
   const F=(k,l,t="input",extra="")=>t==="ta"?`<label class="f">${l}<textarea id="pt_${k}">${esc(p[k]||"")}</textarea></label>`:`<label class="f">${l}<input id="pt_${k}" value="${esc(p[k]||"")}" ${extra}></label>`;
   openSheet(id?p.name:"ملف مريض جديد",`
-  ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b?`${b.count} جلسة · إجمالي ${money(b.charged)} · دفع ${money(b.paid)}`:""}</span></div>
+  ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b||doneCount(p)?`خلص ${doneCount(p)} جلسة · إجمالي ${money(b?.charged||0)} · دفع ${money(b?.paid||0)}`:""}</span></div>
   <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm teal" data-act="newInvoice" data-id="${id}">فاتورة جلسات</button><button class="btn sm teal" data-act="newReport" data-id="${id}">تقرير</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
   ${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
@@ -1547,11 +1548,12 @@ async function uploadSheet(id,input){
 async function savePatient(id){
   const keys=["name","phone","age","gender","source","sourceDetail","examDate","examDoctor","complaint","history","findings","diagnosis","plan","notes"];
   const body={};keys.forEach(k=>body[k]=(val("pt_"+k)||"").trim());if(document.getElementById("pt_broughtBy"))body.broughtBy=val("pt_broughtBy");body.phone=nd(body.phone);body.age=nd(body.age);
-  if(!body.name)return setErr("اكتب اسم المريض");
+  if(!body.name)return setErr("اكتب اسم المريض");const isNew=!id;
   const b=S.db.batch();
   if(id)b.update(S.db.doc("patients/"+id),body);else{const ref=S.db.collection("patients").doc();b.set(ref,{...body,createdAt:Date.now(),charged:0,paid:0,count:0});id=ref.id}
   if(S.pdir[id]?.name!==body.name)b.set(S.db.doc("pdir/"+id),{name:body.name});
-  await b.commit();toast("اتحفظ الملف");reopenPatient(id);
+  await b.commit();toast("اتحفظ الملف");
+  if(isNew)reopenPatient(id);else closeSheet(); // back to the list; a brand-new file stays open to add its package or photo
 }
 async function delPatient(id){
   const ph=await S.db.collection("photos").where("patientId","==",id).get();
