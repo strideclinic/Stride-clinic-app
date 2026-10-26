@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 37";
+const APP_VERSION="26 أكتوبر · 38";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1500,9 +1500,33 @@ async function saveSellPack(pid){
   b.update(S.db.doc("patients/"+pid),{packs:[...(p.packs||[]),pack],charged:inc(m.net),paid:inc(prePaid+mPaid)});
   await b.commit();toast("الباكدج اتسجل");reopenPatient(pid);
 }
-async function delPack(pid,kid){
-  const p=S.patients[pid];const k=(p.packs||[]).find(x=>x.id===kid);if(!k||(k.used||0)>(k.preUsed||0)||(k.paid||0)>(k.prePaid||0))return;
-  await S.db.doc("patients/"+pid).update({packs:p.packs.filter(x=>x.id!==kid),charged:inc(-(k.price||0)),paid:inc(-(k.prePaid||0))});toast("الباكدج اتشال. لو كان اتدفع، المبلغ بقى رصيد للحالة.");reopenPatient(pid);
+/* cancel a package entered by mistake: undo its price, its payments (or keep them as credit) and move its sessions */
+let CP=null;
+async function sheetCancelPack(pid,kid){
+  const p=S.patients[pid],k=(p?.packs||[]).find(x=>x.id===kid);if(!k)return;
+  let vs=[],ps=[];try{[vs,ps]=await Promise.all([getFast(S.db.collection("visits").where("packId","==",kid)),getFast(S.db.collection("payments").where("packId","==",kid))]).then(r=>r.map(q=>q.docs.map(rowOf)))}catch(e){}
+  vs=vs.filter(v=>v.patientId===pid);ps=ps.filter(x=>x.patientId===pid&&x.kind!=="discount");
+  const others=(p.packs||[]).filter(x=>x.id!==kid&&(!k.typeId||!x.typeId||x.typeId===k.typeId));
+  const paidIn=ps.reduce((s,x)=>s+(x.amount||0),0);CP={pid,kid,vs,ps};
+  openSheet(`إلغاء ${packTitle(k)}`,`<div class="note">${esc(p.name)} · ${esc(packTitle(k))} · السعر ${money(k.price)}${k.prePaid?` · دفع قبل السيستم ${money(k.prePaid)}`:""}${paidIn?` · اتسجل عليه دفعات ${money(paidIn)}`:""}${vs.length?` · اتعمل عليه ${vs.length} جلسة هنا`:""}</div>
+  <p class="sub" style="margin:0">سعره هيتشال من حساب المريض${k.prePaid?`، واللي دفعه قبل السيستم (${money(k.prePaid)}) هيتشال كمان`:""}.</p>
+  ${paidIn?`<div class="seg"><label><input type="radio" name="cp_pay" value="del" checked> الدفعات (${money(paidIn)}) اتسجلت غلط: امسحها</label><label><input type="radio" name="cp_pay" value="keep"> الفلوس دي اتدفعت فعلاً: خليها رصيد للمريض</label></div>`:""}
+  ${vs.length?(others.length?`<label class="f">الـ ${vs.length} جلسة اللي اتعملت عليه تتنقل لـ<select id="cp_to">${others.map(x=>`<option value="${x.id}">${esc(packTitle(x))} · فاضل ${x.sessions-(x.used||0)} من ${x.sessions}</option>`).join("")}</select></label>`
+    :`<div class="note">الـ ${vs.length} جلسة اللي اتعملت عليه هتفضل متسجلة من غير باكدج ومن غير سعر. لو ليها سعر، افتح كل جلسة وعدّل فلوسها، أو اعمله باكدج الأول وبعدين الغي ده.</div>`):""}
+  <div class="err" id="formErr"></div><button class="btn danger" data-act="doCancelPack" data-confirm>إلغاء الباكدج</button>`);
+}
+async function doCancelPack(){
+  const {pid,kid,vs,ps}=CP;const p=S.patients[pid],k=(p.packs||[]).find(x=>x.id===kid);if(!k)return;
+  const delPays=radio("cp_pay")!=="keep",to=val("cp_to"),target=to?(p.packs||[]).find(x=>x.id===to):null;
+  const b=S.db.batch();let paidOff=k.prePaid||0;
+  if(delPays)for(const x of ps){b.delete(S.db.doc("payments/"+x.id));paidOff+=x.amount||0;forget("payments",x.id)}
+  else for(const x of ps)b.update(S.db.doc("payments/"+x.id),{packId:null,note:(x.note?x.note+" · ":"")+"كانت على باكدج اتلغى"});
+  if(target){const pv=Math.round((target.price||0)/(target.sessions||1));for(const v of vs)b.update(S.db.doc("visits/"+v.id),{packId:target.id,packName:target.name,packValue:pv});
+    for(const v of vs)if(S.appts[v.id])b.update(S.db.doc("appts/"+v.id),{packId:target.id})}
+  else for(const v of vs)b.update(S.db.doc("visits/"+v.id),{packId:null,packName:"",packValue:0});
+  const packs=p.packs.filter(x=>x.id!==kid).map(x=>target&&x.id===target.id?{...x,used:Math.min(x.sessions,(x.used||0)+vs.length)}:x);
+  b.update(S.db.doc("patients/"+pid),{packs,charged:inc(-(k.price||0)),paid:inc(-paidOff)});
+  await b.commit();toast("الباكدج اتلغى");setTimeout(()=>sheetPatient(pid),250); // back to the patient's file
 }
 function sheetDiscount(pid){
   const p=S.patients[pid];if(!p)return;const packs=p.packs||[];
@@ -1577,7 +1601,7 @@ function packTitle(k){return /باكدج|باقة/.test(k.name||"")?k.name:`با
 function packsHtml(pid){
   const packs=S.patients[pid]?.packs||[];if(!packs.length)return "";
   return `<div class="list">${packs.map(k=>{const left=k.sessions-(k.used||0);const o=packOwed(k);return `<div class="row stack" style="cursor:default"><span class="t">${esc(packTitle(k))} ${k.typeId?`<span class="chip c-acc">${esc(typeName(k.typeId)||k.typeName||"")}</span>`:""} ${left>0?`<span class="chip c-teal">فاضل ${left} من ${k.sessions}</span>`:`<span class="chip c-mute">خلص</span>`} ${packMoneyChip(k)}</span>
-    <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}<button class="btn sm" data-act="editPackUse" data-id="${pid}" data-k="${k.id}">تعديل العدد</button>${(k.used||0)===(k.preUsed||0)&&(k.paid||0)===(k.prePaid||0)?`<button class="btn sm danger" data-act="delPack" data-id="${pid}" data-k="${k.id}" data-confirm>شيل</button>`:""}</span>
+    <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}<button class="btn sm" data-act="editPackUse" data-id="${pid}" data-k="${k.id}">تعديل العدد</button><button class="btn sm danger" data-act="cancelPack" data-id="${pid}" data-k="${k.id}">إلغاء الباكدج</button></span>
     <span class="m">${[k.date||"",`السعر ${k.discount?`${money(k.listPrice)} ← `:""}${money(k.price)}`,k.paid!=null?`دفع ${money(k.paid)}`:"",k.old?`من قبل السيستم (كان عمل ${k.preUsed||0}${k.prePaid?`، ودفع ${money(k.prePaid)} قبل الشهر اللي اتسجل فيه`:""})`:"",k.discount?`خصم ${money(k.discount)}: ${[k.reason,...(k.discHist||[]).map(h=>h.reason)].filter(Boolean).join("، ")}`:""].filter(Boolean).map(esc).join(" · ")}</span><span></span></div>`}).join("")}</div>`;
 }
 function ratesHtml(pid){
@@ -1885,7 +1909,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","moveOwner","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -2015,7 +2039,8 @@ document.addEventListener("click",async e=>{
     case "saveRate":guard(t,()=>saveRate(id,t.dataset.k||null,false));break;
     case "delRate":guard(t,()=>saveRate(id,t.dataset.k,true));break;
     case "saveSellPack":guard(t,()=>saveSellPack(id));break;
-    case "delPack":guard(t,()=>delPack(id,t.dataset.k));break;
+    case "cancelPack":sheetCancelPack(id,t.dataset.k);break;
+    case "doCancelPack":guard(t,()=>doCancelPack());break;
     case "discount":sheetDiscount(id);break;
     case "saveDiscount":guard(t,()=>saveDiscount(id));break;
     case "quickAdd":sheetQuick();break;
