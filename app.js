@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 31";
+const APP_VERSION="26 أكتوبر · 32";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -964,10 +964,11 @@ function sessionInfo(pid,kind,excludeId,date,time,typeId){ // "جلسة 4 من 1
   const rate=typeId?S.patients[pid]?.rates?.[typeId]:null;
   return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} ${rate!=null?"بالجلسة":"منفردة"}`:""}`,packId:null};
 }
+function withNo(label,n){return n?String(label||"").replace(/^جلسة (رقم )?\d+/,m=>m.replace(/\d+/,n)):label} // a session number set by hand
 function kindOf(a){ // the session's number is worked out live from the patient's current packages until the session is recorded
   if(a.kind==="exam")return "كشف";
   if(!isAdmin()||!S.patients[a.patientId]||S.visits[a.id]||a.confirmed||["cancelled","noshow"].includes(a.status))return a.kindLabel||"جلسة";
-  return sessionInfo(a.patientId,a.kind,a.id,a.date,a.time||"",a.typeId).label}
+  return withNo(sessionInfo(a.patientId,a.kind,a.id,a.date,a.time||"",a.typeId).label,a.sessNo)}
 const labelSyncing=new Set();
 function syncLabels(list){ // write the live session number back to the booking, so the doctor's screen shows it too
   if(!isAdmin())return;for(const a of list){if(a.kind==="exam"||labelSyncing.has(a.id))continue;const l=kindOf(a);
@@ -1028,7 +1029,8 @@ function sheetAppt(id){
   <label class="f">دكتور تاني (لو الحالة هتتحوّل له)<select id="ap_doc2"><option value="">مفيش</option>${docOpts(ds[1])}</select></label>
   <label class="f">اليوم<input type="date" id="ap_date" value="${a.date}"></label><label class="f">الساعة<input type="time" id="ap_time" value="${a.time||""}"></label>
   <label class="f">المدة<select id="ap_dur">${[30,45,60,90,120].map(m=>`<option value="${m}" ${(a.duration||60)===m?"selected":""}>${hm(m)}</option>`).join("")}</select></label></div>
-  <label class="f">ملاحظة<input id="ap_note" value="${esc(a.note||"")}"></label>
+  <div class="grid2"><label class="f">رقم الجلسة (لو عايز تغيّره)<input id="ap_no" inputmode="numeric" value="${a.sessNo||""}" placeholder="بيتحسب لوحده"></label>
+  <label class="f">ملاحظة<input id="ap_note" value="${esc(a.note||"")}"></label></div>
   ${id&&(a.start||a.arrived)?`<div class="note">${esc(apptTimes(a))}</div>`:""}
   <div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveAppt" data-id="${id||""}">حفظ</button>
@@ -1036,8 +1038,8 @@ function sheetAppt(id){
   ()=>{watchNewPatient("ap","ap_pat");const upd=()=>{const p=findPatient(val("ap_pat"));const el=document.getElementById("ap_info");
       if(!p){el.textContent=val("ap_pat").trim()?"مريض جديد.":"اختار المريض.";return}
       const k=radio("ap_kind")||"session",tid=val("ap_type");const pk=k==="exam"?null:packsFor(p.id,tid)[0];
-      el.innerHTML=esc(sessionInfo(p.id,k,id,val("ap_date"),val("ap_time"),tid).label)+(k==="exam"?"":pk?" "+packMoneyChip(pk):tid?" · مفيش باكدج من النوع ده":" · اختار نوع الجلسة")+" · الحساب كله: "+patBalChip(p.id)};
-    ["ap_pat","ap_date","ap_time"].forEach(x=>document.getElementById(x).addEventListener("input",upd));document.getElementById("ap_type").addEventListener("change",upd);document.querySelectorAll('input[name="ap_kind"]').forEach(x=>x.addEventListener("change",upd));upd()});
+      el.innerHTML=esc(withNo(sessionInfo(p.id,k,id,val("ap_date"),val("ap_time"),tid).label,Math.round(num(val("ap_no")))||null))+(k==="exam"?"":pk?" "+packMoneyChip(pk):tid?" · مفيش باكدج من النوع ده":" · اختار نوع الجلسة")+" · الحساب كله: "+patBalChip(p.id)};
+    ["ap_pat","ap_date","ap_time","ap_no"].forEach(x=>document.getElementById(x).addEventListener("input",upd));document.getElementById("ap_type").addEventListener("change",upd);document.querySelectorAll('input[name="ap_kind"]').forEach(x=>x.addEventListener("change",upd));upd()});
 }
 async function saveAppt(id){
   const pv=val("ap_pat").trim(),doc=val("ap_doc"),doc2=val("ap_doc2"),date=val("ap_date"),time=val("ap_time"),dur=num(val("ap_dur"))||60,kind=radio("ap_kind")||"session";
@@ -1047,7 +1049,7 @@ async function saveAppt(id){
   const pat=await ensurePatient(pv,val("ap_phone"),val("ap_src"));const type=val("ap_type");
   const info=sessionInfo(pat.id,kind,id,date,time,type);
   const docsList=[...new Set([doc,doc2].filter(Boolean))];
-  const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:docsList,kind,kindLabel:info.label,packId:info.packId||null,date,time,duration:dur,typeId:type||null,typeName:type?typeName(type):"",note:val("ap_note").trim()};
+  const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:docsList,kind,kindLabel:withNo(info.label,Math.round(num(val("ap_no")))||null),sessNo:kind==="exam"?null:(Math.round(num(val("ap_no")))||null),packId:info.packId||null,date,time,duration:dur,typeId:type||null,typeName:type?typeName(type):"",note:val("ap_note").trim()};
   if(id){await S.db.doc("appts/"+id).update(body);if(S.old.appts[id]){S.old.appts[id]={...S.old.appts[id],...body};merge()}}
   else await S.db.collection("appts").doc().set({...body,status:"booked",confirmed:false,createdAt:Date.now(),by:S.mySid});
   closeSheet();toast("الميعاد اتحفظ");
@@ -1154,7 +1156,8 @@ function sheetSession(id){
   <label class="f">اشتغلها<select id="s_comp"><option value="full" ${comp==="full"?"selected":""}>حالة كاملة</option><option value="half" ${comp==="half"?"selected":""}>نص حالة</option></select></label>
   <label class="f">دكتور تاني (نص ونص)<select id="s_doc2"><option value="">مفيش</option>${docOpts(d2)}</select></label></div>
   <div class="hr"></div>
-  <label class="f">نوع الجلسة<select id="s_type">${typeOptions(v?.typeId||a.typeId)}</select></label>
+  <div class="grid2"><label class="f">نوع الجلسة<select id="s_type">${typeOptions(v?.typeId||a.typeId)}</select></label>
+  ${a.kind==="exam"?"":`<label class="f">رقم الجلسة (لو عايز تغيّره)<input id="s_no" inputmode="numeric" value="${a.sessNo||""}" placeholder="${esc((kindOf(a).match(/\d+/)||[""])[0])}"></label>`}</div>
   <input type="hidden" id="s_pat" value="${esc(p?pLabel(p):a.patientName)}">
   ${moneyFields("s",v||{price:price??"",paid:"",method:"cash"})}
   <p class="sub" style="margin:0">الفلوس تقدر تسجلها في أي وقت، قبل الجلسة أو بعدها، وتعدّلها لما يدفع الباقي.</p></div>
@@ -1185,6 +1188,7 @@ async function saveSession(id){
     addPackPay(b,acc,{id:a.patientId,name:a.patientName},vis,a.date);
     const lbl=a.kind==="exam"?null:sessionInfo(a.patientId,a.kind,id,a.date,a.time,type);if(lbl&&(!old||vis.packId!==(old.packId||null))){const pk=(S.patients[a.patientId]?.packs||[]).find(k=>k.id===vis.packId);upd.kindLabel=pk?`جلسة ${Math.min((pk.used||0)+1,pk.sessions)} من ${pk.sessions} · ${packTitle(pk)}`:lbl.label;upd.packId=vis.packId||null}
     upd.typeId=type;upd.typeName=typeName(type);
+    if(document.getElementById("s_no")){const n=Math.round(num(val("s_no")))||null;upd.sessNo=n;upd.kindLabel=withNo(upd.kindLabel||kindOf(a),n)}
     if(old)b.update(S.db.doc("visits/"+id),vis);else b.set(S.db.doc("visits/"+id),{...vis,createdAt:Date.now()});
     visitEffect(acc,old,-1);visitEffect(acc,vis,1);flushPatients(b,acc);
     if(a.media?.length&&!a.photosCopied){a.media.forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));upd.photosCopied=true}
@@ -1452,12 +1456,25 @@ function packTitle(k){return /باكدج|باقة/.test(k.name||"")?k.name:`با
 function packsHtml(pid){
   const packs=S.patients[pid]?.packs||[];if(!packs.length)return "";
   return `<div class="list">${packs.map(k=>{const left=k.sessions-(k.used||0);const o=packOwed(k);return `<div class="row stack" style="cursor:default"><span class="t">${esc(packTitle(k))} ${k.typeId?`<span class="chip c-acc">${esc(typeName(k.typeId)||k.typeName||"")}</span>`:""} ${left>0?`<span class="chip c-teal">فاضل ${left} من ${k.sessions}</span>`:`<span class="chip c-mute">خلص</span>`} ${packMoneyChip(k)}</span>
-    <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}${(k.used||0)===(k.preUsed||0)&&(k.paid||0)===(k.prePaid||0)?`<button class="btn sm danger" data-act="delPack" data-id="${pid}" data-k="${k.id}" data-confirm>شيل</button>`:""}</span>
+    <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}<button class="btn sm" data-act="editPackUse" data-id="${pid}" data-k="${k.id}">تعديل العدد</button>${(k.used||0)===(k.preUsed||0)&&(k.paid||0)===(k.prePaid||0)?`<button class="btn sm danger" data-act="delPack" data-id="${pid}" data-k="${k.id}" data-confirm>شيل</button>`:""}</span>
     <span class="m">${[k.date||"",`السعر ${k.discount?`${money(k.listPrice)} ← `:""}${money(k.price)}`,k.paid!=null?`دفع ${money(k.paid)}`:"",k.old?`من قبل السيستم (كان عمل ${k.preUsed||0}${k.prePaid?`، ودفع ${money(k.prePaid)} قبل الشهر اللي اتسجل فيه`:""})`:"",k.discount?`خصم ${money(k.discount)}: ${[k.reason,...(k.discHist||[]).map(h=>h.reason)].filter(Boolean).join("، ")}`:""].filter(Boolean).map(esc).join(" · ")}</span><span></span></div>`}).join("")}</div>`;
 }
 function ratesHtml(pid){
   const r=S.patients[pid]?.rates||{};const ks=Object.keys(r);if(!ks.length)return "";
   return `<div class="list">${ks.map(t=>`<div class="row" style="cursor:default"><span class="t">${esc(typeName(t))} بالجلسة <span class="chip c-acc">${money(r[t])} للجلسة</span></span><span class="end bar"><button class="btn sm" data-act="editRate" data-id="${pid}" data-k="${t}">تعديل</button></span><span class="m">كل جلسة ${esc(typeName(t))} من غير باكدج بتتحسب عليه بالسعر ده</span><span></span></div>`).join("")}</div>`}
+function sheetPackUse(pid,kid){
+  const p=S.patients[pid],k=(p?.packs||[]).find(x=>x.id===kid);if(!k)return;
+  openSheet(`${packTitle(k)} · ${p.name}`,`<p class="sub" style="margin:0">لو رقم الجلسة طالع غلط، عدّل كام جلسة خلصت من الباكدج، وكل الجلسات اللي جاية هتتظبط على كده.</p>
+  <div class="grid2"><label class="f">خلص منه كام جلسة<input id="pu_used" inputmode="numeric" value="${k.used||0}"></label><label class="f">عدد جلسات الباكدج<input id="pu_n" inputmode="numeric" value="${k.sessions}"></label></div>
+  <div class="note" id="pu_sum"></div><div class="err" id="formErr"></div><button class="btn primary" data-act="savePackUse" data-id="${pid}" data-k="${kid}">حفظ</button>`,
+  ()=>{const u=document.getElementById("pu_used"),n=document.getElementById("pu_n"),sm=document.getElementById("pu_sum");
+    const f=()=>{const a=Math.round(num(u.value)),b=Math.round(num(n.value));sm.innerHTML=b?(a>=b?"الباكدج كده خلص.":`الجلسة الجاية هتبقى <b>جلسة ${a+1} من ${b}</b>`):""};[u,n].forEach(x=>x.addEventListener("input",f));f()});
+}
+async function savePackUse(pid,kid){
+  const p=S.patients[pid];const used=Math.round(num(val("pu_used"))),n=Math.round(num(val("pu_n")));
+  if(n<1)return setErr("اكتب عدد جلسات الباكدج");if(used<0||used>n)return setErr("الجلسات اللي خلصت لازم تبقى من 0 لحد "+n);
+  await S.db.doc("patients/"+pid).update({packs:p.packs.map(k=>k.id===kid?{...k,used,sessions:n,preUsed:Math.min(k.preUsed||0,used)}:k)});toast("اتعدّل");reopenPatient(pid);
+}
 function sheetRate(pid,tid){
   const p=S.patients[pid];if(!p)return;const r=p.rates||{};
   openSheet(`${p.name} بالجلسة`,`<p class="sub" style="margin:0">للمريض اللي بيدفع كل جلسة لوحدها. بتحدد السعر مرة واحدة، وكل جلسة من النوع ده بتتحسب عليه لوحدها، وريهام بتكتب دفع كام بس.</p>
@@ -1699,7 +1716,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","remind","newRate","editRate","saveRate","delRate","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -1799,6 +1816,8 @@ document.addEventListener("click",async e=>{
     case "saveLogin":guard(t,()=>createLogin(id,normUser(val("lg_user"))));break;
     case "sellPack":sheetSellPack(id);break;
     case "newRate":sheetRate(id,null);break;
+    case "editPackUse":sheetPackUse(id,t.dataset.k);break;
+    case "savePackUse":guard(t,()=>savePackUse(id,t.dataset.k));break;
     case "absence":sheetAbsence(id,S.ui.month);break;
     case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
     case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
