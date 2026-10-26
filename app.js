@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 28";
+const APP_VERSION="26 أكتوبر · 29";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -270,7 +270,7 @@ function balances(){const b={};for(const p of Object.values(S.patients))if(p.cou
 function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات</span>`;const d=Math.round(x.charged-x.paid);
   return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">خالص</span>`}
 function attMinutes(rec){const a=mins(rec.in),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
-function cfg(){const c=S.config||{};return{salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
+function cfg(){const c=S.config||{};return{salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
 const WEEK=[[6,"س","السبت"],[0,"ح","الحد"],[1,"ن","الاتنين"],[2,"ث","التلات"],[3,"ر","الأربع"],[4,"خ","الخميس"],[5,"ج","الجمعة"]]; // getDay(): 0 = Sunday … 6 = Saturday
 function guessDays(s){const n=s.name||"";if(s.role==="secretary")return [6,0,1,2,3,4];if(/سلم|محمد/.test(n))return [6,1,3];if(/حبيب/.test(n))return [0,2,4];return null}
 function workDaysOf(s){const w=cfg().workDays[s.id];return Array.isArray(w)?w:guessDays(s)} // the weekly schedule the salary is for
@@ -278,17 +278,24 @@ function wday(d){return new Date(d+"T12:00").getDay()}
 function monthDates(m){const out=[];let d=dnum(m+"-01");const end=dnum(nextMonth(m)+"-01");for(;d<end;d++)out.push(dstr(d));return out}
 function leavesOf(sid,m){const o={};for(const l of S.leaves||[])if(l.sid===sid&&(!m||l.date.startsWith(m)))o[l.date]=l.type;return o}
 function yearLeave(sid,y){return (S.leaves||[]).filter(l=>l.sid===sid&&l.type==="paid"&&l.date.startsWith(y)).length}
-function sheetAbsence(sid,m){
+function leaveLine(sid,y,name){const used=yearLeave(sid,y),al=cfg().leaveAllow[sid];
+  if(al==null)return `إجازات ${esc(name)} من غير خصم في ${y}: <b>${used} يوم</b>. حدد رصيد السنة من الإعدادات ← المرتبات والنسب.`;
+  const left=al-used;return `إجازات ${esc(name)} في ${y}: خد <b>${used}</b> من <b>${al}</b> يوم · ${left>0?`فاضل <b>${left}</b>`:left===0?`<b style="color:var(--bad)">خلّص رصيده</b>`:`<b style="color:var(--bad)">زاد ${-left} يوم عن رصيده</b>`}`}
+function sheetAbsence(sid,m){leaveWarned=false;
   const x=payroll(m).find(r=>r.s.id===sid);if(!x)return;const lv=(S.leaves||[]).filter(l=>l.sid===sid&&l.date.startsWith(m));
   const dates=[...new Set([...x.absentDates,...lv.map(l=>l.date)])].sort();const T={"":"غياب من غير إذن",paid:"إذن من غير خصم (إجازة)",deduct:"إذن بخصم اليوم"};
   openSheet(`غياب ${x.s.name} · ${monthLabel(m)}`,`<p class="sub" style="margin:0">اختار لكل يوم غياب: من غير إذن، أو إذن من غير خصم (بيتعد في إجازات السنة)، أو إذن بخصم اليوم (${money(x.dayRate)} لليوم). أيام الإذن مش مطلوب يعوّضها، فساعات شهره المطلوبة بتقل.</p>
-  <div class="note">إجازات ${esc(x.s.name)} من غير خصم في ${m.slice(0,4)}: <b>${yearLeave(sid,m.slice(0,4))} يوم</b></div>
+  <div class="note">${leaveLine(sid,m.slice(0,4),x.s.name)}</div>
   ${dates.length?`<div class="list">${dates.map(d=>{const cur=lv.find(l=>l.date===d)?.type||"";return `<div class="row" style="cursor:default;grid-template-columns:minmax(0,1fr) auto"><span class="t">${esc(dayLabel(d))}</span><span class="end"><select data-leave="${d}" style="width:auto">${Object.entries(T).map(([k,l])=>`<option value="${k}" ${k===cur?"selected":""}>${l}</option>`).join("")}</select></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام غياب الشهر ده</b></div>`}
   <div class="err" id="formErr"></div>${dates.length?`<button class="btn primary" data-act="saveLeave" data-id="${sid}" data-m="${m}">حفظ</button>`:""}`);
 }
+let leaveWarned=false;
 async function saveLeave(sid,m){
   const keep=(S.leaves||[]).filter(l=>!(l.sid===sid&&l.date.startsWith(m)));
   document.querySelectorAll("[data-leave]").forEach(x=>{if(x.value)keep.push({sid,date:x.dataset.leave,type:x.value,by:S.mySid,at:Date.now()})});
+  const y=m.slice(0,4),al=cfg().leaveAllow[sid],used=keep.filter(l=>l.sid===sid&&l.type==="paid"&&l.date.startsWith(y)).length;
+  if(al!=null&&used>al&&!leaveWarned){leaveWarned=true;return setErr(`كده هيبقى خد ${used} يوم إجازة من غير خصم، ورصيده ${al} بس. لو موافق دوس حفظ تاني، أو خلّي الأيام الزيادة «إذن بخصم اليوم».`)}
+  leaveWarned=false;
   await S.db.doc("priv/leaves").set({list:keep});closeSheet();toast("اتحفظ");
 }
 function daysLabel(w){return w&&w.length?WEEK.filter(([d])=>w.includes(d)).map(x=>x[2]).join(" و"):"—"}
@@ -707,7 +714,7 @@ function vReports(){
   <div class="panel"><h2>المرتبات</h2>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
   ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.extra?`<div class="sub">${x.extra} يوم زيادة/تعويض</div>`:""}
-    ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
+    ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
   <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. الأوفر تايم بيتحسب على الشهر: بعد ما يكمّل ساعات كل أيامه في الشهر، يعني اليوم اللي بيعوّض بيه غياب مش أوفر تايم. أيام الإذن بتقلل الساعات المطلوبة. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
@@ -748,8 +755,8 @@ function vSettings(){
   <div class="panel"><div class="sec-title"><h2>الباكدجات</h2><button class="btn sm" data-act="newPackType">+ باكدج</button></div>
   ${(S.packTypes||[]).length?`<div class="list">${S.packTypes.map(t=>`<button class="row" data-act="editPackType" data-id="${t.id}"><span class="t">${esc(t.name)} ${t.typeId?`<span class="chip c-teal">${esc(typeName(t.typeId))}</span>`:`<span class="chip c-warn">من غير نوع</span>`}</span><span class="end money">${money(t.price)}</span><span class="m">${t.sessions} جلسة · الجلسة بـ ${money(t.price/t.sessions)}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش باكدجات</b>مثلاً «علاج طبيعي 10 جلسات» بـ 4800، أو «تيكار 6 جلسات». بيتباع للمريض من ملفه، وكل جلسة من نفس النوع بتتخصم منه.</div>`}</div>
   ${owner?`<div class="panel"><h2>المرتبات والنسب (ليك انت بس)</h2>
-  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>المرتب الشهري</th><th>أيام الشغل</th><th>نسبة الحالة الكاملة %</th><th>نسبة نص الحالة %</th></tr></thead><tbody>
-  ${activeStaff().map(s=>`<tr><td>${esc(s.name)}</td><td><input id="sal_${s.id}" inputmode="numeric" value="${c.salary[s.id]??""}" style="width:110px"></td><td><span class="wdays">${(()=>{const w=workDaysOf(s)||[];return WEEK.map(([d,l,f])=>`<label title="${f}"><input type="checkbox" id="wd_${s.id}_${d}" ${w.includes(d)?"checked":""}><span>${l}</span></label>`).join("")})()}</span></td><td><input id="cf_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.full??""}" style="width:80px" placeholder="—"></td><td><input id="ch_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.half??""}" style="width:80px" placeholder="—"></td></tr>`).join("")}
+  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>المرتب الشهري</th><th>أيام الشغل</th><th>إجازات السنة</th><th>نسبة الحالة الكاملة %</th><th>نسبة نص الحالة %</th></tr></thead><tbody>
+  ${activeStaff().map(s=>`<tr><td>${esc(s.name)}</td><td><input id="sal_${s.id}" inputmode="numeric" value="${c.salary[s.id]??""}" style="width:110px"></td><td><span class="wdays">${(()=>{const w=workDaysOf(s)||[];return WEEK.map(([d,l,f])=>`<label title="${f}"><input type="checkbox" id="wd_${s.id}_${d}" ${w.includes(d)?"checked":""}><span>${l}</span></label>`).join("")})()}</span></td><td><input id="la_${s.id}" inputmode="numeric" value="${c.leaveAllow[s.id]??""}" style="width:60px" placeholder="—"></td><td><input id="cf_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.full??""}" style="width:80px" placeholder="—"></td><td><input id="ch_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.half??""}" style="width:80px" placeholder="—"></td></tr>`).join("")}
   </tbody></table></div>
   <div class="grid2"><label class="f">ساعات اليوم الأساسية<input id="cfgHours" inputmode="numeric" value="${c.hoursBase}"></label><label class="f">أيام الشهر في الحسبة<input id="cfgDays" inputmode="numeric" value="${c.daysBase}"></label><label class="f">الأوفر تايم (الدقيقة بكام دقيقة)<input id="cfgOt" inputmode="decimal" value="${c.otMult}"></label></div>
   <div class="bar"><button class="btn primary" data-act="saveCfg">حفظ المرتبات</button><span class="sub">سيب خانة النسبة فاضية لو مفيش نسبة.</span></div></div>
@@ -1798,7 +1805,7 @@ document.addEventListener("click",async e=>{
     case "editType":sheetType(id);break;
     case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
-    case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked)});await db.doc("priv/config").set({salary,commission,workDays,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
+    case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays},leaveAllow={...c0.leaveAllow};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked);const la=val("la_"+s.id).trim();if(la)leaveAllow[s.id]=Math.round(num(la));else delete leaveAllow[s.id]});await db.doc("priv/config").set({salary,commission,workDays,leaveAllow,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
     case "newEntry":sheetEntry(null);break;
     case "myEntry":sheetEntry(S.log[id]);break;
