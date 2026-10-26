@@ -4,13 +4,13 @@
 const SOURCES=["إعلان فيسبوك","إعلان إنستجرام","تيك توك","جوجل / خرائط جوجل","ترشيح من مريض","ترشيح من دكتور","شاف المركز من الشارع","قريب أو صديق","أخرى"];
 const AD_SOURCES=["إعلان فيسبوك","إعلان إنستجرام","تيك توك","جوجل / خرائط جوجل"];
 const EXP_CATS=["إيجار","كهرباء ومياه وغاز","أدوات ومستلزمات","صيانة","إعلانات وتسويق","إنترنت وتليفون","نظافة وضيافة","مواصلات","أخرى"];
-const METHODS={cash:"كاش",instapay:"InstaPay"};
+const METHODS={cash:"كاش",instapay:"InstaPay",transfer:"تحويل / شيك"};
 const ROLE_NAMES={doctor:"دكتور",secretary:"استقبال",owner:"صاحب المركز"};
 const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 36";
+const APP_VERSION="26 أكتوبر · 37";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -126,6 +126,7 @@ function setupRoleSubs(){
     r.push(sub(c("exp").where("date",">=",winStart()),setLive("exp")));
     r.push(subDoc("cfg/prices",d=>{S.prices={};S.packTypes=d?.packs||[]}));
     r.push(subDoc("cfg/ext",d=>{S.ext=d||{}}));
+    r.push(sub(c("cfg"),o=>{S.payerList=o.payers?.list||[];const acct={};for(const [k,v] of Object.entries(o))if(k.startsWith("payer_"))acct[k.slice(6)]=v;S.payerAcct=acct}));
     r.push(sub(c("patients"),o=>S.patients=o));
     r.push(sub(c("users"),o=>S.users=o));
     r.push(c("usernames").onSnapshot(s=>{const m={};s.docs.forEach(d=>m[d.data().uid]=d.id);S.usernames=m;sched()},()=>{}));
@@ -354,7 +355,7 @@ function payroll(month){
     const dayRate=sched&&sched.length?sal/sched.length:0;const deduction=Math.round(deductDays*dayRate);
     const otPay=ot*c.otMult*minRate;
     const cm=c.commission[s.id];let comm=0,full=0,half=0,base2=0;
-    if(cm)for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))for(const [sid,comp] of creditsOf(v))if(sid===s.id){const pct=comp==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):(v.paid||0);comm+=base*pct/100;base2+=base;comp==="half"?half++:full++}
+    if(cm)for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))for(const [sid,comp] of creditsOf(v))if(sid===s.id){const pct=comp==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):v.payerId?(v.net||0):(v.paid||0);comm+=base*pct/100;base2+=base;comp==="half"?half++:full++}
     return{s,sal,ot,otPay,days,short,cm,comm,full,half,commBase:base2,total:sal-deduction+otPay+comm,wd,sched:sched?sched.length:null,absent,absentDates,extra,deductDays,paidLeave,deduction,dayRate};
   });
 }
@@ -415,16 +416,17 @@ function vReview(){
 function statusChip(s){return {pending:`<span class="chip c-warn">مستني المراجعة</span>`,approved:`<span class="chip c-ok">اتعتمد</span>`,edited:`<span class="chip c-teal">اتعتمد بتعديل</span>`,rejected:`<span class="chip c-bad">اترفض</span>`}[s]||""}
 /* ---------- views: patients ---------- */
 function vPatients(){
-  return `<div class="bar"><input id="q" class="grow" placeholder="دوّر بالاسم أو الموبايل" value="${esc(S.ui.q)}" aria-label="بحث"><button class="btn primary" data-act="newPatient">+ مريض جديد</button></div><div class="bar"><button class="btn sm" data-act="quickAdd">إضافة سريعة للمرضى القدام</button><button class="btn sm" data-act="pasteList">لصق قايمة</button></div><div id="plist"></div>`;
+  return `<div id="payerBox"></div><div class="bar"><input id="q" class="grow" placeholder="دوّر بالاسم أو الموبايل" value="${esc(S.ui.q)}" aria-label="بحث"><button class="btn primary" data-act="newPatient">+ مريض جديد</button></div><div class="bar"><button class="btn sm" data-act="quickAdd">إضافة سريعة للمرضى القدام</button><button class="btn sm" data-act="pasteList">لصق قايمة</button></div><div id="plist"></div>`;
 }
 function renderPatientList(){
   const el=document.getElementById("plist");if(!el)return;
   const q=nd(S.ui.q).trim();const b=balances();
   let ps=patientsSorted();if(q)ps=ps.filter(p=>(p.name||"").includes(q)||nd(p.phone||"").includes(q));
   const owe=Object.values(b).reduce((s,x)=>s+Math.max(0,x.charged-x.paid),0);
+  const pyEl=document.getElementById("payerBox");if(pyEl)pyEl.innerHTML=payersPanel();
   const shown=ps.slice(0,200);
   el.innerHTML=(Object.keys(S.patients).length?`<div class="stats" style="margin-bottom:12px"><div class="stat"><div class="k">عدد الملفات</div><div class="v num">${Object.keys(S.patients).length}</div></div><div class="stat"><div class="k">إجمالي اللي على الحالات</div><div class="v money">${money(owe)}</div></div></div>`:"")+
-  (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${(n=>n?`خلص ${n} جلسة`:"")(doneCount(p))}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
+  (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${p.payer&&payerById(p.payer)?`<span class="chip c-acc">${esc(payerById(p.payer).name)}</span>`:balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${(n=>n?`خلص ${n} جلسة`:"")(doneCount(p))}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
   :`<div class="empty"><b>${q?"مفيش مريض بالاسم ده":"لسه مفيش ملفات مرضى"}</b>${q?"جرب جزء من الاسم أو رقم الموبايل.":"اضغط «+ مريض جديد» واملا شيت الكشف، وصوّر الورقة كمان عشان لو ضاعت."}</div>`);
 }
 /* ---------- views: attendance (admin) ---------- */
@@ -638,6 +640,84 @@ async function rpSave(id){
 async function rpDel(id){const p=S.patients[RP.pid];await S.db.doc("patients/"+RP.pid).update({reports:(p.reports||[]).filter(r=>r.id!==id)});toast("اتحذف");reopenPatient(RP.pid)}
 function reportsHtml(pid){const rs=S.patients[pid]?.reports||[];if(!rs.length)return "";
   return `<div class="list">${rs.slice().sort((a,b)=>b.at-a.at).map(r=>`<button class="row" data-act="openReport" data-id="${pid}" data-k="${r.id}"><span class="t">${esc(r.title||"تقرير")} ${r.showTable?`<span class="chip c-teal">${r.rows.length} جلسة</span>`:""}</span><span class="end sub">${new Date(r.at).toLocaleDateString("ar-EG-u-nu-latn")}</span><span class="m">${esc(r.lang==="en"?"English":"عربي")}${r.showTable&&r.showPrices?` · ${money(r.rows.reduce((s,x)=>s+num(x.price),0))}`:""}</span><span></span></button>`).join("")}</div>`}
+/* ---------- payers who settle later on an invoice (e.g. a football club) ---------- */
+function payers(){return S.payerList||[]}
+function payerById(id){return payers().find(x=>x.id===id)}
+function payerFor(name){const n=(name||"").trim();return payers().find(x=>x.suffix&&n.endsWith(x.suffix.trim()))} // name ends with the club's word
+function payerOf(pid){return payerById(S.patients[pid]?.payer)}
+function payerAcct(id){const a=S.payerAcct?.[id]||{};return{charged:a.charged||0,paid:a.paid||0,invoices:a.invoices||[]}}
+function payerOwed(id){const a=payerAcct(id);return Math.round(a.charged-a.paid)}
+function payersPanel(){
+  const ps=payers();if(!ps.length)return "";
+  return `<div class="list">${ps.map(P=>{const o=payerOwed(P.id),n=Object.values(S.patients).filter(p=>p.payer===P.id).length,inv=payerAcct(P.id).invoices.slice(-1)[0];
+    return `<div class="row stack" style="cursor:default"><span class="t">${esc(P.name)} ${o>0?`<span class="chip c-bad">عليهم ${money(o)}</span>`:o<0?`<span class="chip c-ok">ليهم ${money(-o)}</span>`:`<span class="chip c-ok">خالص</span>`}</span>
+    <span class="end bar"><button class="btn sm teal" data-act="payerBill" data-id="${P.id}">فاتورة</button><button class="btn sm" data-act="payerPay" data-id="${P.id}">+ دفعة</button></span>
+    <span class="m">${n} لاعب · الجلسة ${money(P.price)}${inv?` · آخر فاتورة رقم ${inv.no} (${esc(dmy(inv.from))} ← ${esc(dmy(inv.to))})`:""}</span><span></span></div>`}).join("")}</div>`}
+function sheetPayerType(id){
+  const P=id?payerById(id):{price:200};
+  openSheet(id?P.name:"جهة بتدفع متأخر",`<p class="sub" style="margin:0">زي نادي بيراميدز: جلسات اللاعبين بتتسجل على حساب الجهة مش على اللاعب، وبتاخد فاتورة وبتدفع بعدين.</p>
+  <div class="grid2"><label class="f">اسم الجهة<input id="py_name" value="${esc(P.name||"")}" placeholder="نادي بيراميدز"></label><label class="f">سعر الجلسة<input id="py_price" inputmode="decimal" value="${P.price??""}"></label>
+  <label class="f">لو اسم المريض آخره (اختياري)<input id="py_suffix" value="${esc(P.suffix||"")}" placeholder="بيراميدز"></label></div>
+  <p class="sub" style="margin:0">أي مريض جديد اسمه آخره الكلمة دي بيتربط بالجهة لوحده. وتقدر تربط أي مريض من ملفه.</p>
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="savePayerType" data-id="${id||""}">حفظ</button>`);
+}
+async function savePayerType(id){
+  const name=val("py_name").trim(),price=num(val("py_price")),suffix=val("py_suffix").trim();if(!name)return setErr("اكتب اسم الجهة");if(!price)return setErr("اكتب سعر الجلسة");
+  const list=id?payers().map(x=>x.id===id?{...x,name,price,suffix}:x):[...payers(),{id:"py"+randId(),name,price,suffix}];
+  await S.db.doc("cfg/payers").set({list},{merge:true});
+  if(suffix){const P=list.find(x=>x.name===name);const b=S.db.batch();let n=0; // link existing patients whose name ends with the word
+    for(const p of Object.values(S.patients))if(!p.payer&&(p.name||"").trim().endsWith(suffix)){b.update(S.db.doc("patients/"+p.id),{payer:P.id});n++}
+    if(n)await b.commit();if(n)toast(`اتربط ${n} مريض بـ ${name}`)}
+  closeSheet();
+}
+function sheetPayerPay(id){
+  const P=payerById(id);if(!P)return;
+  openSheet(`دفعة من ${P.name}`,`<div class="note">عليهم دلوقتي <b>${money(payerOwed(id))}</b></div>
+  <div class="grid2"><label class="f">المبلغ<input id="pp_amt" inputmode="decimal" value="${Math.max(0,payerOwed(id))||""}"></label><label class="f">طريقة الدفع<select id="pp_method"><option value="cash">كاش</option><option value="instapay">InstaPay</option><option value="transfer">تحويل / شيك</option></select></label>
+  <label class="f">التاريخ<input type="date" id="pp_date" value="${today()}"></label><label class="f">ملاحظة<input id="pp_note" placeholder="مثلاً عن فاتورة رقم 3"></label></div>
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="savePayerPay" data-id="${id}">سجّل الدفعة</button>`);
+}
+async function savePayerPay(id){
+  const P=payerById(id);const amount=num(val("pp_amt"));if(!amount)return setErr("اكتب المبلغ");
+  const b=S.db.batch();b.set(S.db.collection("payments").doc(),{kind:"payer",payerId:id,payerName:P.name,patientId:null,patientName:P.name,amount,method:val("pp_method"),date:val("pp_date")||today(),note:val("pp_note").trim(),createdAt:Date.now(),by:S.mySid});
+  b.set(S.db.doc("cfg/payer_"+id),{paid:inc(amount)},{merge:true});await b.commit();closeSheet();toast("اتسجلت الدفعة");
+}
+let PB=null; // the club invoice being prepared
+async function sheetPayerBill(id){
+  const P=payerById(id);if(!P)return;const acct=payerAcct(id),last=acct.invoices.slice(-1)[0];
+  const from=last?dstr(dnum(last.to)+1):today().slice(0,7)+"-01",to=today();
+  let vs=[];try{vs=(await getFast(S.db.collection("visits").where("payerId","==",id))).docs.map(rowOf)}catch(e){}
+  if(!vs.length)vs=Object.values(S.visits).filter(v=>v.payerId===id);
+  PB={P,vs,from,to,no:(acct.invoices.length?Math.max(...acct.invoices.map(x=>x.no||0)):0)+1};
+  openSheet(`فاتورة ${P.name}`,`<div class="grid2"><label class="f">من يوم<input type="date" id="pb_from" value="${from}"></label><label class="f">لحد يوم<input type="date" id="pb_to" value="${to}"></label></div>
+  <div class="note" id="pb_sum"></div>
+  ${acct.invoices.length?`<h3 style="font-size:14px;margin:0">فواتير قبل كده</h3><div class="list">${acct.invoices.slice().reverse().map(x=>`<button class="row" data-act="payerOldBill" data-id="${id}" data-k="${x.no}"><span class="t">فاتورة رقم ${x.no}</span><span class="end money">${money(x.total)}</span><span class="m">${esc(dmy(x.from))} ← ${esc(dmy(x.to))} · ${x.count} جلسة</span><span></span></button>`).join("")}</div>`:""}
+  <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="payerPreview">معاينة وطباعة / PDF</button><button class="btn" data-act="payerIssue" data-id="${id}" data-confirm>سجّلها فاتورة رقم ${PB.no}</button></div>`,
+  ()=>{const upd=()=>{PB.from=val("pb_from");PB.to=val("pb_to");const r=billRows();document.getElementById("pb_sum").innerHTML=`${r.length} جلسة · ${new Set(r.map(x=>x.patientId)).size} لاعب · الإجمالي <b>${money(r.reduce((s,x)=>s+(x.net||0),0))}</b>`};
+    ["pb_from","pb_to"].forEach(i=>document.getElementById(i).addEventListener("change",upd));upd()});
+}
+function billRows(){return PB.vs.filter(v=>(v.date||"")>=PB.from&&(v.date||"")<=PB.to).sort((a,b)=>(a.date||"").localeCompare(b.date||"")||(a.patientName||"").localeCompare(b.patientName||""))}
+function payerBillHtml(P,rows,from,to,no){
+  const total=rows.reduce((s,r)=>s+(r.net||0),0);
+  return `<div class="a5" dir="rtl"><img class="wm" src="icons/watermark.png" alt="">
+  <table class="pg"><thead><tr><td><div class="pgtop"></div></td></tr></thead><tfoot><tr><td><div class="pgbot"></div></td></tr></tfoot><tbody><tr><td>
+  <div class="rh">Stride Clinic</div><div class="rtitle">فاتورة${no?` رقم ${no}`:""}</div>
+  <div class="rhead"><div class="rf"><b>إلى:</b> ${esc(P.name)}</div><div class="rf"><b>الفترة:</b> من ${dmy(from)} لحد ${dmy(to)}</div><div class="rf"><b>عدد الجلسات:</b> ${rows.length} جلسة</div></div>
+  <table class="rt"><thead><tr><th style="width:9%">م</th><th>الاسم</th><th>تاريخ الجلسة</th><th>سعر الجلسة</th></tr></thead><tbody>
+  ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc((r.patientName||"").replace(new RegExp("\\s*"+(P.suffix||"$^")+"\\s*$"),""))}</td><td dir="ltr">${dmy(r.date)}</td><td>${Math.round(r.net||0)}</td></tr>`).join("")}
+  <tr class="tot"><td colspan="3">الإجمالي</td><td>${Math.round(total)}</td></tr></tbody></table>
+  <div class="rsign"><img src="icons/signature.png" alt="${CLINIC.sign}"></div></td></tr></tbody></table>
+  <div class="rfoot" dir="rtl"><div>${CLINIC.name}</div><div>${CLINIC.addr}</div><div dir="ltr">${CLINIC.phones}</div></div></div>`}
+function showPrint(html){let root=document.getElementById("printRoot");if(!root){root=document.createElement("div");root.id="printRoot";document.body.appendChild(root)}
+  root.innerHTML=`<div class="ptool"><button class="btn primary" data-act="rpPrint">اطبع / احفظ PDF</button><button class="btn" data-act="rpClose">رجوع</button></div>${html}`;root.hidden=false}
+function payerPreview(no){PB.from=val("pb_from");PB.to=val("pb_to");const rows=billRows();if(!rows.length)return setErr("مفيش جلسات في الفترة دي");showPrint(payerBillHtml(PB.P,rows,PB.from,PB.to,no))}
+async function payerIssue(id){
+  PB.from=val("pb_from");PB.to=val("pb_to");const rows=billRows();if(!rows.length)return setErr("مفيش جلسات في الفترة دي");
+  const inv={no:PB.no,from:PB.from,to:PB.to,count:rows.length,total:Math.round(rows.reduce((s,r)=>s+(r.net||0),0)),at:Date.now(),by:S.mySid};
+  await S.db.doc("cfg/payer_"+id).set({invoices:[...payerAcct(id).invoices,inv]},{merge:true});
+  showPrint(payerBillHtml(PB.P,rows,PB.from,PB.to,PB.no));closeSheet();toast(`اتسجلت فاتورة رقم ${PB.no}`);
+}
+function payerOldBill(id,no){const inv=payerAcct(id).invoices.find(x=>String(x.no)===String(no));if(!inv)return;PB.from=inv.from;PB.to=inv.to;const rows=billRows();showPrint(payerBillHtml(PB.P,rows,inv.from,inv.to,inv.no))}
 /* ---------- views: reports ---------- */
 function expenseTips(m,rv,ex,pr,flags){
   const tips=[];const salBase=pr.reduce((s,x)=>s+x.sal,0),otNow=pr.reduce((s,x)=>s+x.otPay,0);
@@ -735,6 +815,7 @@ function vReports(){
   <div class="stats">
     <div class="stat"><div class="k">اتحصّل للمركز</div><div class="v money">${money(rv.collected)}</div></div>
     <div class="stat"><div class="k">مرتبات وأوفر تايم ونسب</div><div class="v money">${money(salTotal)}</div></div>
+    ${payers().length?`<div class="stat"><div class="k">على الجهات (لسه مدفعتش)</div><div class="v money">${money(payers().reduce((s,P)=>s+Math.max(0,payerOwed(P.id)),0))}</div></div>`:""}
     ${extShare||exts(true).length?`<div class="stat"><div class="k">حق الدكاترة من بره</div><div class="v money">${money(extShare)}</div></div>`:""}
     <div class="stat"><div class="k">مصروفات تانية</div><div class="v money">${money(ex.t)}</div></div>
     <div class="stat"><div class="k">صافي الشهر</div><div class="v money" style="color:${net<0?"var(--bad)":"var(--ok)"}">${money(net)}</div></div>
@@ -762,6 +843,8 @@ function vSettings(){
     <span class="end bar">${canManage(s)?`<button class="btn sm" data-act="editStaff" data-id="${s.id}">تعديل</button><button class="btn sm ${acc?"":"teal"}" data-act="makeLogin" data-id="${s.id}">${acc?"باسورد جديد":"اعمل حساب دخول"}</button>`:""}</span>
     <span class="m">${acc?`اسم المستخدم: ${esc(un||"—")}${acc.mustChange?" · لسه مغيّرش الباسورد المؤقت":""}`:"مفيش حساب دخول"}</span><span></span></div>`}).join("")}</div>
   <p class="sub" style="margin:0">كل واحد يقدر يغيّر اسم المستخدم والباسورد بتوعه من «حسابي». لو حد نسي الباسورد اضغط «باسورد جديد» وهيطلعلك باسورد مؤقت تديهوله.</p></div>
+  <div class="panel"><div class="sec-title"><h2>جهات بتدفع متأخر</h2><button class="btn sm" data-act="newPayerType">+ جهة</button></div>
+  ${payers().length?`<div class="list">${payers().map(x=>`<button class="row" data-act="editPayerType" data-id="${x.id}"><span class="t">${esc(x.name)}</span><span class="end money">${money(x.price)} للجلسة</span><span class="m">${x.suffix?`أي مريض اسمه آخره «${esc(x.suffix)}» بيتربط بيها لوحده`:"بتتربط من ملف المريض"}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش جهات</b>زي نادي بيراميدز: جلسات اللاعبين على حساب النادي، والنادي بياخد فاتورة وبيدفع بعدين.</div>`}</div>
   <div class="panel"><div class="sec-title"><h2>الدكاترة من بره</h2>${owner?`<button class="btn sm" data-act="newExt">+ إضافة</button>`:""}</div>
   ${exts(true).length?`<div class="list">${exts(true).map(x=>`<${owner?"button":"div"} class="row" ${owner?`data-act="editExt" data-id="${x.id}"`:`style="cursor:default"`}><span class="t">${esc(x.name)} ${x.active===false?`<span class="chip c-bad">وقف</span>`:""}</span><span class="end sub">${cycleLabel(x)}</span><span class="m">${(x.rates||[]).map(r=>`${typeName(r.typeId)}${r.by!=="any"?` (لو جابها ${BY_LABEL[r.by]})`:""}: ${r.pct}%`).map(esc).join(" · ")||"مفيش نسب"}</span><span></span></${owner?"button":"div"}>`).join("")}</div>`:`<div class="empty"><b>مفيش دكاترة من بره</b>زي د. هدير ود. منة: بيشتغلوا بنسبة وبيتحاسبوا كل أسبوع أو أسبوعين.</div>`}</div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
@@ -850,7 +933,7 @@ async function ensurePatient(v,phone,src){
   const p=findPatient(v);if(p)return{id:p.id,name:p.name};
   const name=v.trim();const ref=S.db.collection("patients").doc();
   const b=S.db.batch();
-  b.set(ref,{name,phone:nd(phone||"").trim(),source:src||"",examDate:today(),createdAt:Date.now(),charged:0,paid:0,count:0});
+  b.set(ref,{name,phone:nd(phone||"").trim(),source:src||"",examDate:today(),createdAt:Date.now(),charged:0,paid:0,count:0,payer:payerFor(name)?.id||""});
   b.set(S.db.doc("pdir/"+ref.id),{name});
   await b.commit();
   return{id:ref.id,name};
@@ -879,6 +962,8 @@ function wireMoney(prefix,typeSel){
 }
 function selectedPack(prefix){const pat=findPatient(val(prefix+"_pat"));const id=val(prefix+"_pack");return (S.patients[pat?.id]?.packs||[]).find(k=>k.id===id)}
 function readMoney(prefix){
+  const py=document.getElementById(prefix+"_payer");
+  if(py&&!document.getElementById(prefix+"_usepack")?.checked){const P=payerById(py.value);if(P)return{price:P.price,discount:0,net:P.price,paid:0,method:"",discountReason:"",packId:null,packName:"",packValue:0,payerId:P.id,payerName:P.name}}
   if(document.getElementById(prefix+"_usepack")?.checked){const pk=selectedPack(prefix);if(!pk)return{_err:"اختار الباكدج"};
     return{price:0,discount:0,net:0,paid:0,method:"",discountReason:"",packId:pk.id,packName:pk.name,packValue:Math.round((pk.price||0)/(pk.sessions||1)),packPay:num(val(prefix+"_kpay")),packPayMethod:val(prefix+"_kmethod")||"cash"}}
   const price=num(val(prefix+"_price")),discount=discFrom(prefix,price);
@@ -894,6 +979,8 @@ function wirePack(prefix,cur,typeSel){ // pick the session type first; the patie
   const box=document.getElementById(prefix+"_packbox"),moneyEl=document.getElementById(prefix+"_money"),pick=document.getElementById(prefix+"_pat"),tsel=typeSel&&document.getElementById(typeSel);
   const prIn=document.getElementById(prefix+"_price");if(prIn)prIn.addEventListener("input",e=>{if(e.isTrusted)prIn.dataset.auto=""}); // typed by hand: keep it
   const draw=()=>{const pat=findPatient(pick.value);const tid=tsel?tsel.value:"";const list=pat?packsFor(pat.id,tid,cur?.packId):[];
+    const P=pat?payerOf(pat.id):null;
+    if(!list.length&&P){box.innerHTML=`<div class="note">الجلسة دي على حساب <b>${esc(P.name)}</b> بـ ${money(P.price)}، والفلوس بتتاخد من الجهة بالفاتورة.</div><input type="hidden" id="${prefix}_payer" value="${P.id}">`;moneyEl.hidden=true;return}
     if(!list.length){const rate=pat&&tid?S.patients[pat.id]?.rates?.[tid]:null;
       box.innerHTML=!pat||!tid?"":rate!=null?`<div class="note">${esc(typeName(tid))} بالجلسة للمريض ده: سعر الجلسة <b>${money(rate)}</b>. اكتب دفع كام، والباقي بيتحسب عليه.</div>`
         :`<div class="note">مفيش باكدج ${esc(typeName(tid))} ولا سعر بالجلسة للمريض ده، فاكتب سعر الجلسة تحت. وعشان متكتبوش كل مرة، حدد له نظام من ملفه (+ باكدج أو + بالجلسة).</div>`;
@@ -914,10 +1001,14 @@ function addPackPay(b,acc,pat,m,date){ // a payment made on a package while reco
 }
 /* each patient doc holds its running balance (charged / paid / count) and its packages; one update per patient per batch */
 function pp(acc,pid,o={}){if(!pid)return;const a=acc[pid]||(acc[pid]={dc:0,dp:0,dn:0,date:null,use:{},pay:{}});a.dc+=o.dc||0;a.dp+=o.dp||0;a.dn+=o.dn||0;if(o.date&&(!a.date||o.date>a.date))a.date=o.date;if(o.pack)a.use[o.pack]=(a.use[o.pack]||0)+(o.use||0);if(o.payPack)a.pay[o.payPack]=(a.pay[o.payPack]||0)+(o.payAmt||0)}
-function flushPatients(b,acc){for(const [pid,a] of Object.entries(acc)){const u={charged:inc(a.dc),paid:inc(a.dp),count:inc(a.dn)};if(a.date)u.last=a.date;
+function flushPatients(b,acc){
+  for(const [id,x] of Object.entries(acc.__py||{}))if(x)b.set(S.db.doc("cfg/payer_"+id),{charged:inc(x)},{merge:true});
+  for(const [pid,a] of Object.entries(acc)){if(pid==="__py")continue;const u={charged:inc(a.dc),paid:inc(a.dp),count:inc(a.dn)};if(a.date)u.last=a.date;
   if(Object.keys(a.use).length||Object.keys(a.pay).length)u.packs=(S.patients[pid]?.packs||[]).map(k=>{let x=k;if(a.use[k.id])x={...x,used:Math.max(0,(x.used||0)+a.use[k.id])};if(a.pay[k.id])x={...x,paid:(x.paid||0)+a.pay[k.id]};return x});
   b.update(S.db.doc("patients/"+pid),u)}}
-function visitEffect(acc,v,sign){if(!v)return;pp(acc,v.patientId,{dc:sign*(v.net||0),dp:sign*(v.paid||0),dn:sign,date:sign>0?v.date:null,pack:v.packId,use:sign})}
+function visitEffect(acc,v,sign){if(!v)return;
+  if(v.payerId){const py=acc.__py||(acc.__py={});py[v.payerId]=(py[v.payerId]||0)+sign*(v.net||0);pp(acc,v.patientId,{dn:sign,date:sign>0?v.date:null});return} // charged to the club, not the player
+  pp(acc,v.patientId,{dc:sign*(v.net||0),dp:sign*(v.paid||0),dn:sign,date:sign>0?v.date:null,pack:v.packId,use:sign})}
 /* ---------- doctor entry ---------- */
 function sheetEntry(e,fromAppt){
   entryAppt=fromAppt||null;
@@ -1131,7 +1222,8 @@ function lateMin(a){const b=mins(a.time),x=mins(a.arrived);return b!=null&&x!=nu
 function lateChip(a){const l=lateMin(a);return l!=null&&l>10?`<span class="chip c-warn">اتأخر ${hm(l)}</span>`:""}
 function payChip(a){
   if(["noshow","cancelled"].includes(a.status))return "";
-  const v=S.visits[a.id];return (v?"":`<span class="chip c-mute">لسه ما اتسجلش</span> `)+patBalChip(a.patientId);
+  const v=S.visits[a.id];const P=payerOf(a.patientId);
+  return (v?"":`<span class="chip c-mute">لسه ما اتسجلش</span> `)+(P?`<span class="chip c-acc">على ${esc(P.name)}</span>`:patBalChip(a.patientId));
 }
 function needsRecord(a){return a.status==="done"&&(!S.visits[a.id]||!a.creditSet)} // finished, but Reham hasn't settled doctor + money yet
 function sessionRow(a){
@@ -1321,6 +1413,7 @@ async function delVisit(id){
 async function sheetPay(id,patientId,packId){
   let p=id?S.payments[id]:{date:S.ui.date,method:"cash",patientId,packId:packId||null};
   if(id&&!p){const d=await S.db.doc("payments/"+id).get();if(!d.exists)return;p={id,...d.data()};S.old.payments[id]=p;merge()}
+  if(p.kind==="payer")return openSheet("دفعة من "+p.payerName,`<div class="note">${money(p.amount)} من ${esc(p.payerName)} يوم ${esc(p.date)}${p.note?`<br>${esc(p.note)}`:""}</div><div class="err" id="formErr"></div><button class="btn danger" data-act="delPay" data-id="${id}" data-confirm>حذف الدفعة</button>`);
   if(p.kind==="discount")return openSheet("خصم على الحساب",`<div class="note">خصم <b>${money(p.amount)}</b> لـ ${esc(p.patientName)} يوم ${esc(p.date)}<br>السبب: ${esc(p.reason||"—")}<br>اتعمل بواسطة: ${esc(staffName(p.by))}</div><div class="err" id="formErr"></div><button class="btn danger" data-act="delPay" data-id="${id}" data-confirm>إلغاء الخصم</button>`);
   const cur=p.patientId&&S.patients[p.patientId]?pLabel(S.patients[p.patientId]):(p.patientName||"");
   openSheet(id?"تعديل دفعة":"دفعة منفصلة",`<p class="sub" style="margin:0">لتسديد اللي على الحالة أو قسط من باكدج. بيع الباكدج نفسه من ملف المريض. لو هترجع فلوس لحالة اكتب المبلغ بالسالب.</p>
@@ -1346,7 +1439,8 @@ async function savePay(id){
 }
 async function delPay(id){
   const p=S.payments[id];if(!p)return;const b=S.db.batch(),acc={};b.delete(S.db.doc("payments/"+id));
-  if(p.kind==="discount")pp(acc,p.patientId,{dc:p.amount||0});else pp(acc,p.patientId,{dp:-(p.amount||0),payPack:p.packId,payAmt:-(p.amount||0)});
+  if(p.kind==="payer")b.set(S.db.doc("cfg/payer_"+p.payerId),{paid:inc(-(p.amount||0))},{merge:true});
+  else if(p.kind==="discount")pp(acc,p.patientId,{dc:p.amount||0});else pp(acc,p.patientId,{dp:-(p.amount||0),payPack:p.packId,payAmt:-(p.amount||0)});
   flushPatients(b,acc);await b.commit();forget("payments",id);closeSheet();toast(p.kind==="discount"?"الخصم اتلغى":"اتمسحت");
 }
 /* ---------- packages & discounts on a patient ---------- */
@@ -1444,7 +1538,7 @@ function sheetQuick(){
   <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveQuick">حفظ وضيف التاني</button><button class="btn" data-act="close">خلصت</button></div><p class="sub" id="q_count" style="margin:0"></p>`);
 }
 function phoneTaken(phone){phone=nd(phone).replace(/\D/g,"");return phone?Object.values(S.patients).find(p=>nd(p.phone||"").replace(/\D/g,"")===phone):null}
-function newPatientDoc(name,phone,source,date,opening){return{name,phone:nd(phone||"").trim(),source:source||"",examDate:date||"",imported:true,createdAt:Date.now(),charged:opening>0?opening:0,paid:opening<0?-opening:0,count:0,opening:opening||0}}
+function newPatientDoc(name,phone,source,date,opening){return{payer:payerFor(name)?.id||"",name,phone:nd(phone||"").trim(),source:source||"",examDate:date||"",imported:true,createdAt:Date.now(),charged:opening>0?opening:0,paid:opening<0?-opening:0,count:0,opening:opening||0}}
 async function saveQuick(){
   const name=val("q_name").trim(),phone=val("q_phone").trim();if(!name)return setErr("اكتب الاسم");
   const dup=phoneTaken(phone);if(dup)return setErr(`الموبايل ده متسجل لـ ${dup.name}`);
@@ -1526,6 +1620,7 @@ function sheetPatient(id){
   <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
   <label class="f">النوع<select id="pt_gender"><option value="">—</option><option ${p.gender==="ذكر"?"selected":""}>ذكر</option><option ${p.gender==="أنثى"?"selected":""}>أنثى</option></select></label>
   <label class="f">عرف المركز منين<select id="pt_source">${sourceOptions(p.source)}</select></label>
+  ${payers().length?`<label class="f">مين بيدفع<select id="pt_payer"><option value="">المريض نفسه</option>${payers().map(x=>`<option value="${x.id}" ${p.payer===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label>`:""}
   ${exts(true).length?`<label class="f">الحالة جايبها مين (للنسبة)<select id="pt_broughtBy"><option value="">المركز</option>${exts(true).map(x=>`<option value="${x.id}" ${p.broughtBy===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label>`:""}${F("sourceDetail","تفاصيل المصدر (اسم اللي رشّح…)")}
   <label class="f">تاريخ الكشف<input type="date" id="pt_examDate" value="${p.examDate||""}"></label>
   <label class="f">الدكتور اللي كشف<select id="pt_examDoctor"><option value="">—</option>${docOpts.map(([k,n])=>`<option value="${k}" ${p.examDoctor===k?"selected":""}>${esc(n)}</option>`).join("")}</select></label></div>
@@ -1573,7 +1668,8 @@ async function uploadSheet(id,input){
 }
 async function savePatient(id){
   const keys=["name","phone","age","gender","source","sourceDetail","examDate","examDoctor","complaint","history","findings","diagnosis","plan","notes"];
-  const body={};keys.forEach(k=>body[k]=(val("pt_"+k)||"").trim());if(document.getElementById("pt_broughtBy"))body.broughtBy=val("pt_broughtBy");body.phone=nd(body.phone);body.age=nd(body.age);
+  const body={};keys.forEach(k=>body[k]=(val("pt_"+k)||"").trim());if(document.getElementById("pt_broughtBy"))body.broughtBy=val("pt_broughtBy");
+  if(document.getElementById("pt_payer"))body.payer=val("pt_payer")||(!id&&payerFor(body.name)?.id)||"";body.phone=nd(body.phone);body.age=nd(body.age);
   if(!body.name)return setErr("اكتب اسم المريض");const isNew=!id;
   const b=S.db.batch();
   if(id)b.update(S.db.doc("patients/"+id),body);else{const ref=S.db.collection("patients").doc();b.set(ref,{...body,createdAt:Date.now(),charged:0,paid:0,count:0});id=ref.id}
@@ -1789,7 +1885,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","moveOwner","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -1896,6 +1992,15 @@ document.addEventListener("click",async e=>{
     case "absence":sheetAbsence(id,S.ui.month);break;
     case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
     case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
+    case "newPayerType":sheetPayerType(null);break;
+    case "editPayerType":sheetPayerType(id);break;
+    case "savePayerType":guard(t,()=>savePayerType(id));break;
+    case "payerPay":sheetPayerPay(id);break;
+    case "savePayerPay":guard(t,()=>savePayerPay(id));break;
+    case "payerBill":sheetPayerBill(id);break;
+    case "payerPreview":payerPreview(null);break;
+    case "payerIssue":guard(t,()=>payerIssue(id));break;
+    case "payerOldBill":payerOldBill(id,t.dataset.k);break;
     case "newInvoice":sheetReport(id,null,"invoice");break;
     case "newReport":sheetReport(id,null,"report");break;
     case "openReport":sheetReport(id,t.dataset.k);break;
