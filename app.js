@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 33";
+const APP_VERSION="26 أكتوبر · 34";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -52,6 +52,20 @@ function fmtTs(t){try{const d=t&&t.toDate?t.toDate():new Date(t);return isNaN(d)
 const inc=n=>firebase.firestore.FieldValue.increment(n);
 const winMonth=()=>prevMonth(today().slice(0,7));          // live window = this month + last month
 const winStart=()=>winMonth()+"-01";
+/* ---------- speed on slow networks ---------- */
+// Firestore applies a write to the local copy right away; only the server's confirmation is slow on 3G.
+// So actions wait at most a moment for it, then carry on; a later failure still shows a message.
+function fastWrites(){
+  const FS=firebase.firestore;const wrap=(P,name)=>{if(!P||!P[name]||P[name].__fast)return;const orig=P[name];
+    P[name]=function(...a){const p=orig.apply(this,a);let late=false;
+      p.catch(e=>{if(late){console.warn(e);toast(e&&e.code==="permission-denied"?"فيه تعديل اترفض: مش مسموح ليك بيه":"فيه تعديل متسجلش على السيرفر، اتأكد من النت")}});
+      return Promise.race([p,new Promise(r=>setTimeout(()=>{late=true;r()},400))])};P[name].__fast=true};
+  wrap(FS.DocumentReference&&FS.DocumentReference.prototype,"set");wrap(FS.DocumentReference&&FS.DocumentReference.prototype,"update");
+  wrap(FS.DocumentReference&&FS.DocumentReference.prototype,"delete");wrap(FS.WriteBatch&&FS.WriteBatch.prototype,"commit");
+  wrap(FS.CollectionReference&&FS.CollectionReference.prototype,"add");
+}
+function getFast(q,ms=1500){ // server copy if it comes quickly, otherwise what the phone already has
+  return Promise.race([q.get(),new Promise(r=>setTimeout(r,ms)).then(()=>q.get({source:"cache"}).catch(()=>q.get()))])}
 /* ---------- rendering scheduler ---------- */
 let rq=false,needRender=false;
 function editingMain(){const a=document.activeElement;return a&&a.closest&&a.closest("#main")&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)}
@@ -63,7 +77,7 @@ function boot(){
   if(!window.firebase)return showFatal("مش قادر يحمّل Firebase","اتأكد إن النت شغال وافتح الصفحة تاني.");
   if(!CFG.apiKey||/PASTE/.test(CFG.apiKey))return showFatal("لسه ما اتحطش إعداد Firebase","افتح ملف config.js وحط فيه بيانات مشروعك (الخطوة 4 في دليل التركيب).");
   firebase.initializeApp(CFG);S.auth=firebase.auth();S.db=firebase.firestore();
-  S.db.enablePersistence({synchronizeTabs:true}).catch(()=>{});
+  S.db.enablePersistence({synchronizeTabs:true}).catch(()=>{});fastWrites();
   S.auth.onAuthStateChanged(onAuth);
 }
 let profUnsub=null;
@@ -270,12 +284,16 @@ function doneCount(p){return (p?.count||0)+(p?.packs||[]).reduce((s,k)=>s+(k.pre
 function balances(){const b={};for(const p of Object.values(S.patients))if(p.count||p.charged||p.paid)b[p.id]={charged:p.charged||0,paid:p.paid||0,count:p.count||0};return b}
 function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات</span>`;const d=Math.round(x.charged-x.paid);
   return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">خالص</span>`}
+let caseIdx=null,caseIdxOf=null;
+function firstCase(date,sid){ // earliest booking that day (for the whole clinic, or for one doctor)
+  if(caseIdxOf!==S.appts){caseIdx={};caseIdxOf=S.appts;
+    for(const a of Object.values(S.appts)){if(!a.time||["cancelled","noshow"].includes(a.status))continue;const m=mins(a.time);if(m==null)continue;
+      const d=caseIdx[a.date]||(caseIdx[a.date]={all:null,by:{}});if(d.all==null||m<d.all)d.all=m;for(const x of apptDocs(a))if(d.by[x]==null||m<d.by[x])d.by[x]=m}}
+  const d=caseIdx[date];return d?(sid?d.by[sid]:d.all):undefined}
 function shiftStart(sid,date){ // when the paid day starts: doctors 3:00 (or their first case if earlier), reception 2:30 (or 30 min before the first case)
   const c=cfg(),role=S.staff[sid]?.role;if(!role)return null;
-  const day=Object.values(S.appts).filter(a=>a.date===date&&a.time&&!["cancelled","noshow"].includes(a.status));
-  const first=list=>list.map(a=>mins(a.time)).filter(x=>x!=null).sort((x,y)=>x-y)[0];
-  if(role==="secretary"){const b=mins(c.secStart),f=first(day);return f!=null?Math.min(b,f-c.secLead):b}
-  if(role==="doctor"){const b=mins(c.docStart),f=first(day.filter(a=>apptDocs(a).includes(sid)));return f!=null&&f<b?f:b}
+  if(role==="secretary"){const b=mins(c.secStart),f=firstCase(date);return f!=null?Math.min(b,f-c.secLead):b}
+  if(role==="doctor"){const b=mins(c.docStart),f=firstCase(date,sid);return f!=null&&f<b?f:b}
   return null}
 function effIn(rec){const a=mins(rec.in);if(a==null)return null;const s=shiftStart(rec.staffId,rec.date);return s!=null&&a<s?s:a} // coming early with no work doesn't count
 function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`}
@@ -528,7 +546,8 @@ const REP_DEFAULT={ar:{title:"تقرير طبي"},en:{title:"PHYSIOTHERAPY TREAT
 async function sheetReport(pid,savedId,kind){
   const p=S.patients[pid];if(!p)return;
   const saved=savedId?(p.reports||[]).find(r=>r.id===savedId):null;
-  let vs=[];try{vs=(await S.db.collection("visits").where("patientId","==",pid).get()).docs.map(rowOf)}catch(e){}
+  let vs=[];try{vs=(await getFast(S.db.collection("visits").where("patientId","==",pid))).docs.map(rowOf)}catch(e){}
+  if(!vs.length)vs=Object.values(S.visits).filter(v=>v.patientId===pid);
   vs.sort((a,b)=>((a.date||"")+(a.time||"")).localeCompare((b.date||"")+(b.time||"")));
   const invoice=kind==="invoice";
   RP=saved?{...saved,rows:(saved.rows||[]).map(r=>({...r}))}:{pid,lang:"ar",title:invoice?"تقرير طبي":"تقرير طبي",diag:p.diagnosis||"",plan:invoice?(p.plan||""):"",body:"",showTable:invoice,showPrices:true,showTotal:true,
@@ -1515,7 +1534,7 @@ function sheetPatient(id){
 async function loadHistory(id){
   const el=document.getElementById("pt_hist");if(!el)return;
   try{
-    const [v,p]=await Promise.all([S.db.collection("visits").where("patientId","==",id).get(),S.db.collection("payments").where("patientId","==",id).get()]);
+    const [v,p]=await Promise.all([getFast(S.db.collection("visits").where("patientId","==",id)),getFast(S.db.collection("payments").where("patientId","==",id))]);
     const vs=v.docs.map(rowOf),ps=p.docs.map(rowOf);vs.forEach(x=>{if(!S.visits[x.id])S.old.visits[x.id]=x});ps.forEach(x=>{if(!S.payments[x.id])S.old.payments[x.id]=x});merge();
     const hist=[...vs.map(x=>({d:x.date,t:"v",x})),...ps.map(x=>({d:x.date,t:"p",x}))].sort((a,c)=>(c.d||"").localeCompare(a.d||""));
     el.innerHTML=hist.length?`<div class="hr"></div><h3 style="font-size:15px;margin-bottom:8px">الجلسات والدفعات</h3><div class="list">${hist.map(h=>h.t==="v"?`<button class="row" data-act="editVisit" data-id="${h.x.id}"><span class="t">${esc(h.x.typeName)} ${h.x.completion==="half"?`<span class="chip c-warn">نص</span>`:""}</span><span class="end money">${h.x.packId?`<span class="chip c-teal">باكدج</span>`:money(h.x.net)}</span><span class="m">${esc(h.x.date)} · ${esc(staffName(h.x.doctorId))}</span><span class="end m">${h.x.packId?esc(h.x.packName||""):`دفع ${money(h.x.paid)} ${METHODS[h.x.method]||""}`}${h.x.discount?` · خصم ${money(h.x.discount)}`:""}</span></button>`:`<button class="row" data-act="editPay" data-id="${h.x.id}"><span class="t">${h.x.kind==="discount"?`<span class="chip c-acc">خصم</span> ${esc(h.x.reason||"")}`:`دفعة ${h.x.note?"· "+esc(h.x.note):""}`}</span><span class="end money">${money(h.x.amount)}</span><span class="m">${esc(h.x.date)} · ${METHODS[h.x.method]||""}</span><span></span></button>`).join("")}</div>`:"";
@@ -1523,7 +1542,7 @@ async function loadHistory(id){
 }
 async function loadPhotos(id){
   const el=document.getElementById("pt_photos");if(!el)return;
-  try{const s=await S.db.collection("photos").where("patientId","==",id).get();
+  try{const s=await getFast(S.db.collection("photos").where("patientId","==",id),2500);
     const docs=s.docs.map(d=>({id:d.id,...d.data()})).filter(x=>/^data:image\/(jpeg|png|webp);base64,/.test(x.data||"")).sort((a,b)=>(a.at||0)-(b.at||0));
     el.innerHTML=docs.length?docs.map(ph=>`<img src="${ph.data}" alt="ورقة الكشف" data-act="zoom">`).join(""):`<span class="sub">مفيش صور لسه. صوّر الورقة عشان لو ضاعت.</span>`;
   }catch(e){el.innerHTML=`<span class="sub">الصور مش متاحة دلوقتي.</span>`}
