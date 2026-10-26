@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 30";
+const APP_VERSION="26 أكتوبر · 31";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -269,8 +269,18 @@ function myFresh(){const seen=num(ls("seen_"+S.mySid)||0);return myEntriesList()
 function balances(){const b={};for(const p of Object.values(S.patients))if(p.count||p.charged||p.paid)b[p.id]={charged:p.charged||0,paid:p.paid||0,count:p.count||0};return b}
 function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات</span>`;const d=Math.round(x.charged-x.paid);
   return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">خالص</span>`}
-function attMinutes(rec){const a=mins(rec.in),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
-function cfg(){const c=S.config||{};return{salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
+function shiftStart(sid,date){ // when the paid day starts: doctors 3:00 (or their first case if earlier), reception 2:30 (or 30 min before the first case)
+  const c=cfg(),role=S.staff[sid]?.role;if(!role)return null;
+  const day=Object.values(S.appts).filter(a=>a.date===date&&a.time&&!["cancelled","noshow"].includes(a.status));
+  const first=list=>list.map(a=>mins(a.time)).filter(x=>x!=null).sort((x,y)=>x-y)[0];
+  if(role==="secretary"){const b=mins(c.secStart),f=first(day);return f!=null?Math.min(b,f-c.secLead):b}
+  if(role==="doctor"){const b=mins(c.docStart),f=first(day.filter(a=>apptDocs(a).includes(sid)));return f!=null&&f<b?f:b}
+  return null}
+function effIn(rec){const a=mins(rec.in);if(a==null)return null;const s=shiftStart(rec.staffId,rec.date);return s!=null&&a<s?s:a} // coming early with no work doesn't count
+function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`}
+function countedNote(r){const e=effIn(r),a=mins(r.in);return r&&e!=null&&a!=null&&e!==a?` · بيتحسب من ${fmtMin(e)}`:""}
+function attMinutes(rec){const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
+function cfg(){const c=S.config||{};return{salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},docStart:c.docStart||"15:00",secStart:c.secStart||"14:30",secLead:c.secLead??30,otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
 const WEEK=[[6,"س","السبت"],[0,"ح","الحد"],[1,"ن","الاتنين"],[2,"ث","التلات"],[3,"ر","الأربع"],[4,"خ","الخميس"],[5,"ج","الجمعة"]]; // getDay(): 0 = Sunday … 6 = Saturday
 function guessDays(s){const n=s.name||"";if(s.role==="secretary")return [6,0,1,2,3,4];if(/سلم|محمد/.test(n))return [6,1,3];if(/حبيب/.test(n))return [0,2,4];return null}
 function workDaysOf(s){const w=cfg().workDays[s.id];return Array.isArray(w)?w:guessDays(s)} // the weekly schedule the salary is for
@@ -406,7 +416,7 @@ function vAtt(){
   const rows=st.map(s=>{const r=S.att[d+"_"+s.id];const w=r?attMinutes(r):null;const ot=w!=null&&w>base?w-base:0;
     return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span></span>
     <span class="end">${attChip(r,w,ot,base)}</span>
-    <span class="m">${r?`حضور ${esc(r.in||"—")} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
+    <span class="m">${r?`حضور ${esc(r.in||"—")}${countedNote(r)} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
   const sum=st.map(s=>{let days=0,ot=0,short=0;for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(m)){const w=attMinutes(r);if(w==null)continue;days++;w>base?ot+=w-base:short+=base-w}return `<tr><td>${esc(s.name)}</td><td class="num">${days}</td><td>${hm(ot)}</td><td>${hm(short)}</td></tr>`}).join("");
   return `${tempNote}<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
   ${st.length?`<div class="list">${rows}</div>`:`<div class="empty"><b>مفيش فريق متسجل</b>ضيف الدكاترة والسكرتارية من الإعدادات.</div>`}
@@ -426,7 +436,7 @@ function vMyAtt(){
   <p class="err" id="geoMsg" style="margin:0"></p>
   <p class="sub" style="margin:0">الوقت بيتسجل من ساعة السيرفر${S.geo?.lat&&S.geo.required!==false?"، ومكانك بيتأكد إنه جوه المركز":""}.${r?.in&&r?.out?" اليوم اتقفل، ولو فيه غلط قول لريهام تعدّله.":""}</p></div>
   <div class="stats"><div class="stat"><div class="k">أيام حضور ${esc(monthLabel(m))}</div><div class="v num">${days}</div></div><div class="stat"><div class="k">أوفر تايم الشهر ده</div><div class="v">${hm(ot)}</div></div></div>
-  ${recs.length?`<div class="list">${recs.map(x=>{const w=attMinutes(x);const o=w!=null&&w>base?w-base:0;return `<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(x.date))}</span><span class="end">${attChip(x,w,o,base)}</span><span class="m">حضور ${esc(x.in||"—")} · انصراف ${esc(x.out||"—")}${w!=null?" · "+hm(w):""}</span><span></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام متسجلة الشهر ده</b>اضغط «سجّل حضوري» أول ما توصل.</div>`}`;
+  ${recs.length?`<div class="list">${recs.map(x=>{const w=attMinutes(x);const o=w!=null&&w>base?w-base:0;return `<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(x.date))}</span><span class="end">${attChip(x,w,o,base)}</span><span class="m">حضور ${esc(x.in||"—")}${countedNote(x)} · انصراف ${esc(x.out||"—")}${w!=null?" · "+hm(w):""}</span><span></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام متسجلة الشهر ده</b>اضغط «سجّل حضوري» أول ما توصل.</div>`}`;
 }
 /* ---------- doctors from outside (on a percentage, paid weekly / every two weeks) ---------- */
 function exts(all){return (S.ext?.list||[]).filter(x=>all||x.active!==false)}
@@ -758,7 +768,10 @@ function vSettings(){
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>المرتب الشهري</th><th>أيام الشغل</th><th>إجازات السنة</th><th>نسبة الحالة الكاملة %</th><th>نسبة نص الحالة %</th></tr></thead><tbody>
   ${activeStaff().map(s=>`<tr><td>${esc(s.name)}</td><td><input id="sal_${s.id}" inputmode="numeric" value="${c.salary[s.id]??""}" style="width:110px"></td><td><span class="wdays">${(()=>{const w=workDaysOf(s)||[];return WEEK.map(([d,l,f])=>`<label title="${f}"><input type="checkbox" id="wd_${s.id}_${d}" ${w.includes(d)?"checked":""}><span>${l}</span></label>`).join("")})()}</span></td><td><input id="la_${s.id}" inputmode="numeric" value="${c.leaveAllow[s.id]??""}" style="width:60px" placeholder="—"></td><td><input id="cf_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.full??""}" style="width:80px" placeholder="—"></td><td><input id="ch_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.half??""}" style="width:80px" placeholder="—"></td></tr>`).join("")}
   </tbody></table></div>
-  <div class="grid2"><label class="f">ساعات اليوم الأساسية<input id="cfgHours" inputmode="numeric" value="${c.hoursBase}"></label><label class="f">أيام الشهر في الحسبة<input id="cfgDays" inputmode="numeric" value="${c.daysBase}"></label><label class="f">الأوفر تايم (الدقيقة بكام دقيقة)<input id="cfgOt" inputmode="decimal" value="${c.otMult}"></label></div>
+  <div class="grid2"><label class="f">ساعات اليوم الأساسية<input id="cfgHours" inputmode="numeric" value="${c.hoursBase}"></label><label class="f">أيام الشهر في الحسبة<input id="cfgDays" inputmode="numeric" value="${c.daysBase}"></label><label class="f">الأوفر تايم (الدقيقة بكام دقيقة)<input id="cfgOt" inputmode="decimal" value="${c.otMult}"></label>
+  <label class="f">الدكاترة بيتحسبوا من<input type="time" id="cfgDocStart" value="${c.docStart}"></label><label class="f">الاستقبال بيتحسب من<input type="time" id="cfgSecStart" value="${c.secStart}"></label>
+  <label class="f">الاستقبال تيجي قبل أول حالة بـ (دقيقة)<input id="cfgSecLead" inputmode="numeric" value="${c.secLead}"></label></div>
+  <p class="sub" style="margin:0">اللي ييجي بدري من غير شغل بيتحسب من الوقت ده. الدكتور لو عنده حالة قبله بيتحسب من ميعاد أول حالة، والاستقبال بتتحسب من قبل أول حالة في المركز بالدقايق دي.</p>
   <div class="bar"><button class="btn primary" data-act="saveCfg">حفظ المرتبات</button><span class="sub">سيب خانة النسبة فاضية لو مفيش نسبة.</span></div></div>
   <div class="panel"><h2>نسخة احتياطية</h2><p class="sub" style="margin:0">نزّل ملف فيه كل بيانات المركز (المرضى والجلسات والدفعات والحضور والمصروفات والمرتبات). اعملها مرة في الشهر واحفظ الملف على Google Drive.</p><div class="bar"><button class="btn" data-act="backup">تنزيل نسخة احتياطية</button><span class="sub" id="bkMsg"></span></div></div>`:""}`;
 }
@@ -1818,7 +1831,7 @@ document.addEventListener("click",async e=>{
     case "editType":sheetType(id);break;
     case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
-    case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays},leaveAllow={...c0.leaveAllow};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked);const la=val("la_"+s.id).trim();if(la)leaveAllow[s.id]=Math.round(num(la));else delete leaveAllow[s.id]});await db.doc("priv/config").set({salary,commission,workDays,leaveAllow,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
+    case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays},leaveAllow={...c0.leaveAllow};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked);const la=val("la_"+s.id).trim();if(la)leaveAllow[s.id]=Math.round(num(la));else delete leaveAllow[s.id]});await db.doc("priv/config").set({salary,commission,workDays,leaveAllow,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5,docStart:val("cfgDocStart")||"15:00",secStart:val("cfgSecStart")||"14:30",secLead:val("cfgSecLead").trim()===""?30:Math.max(0,Math.round(num(val("cfgSecLead"))))});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
     case "newEntry":sheetEntry(null);break;
     case "myEntry":sheetEntry(S.log[id]);break;
