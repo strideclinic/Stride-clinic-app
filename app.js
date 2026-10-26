@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 38";
+const APP_VERSION="26 أكتوبر · 39";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1334,9 +1334,8 @@ async function saveWalkin(){
   if(!pv)return setErr("اختار المريض");if(!doc)return setErr("اختار الدكتور");if(!time)return setErr("اكتب الساعة");
   const pat=await ensurePatient(pv,val("w_phone"),val("w_src"));const type=val("w_type");const info=sessionInfo(pat.id,kind,null,date,time,type);
   const ref=S.db.collection("appts").doc();
-  const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:[doc],kind,kindLabel:info.label,packId:info.packId||null,date,time,duration:60,typeId:type||null,typeName:type?typeName(type):"",note:"من غير ميعاد",walkin:true,status:"arrived",arrivedT:time,confirmed:false,createdAt:Date.now(),by:S.mySid};
-  ptChanged({...body,status:"booked"},"arrived",{arrived:time});
-  await ref.set(body);S.live.appts[ref.id]={id:ref.id,...body,arrived:time};merge();sheetSession(ref.id);
+  const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:[doc],kind,kindLabel:info.label,packId:info.packId||null,date,time,duration:60,typeId:type||null,typeName:type?typeName(type):"",note:"من غير ميعاد",walkin:true,status:"booked",confirmed:false,createdAt:Date.now(),by:S.mySid};
+  await ref.set(body);S.live.appts[ref.id]={id:ref.id,...body};merge();sheetSession(ref.id);
 }
 /* ---------- review ---------- */
 function sheetReview(id,done){
