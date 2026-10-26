@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 29";
+const APP_VERSION="26 أكتوبر · 30";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -963,9 +963,19 @@ function syncLabels(list){ // write the live session number back to the booking,
 function packMismatch(a){ // has packages, but none of this session's type (and no per-session rate for it)
   if(a.kind==="exam"||!isAdmin()||S.visits[a.id]||!a.typeId)return "";const all=activePacks(a.patientId);if(!all.length||packsFor(a.patientId,a.typeId).length||S.patients[a.patientId]?.rates?.[a.typeId]!=null)return "";
   return `<span class="chip c-warn">معاه ${esc(all.map(k=>k.typeId?typeName(k.typeId):packTitle(k)).join(" و"))} بس، ونوع الجلسة ${esc(typeName(a.typeId))}</span>`}
+/* WhatsApp reminder: one tap opens WhatsApp with the message ready */
+function waNumber(phone){let d=nd(phone||"").replace(/\D/g,"");if(d.startsWith("00"))d=d.slice(2);if(/^0\d{10}$/.test(d))d="2"+d;else if(/^1\d{9}$/.test(d))d="20"+d;return d.length>=11?d:""}
+function hour12(t){const [h,m]=(t||"").split(":").map(Number);if(isNaN(h))return "";return `${h%12||12}${m?":"+String(m).padStart(2,"0"):""}`}
+function remindText(a){
+  const d=a.date,when=d===today()?"النهارده":d===dstr(dnum(today())+1)?"بكره":`يوم ${dayLabel(d)}`;
+  return `أهلاً يا فندم، بنفكّرك بميعاد ${a.kind==="exam"?"الكشف":"الجلسة"} بتاع ${when} الساعة ${hour12(a.time)}`}
+function remindBtn(a){
+  if(a.date<today()||!["booked"].includes(a.status))return "";const num=waNumber(S.patients[a.patientId]?.phone);
+  if(!num)return `<span class="chip c-mute">مفيش موبايل للتذكير</span>`;
+  return `<a class="btn sm ${a.remindedAt?"":"teal"}" href="https://wa.me/${num}?text=${encodeURIComponent(remindText(a))}" target="_blank" rel="noopener" data-act="remind" data-id="${a.id}">${a.remindedAt?"اتفكّر ✓":"تذكير واتساب"}</a>`}
 function apptRow(a,view,showDoc){
   const doctorBtns=a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"";
-  const adminBtns=`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
+  const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
   return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
@@ -978,6 +988,8 @@ function vAppts(){
   const active=list.filter(a=>a.status!=="cancelled");
   const byDoc={};active.forEach(a=>{const k=apptDocs(a)[0]||"—";(byDoc[k]=byDoc[k]||[]).push(a)});
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn primary" data-act="newAppt">+ حجز</button></div>
+  ${(()=>{const due=active.filter(a=>a.status==="booked"&&a.date>=today());if(!due.length)return "";const done=due.filter(a=>a.remindedAt).length;
+    return `<div class="note">تذكيرات اليوم ده: اتبعت <b>${done}</b> من <b>${due.length}</b>${done<due.length?". دوس «تذكير واتساب» جنب كل حجز، والرسالة بتبقى جاهزة.":"."}</div>`})()}
   <p class="sub" style="margin:0">هنا الحجز بس. اللي حصل فعلاً (جه، كنسل، دفع، دخل إمتى) بيتسجل في «جلسات اليوم».</p>
   <div class="stats"><div class="stat"><div class="k">محجوز اليوم ده</div><div class="v num">${active.length}</div></div>${Object.entries(byDoc).map(([sid,arr])=>`<div class="stat"><div class="k">${esc(staffName(sid))}</div><div class="v num">${arr.length}</div></div>`).join("")}</div>
   ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} حجز</span></h2><div class="list">${arr.map(a=>apptRow(a,"admin",apptDocs(a).length>1)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش حجوزات اليوم ده</b>اضغط «+ حجز» واختار المريض والدكتور والساعة.</div>`}
@@ -1674,7 +1686,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newRate","editRate","saveRate","delRate","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","remind","newRate","editRate","saveRate","delRate","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -1776,6 +1788,7 @@ document.addEventListener("click",async e=>{
     case "newRate":sheetRate(id,null);break;
     case "absence":sheetAbsence(id,S.ui.month);break;
     case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
+    case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
     case "newInvoice":sheetReport(id,null,"invoice");break;
     case "newReport":sheetReport(id,null,"report");break;
     case "openReport":sheetReport(id,t.dataset.k);break;
