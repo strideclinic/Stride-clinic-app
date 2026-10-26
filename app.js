@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 40";
+const APP_VERSION="27 أكتوبر · 41";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -124,7 +124,7 @@ function setupRoleSubs(){
     r.push(sub(c("visits").where("date",">=",winStart()),setLive("visits")));
     r.push(sub(c("payments").where("date",">=",winStart()),setLive("payments")));
     r.push(sub(c("exp").where("date",">=",winStart()),setLive("exp")));
-    r.push(subDoc("cfg/prices",d=>{S.prices={};S.packTypes=d?.packs||[]}));
+    r.push(subDoc("cfg/prices",d=>{S.prices={};S.packTypes=d?.packs||[];S.single=d?.single||{}}));
     r.push(subDoc("cfg/ext",d=>{S.ext=d||{}}));
     r.push(sub(c("cfg"),o=>{S.payerList=o.payers?.list||[];const acct={};for(const [k,v] of Object.entries(o))if(k.startsWith("payer_"))acct[k.slice(6)]=v;S.payerAcct=acct}));
     r.push(sub(c("patients"),o=>S.patients=o));
@@ -718,6 +718,37 @@ async function payerIssue(id){
   showPrint(payerBillHtml(PB.P,rows,PB.from,PB.to,PB.no));closeSheet();toast(`اتسجلت فاتورة رقم ${PB.no}`);
 }
 function payerOldBill(id,no){const inv=payerAcct(id).invoices.find(x=>String(x.no)===String(no));if(!inv)return;PB.from=inv.from;PB.to=inv.to;const rows=billRows();showPrint(payerBillHtml(PB.P,rows,inv.from,inv.to,inv.no))}
+/* ---------- leaving before the package ends: recharge done sessions at the right tier, refund the rest ---------- */
+function refundRate(k){ // the biggest package of this type the patient actually reached; below the smallest one → single-session price
+  const used=k.used||0,tiers=(S.packTypes||[]).filter(t=>t.typeId&&t.typeId===k.typeId&&t.sessions>0).sort((a,b)=>a.sessions-b.sessions);
+  const hit=tiers.filter(t=>t.sessions<=used).pop();
+  if(hit)return{rate:Math.round(hit.price/hit.sessions),why:`خلص ${used} جلسة، فبيتحاسب بسعر جلسة ${hit.name} (${hit.sessions} جلسات)`};
+  const single=S.single?.[k.typeId];
+  return{rate:single!=null?Math.round(single):null,why:tiers.length?`خلص ${used} جلسة، أقل من أصغر باكدج (${tiers[0].sessions} جلسات)، فبيتحاسب بسعر الجلسة المنفردة`:`بيتحاسب بسعر الجلسة المنفردة`};
+}
+function sheetRefund(pid,kid){
+  const p=S.patients[pid],k=(p?.packs||[]).find(x=>x.id===kid);if(!k)return;
+  const R=refundRate(k),used=k.used||0,paid=k.paid||0;
+  openSheet(`استرجاع · ${packTitle(k)}`,`<div class="note">${esc(p.name)} · ${esc(packTitle(k))} · خلص <b>${used} من ${k.sessions}</b> · دفع على الباكدج <b>${money(paid)}</b>${k.paid==null?" (مش معروف دفع كام على الباكدج ده بالظبط)":""}</div>
+  <p class="sub" style="margin:0">${esc(R.why)}.${R.rate==null?` <b style="color:var(--bad)">سعر الجلسة المنفردة مش متسجل لـ ${esc(typeName(k.typeId))}: اكتبه هنا أو من الإعدادات ← أنواع الجلسات.</b>`:""}</p>
+  <div class="grid2"><label class="f">سعر الجلسة في الحسبة<input id="rf_rate" inputmode="decimal" value="${R.rate??""}"></label><label class="f">عدد الجلسات اللي اتعملت<input id="rf_used" inputmode="numeric" value="${used}"></label>
+  <label class="f">بيرجعله إزاي<select id="rf_method"><option value="cash">كاش</option><option value="instapay">InstaPay</option></select></label><label class="f">التاريخ<input type="date" id="rf_date" value="${today()}"></label></div>
+  <div class="note" id="rf_sum"></div><div class="err" id="formErr"></div>
+  <button class="btn danger" data-act="saveRefund" data-id="${pid}" data-k="${kid}" data-confirm>سجّل الاسترجاع وقفّل الباكدج</button>`,
+  ()=>{const f=()=>{const r=num(val("rf_rate")),u=Math.round(num(val("rf_used"))),cost=r*u,back=paid-cost;
+      document.getElementById("rf_sum").innerHTML=r?`${u} جلسة × ${money(r)} = <b>${money(cost)}</b> · دفع ${money(paid)} · ${back>0?`يرجعله <b style="color:var(--ok)">${money(back)}</b>`:back<0?`عليه كمان <b style="color:var(--bad)">${money(-back)}</b>`:"خالص، مفيش استرجاع"}`:"اكتب سعر الجلسة."};
+    ["rf_rate","rf_used"].forEach(i=>document.getElementById(i).addEventListener("input",f));f()});
+}
+async function saveRefund(pid,kid){
+  const p=S.patients[pid],k=(p.packs||[]).find(x=>x.id===kid);if(!k)return;
+  const rate=num(val("rf_rate")),used=Math.round(num(val("rf_used")));if(!rate)return setErr("اكتب سعر الجلسة");if(used<0||used>k.sessions)return setErr("عدد الجلسات مش مظبوط");
+  const cost=Math.round(rate*used),paid=k.paid||0,back=Math.round(paid-cost),date=val("rf_date")||today();
+  const b=S.db.batch();
+  if(back>0)b.set(S.db.collection("payments").doc(),{patientId:pid,patientName:p.name,amount:-back,method:val("rf_method"),date,packId:kid,kind:"refund",note:`استرجاع ${packTitle(k)}: ${used} جلسة × ${rate}`,createdAt:Date.now(),by:S.mySid});
+  const packs=p.packs.map(x=>x.id===kid?{...x,sessions:used,used,price:cost,paid:paid-Math.max(0,back),refund:{at:Date.now(),date,by:S.mySid,origSessions:k.sessions,origPrice:k.price,rate,cost,back}}:x);
+  b.update(S.db.doc("patients/"+pid),{packs,charged:inc(cost-(k.price||0)),paid:inc(-Math.max(0,back))});
+  await b.commit();toast(back>0?`اتسجل: يرجعله ${money(back)}`:back<0?`الباكدج اتقفل، وعليه ${money(-back)}`:"الباكدج اتقفل");setTimeout(()=>sheetPatient(pid),250);
+}
 /* ---------- views: reports ---------- */
 function expenseTips(m,rv,ex,pr,flags){
   const tips=[];const salBase=pr.reduce((s,x)=>s+x.sal,0),otNow=pr.reduce((s,x)=>s+x.otPay,0);
@@ -1610,8 +1641,8 @@ function packTitle(k){return /باكدج|باقة/.test(k.name||"")?k.name:`با
 function packsHtml(pid){
   const packs=S.patients[pid]?.packs||[];if(!packs.length)return "";
   return `<div class="list">${packs.map(k=>{const left=k.sessions-(k.used||0);const o=packOwed(k);return `<div class="row stack" style="cursor:default"><span class="t">${esc(packTitle(k))} ${k.typeId?`<span class="chip c-acc">${esc(typeName(k.typeId)||k.typeName||"")}</span>`:""} ${left>0?`<span class="chip c-teal">فاضل ${left} من ${k.sessions}</span>`:`<span class="chip c-mute">خلص</span>`} ${packMoneyChip(k)}</span>
-    <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}<button class="btn sm" data-act="editPackUse" data-id="${pid}" data-k="${k.id}">تعديل العدد</button><button class="btn sm danger" data-act="cancelPack" data-id="${pid}" data-k="${k.id}">إلغاء الباكدج</button></span>
-    <span class="m">${[k.date||"",`السعر ${k.discount?`${money(k.listPrice)} ← `:""}${money(k.price)}`,k.paid!=null?`دفع ${money(k.paid)}`:"",k.old?`من قبل السيستم (كان عمل ${k.preUsed||0}${k.prePaid?`، ودفع ${money(k.prePaid)} قبل الشهر اللي اتسجل فيه`:""})`:"",k.discount?`خصم ${money(k.discount)}: ${[k.reason,...(k.discHist||[]).map(h=>h.reason)].filter(Boolean).join("، ")}`:""].filter(Boolean).map(esc).join(" · ")}</span><span></span></div>`}).join("")}</div>`;
+    <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}<button class="btn sm" data-act="editPackUse" data-id="${pid}" data-k="${k.id}">تعديل العدد</button>${left>0&&!k.refund?`<button class="btn sm" data-act="refundPack" data-id="${pid}" data-k="${k.id}">استرجاع</button>`:""}<button class="btn sm danger" data-act="cancelPack" data-id="${pid}" data-k="${k.id}">إلغاء الباكدج</button></span>
+    <span class="m">${[k.date||"",`السعر ${k.discount?`${money(k.listPrice)} ← `:""}${money(k.price)}`,k.paid!=null?`دفع ${money(k.paid)}`:"",k.refund?`اتقفل باسترجاع: كان ${k.refund.origSessions} جلسة بـ ${money(k.refund.origPrice)}، اتحاسب ${k.refund.cost?money(k.refund.cost):0}${k.refund.back>0?` ورجعله ${money(k.refund.back)}`:""}`:"",k.old?`من قبل السيستم (كان عمل ${k.preUsed||0}${k.prePaid?`، ودفع ${money(k.prePaid)} قبل الشهر اللي اتسجل فيه`:""})`:"",k.discount?`خصم ${money(k.discount)}: ${[k.reason,...(k.discHist||[]).map(h=>h.reason)].filter(Boolean).join("، ")}`:""].filter(Boolean).map(esc).join(" · ")}</span><span></span></div>`}).join("")}</div>`;
 }
 function ratesHtml(pid){
   const r=S.patients[pid]?.rates||{};const ks=Object.keys(r);if(!ks.length)return "";
@@ -1891,7 +1922,9 @@ function showTempPw(name,user,pw){
 }
 function sheetType(id){
   const t=id?S.types.find(x=>x.id===id):{};
-  openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label><p class="sub" style="margin:0">من غير سعر. السعر بيتحدد في الباكدج، أو بيتكتب يدوي لو جلسة منفردة.</p><div class="err" id="formErr"></div>
+  openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label>
+  <label class="f">سعر الجلسة المنفردة (مخفي عن الدكاترة، للاسترجاع)<input id="t_single" inputmode="decimal" value="${id&&S.single?.[id]!=null?S.single[id]:""}"></label>
+  <p class="sub" style="margin:0">الفلوس بتتحدد في الباكدج. سعر الجلسة المنفردة بيتستخدم لو مريض ساب قبل أصغر باكدج وعايز يسترجع فلوسه.</p><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveType" data-id="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delType" data-id="${id}" data-confirm>حذف</button>`:""}</div>`);
 }
 /* ---------- backup (owner) ---------- */
@@ -1920,7 +1953,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","moveOwner","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -2050,6 +2083,8 @@ document.addEventListener("click",async e=>{
     case "saveRate":guard(t,()=>saveRate(id,t.dataset.k||null,false));break;
     case "delRate":guard(t,()=>saveRate(id,t.dataset.k,true));break;
     case "saveSellPack":guard(t,()=>saveSellPack(id));break;
+    case "refundPack":sheetRefund(id,t.dataset.k);break;
+    case "saveRefund":guard(t,()=>saveRefund(id,t.dataset.k));break;
     case "cancelPack":sheetCancelPack(id,t.dataset.k);break;
     case "doCancelPack":guard(t,()=>doCancelPack());break;
     case "discount":sheetDiscount(id);break;
@@ -2064,7 +2099,8 @@ document.addEventListener("click",async e=>{
     case "delPackType":guard(t,async()=>{await db.doc("cfg/prices").set({packs:(S.packTypes||[]).filter(x=>x.id!==id)},{merge:true});closeSheet()});break;
     case "newType":sheetType(null);break;
     case "editType":sheetType(id);break;
-    case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
+    case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});
+      const sg=val("t_single").trim(),single={...(S.single||{})};if(sg)single[tid]=num(sg);else delete single[tid];await db.doc("cfg/prices").set({single},{merge:true});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
     case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays},leaveAllow={...c0.leaveAllow};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked);const la=val("la_"+s.id).trim();if(la)leaveAllow[s.id]=Math.round(num(la));else delete leaveAllow[s.id]});await db.doc("priv/config").set({salary,commission,workDays,leaveAllow,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5,docStart:val("cfgDocStart")||"15:00",secStart:val("cfgSecStart")||"14:30",secLead:val("cfgSecLead").trim()===""?30:Math.max(0,Math.round(num(val("cfgSecLead"))))});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
