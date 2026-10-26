@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=Readex+Pro:wght@500;600;700&family=Great+Vibes&display=swap">
 <style>
 /* Stride Clinic. Layout: sticky header + scrollable tab strip; single centered column (max 880px) of lists and sheets that slide up from the bottom. */
 :root{
@@ -35,6 +35,36 @@ html{padding-bottom:env(safe-area-inset-bottom,0px)}
 [hidden]{display:none!important}
 #ptr{position:fixed;top:0;left:50%;transform:translate(-50%,-50px);opacity:0;z-index:60;background:var(--accent);color:#fff;font-size:13px;padding:8px 14px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.15);pointer-events:none;transition:opacity .15s}
 html,body{overscroll-behavior-y:contain}
+/* printed reports & invoices: A5 letterhead */
+#printRoot{position:fixed;inset:0;z-index:100;background:#e6eaf0;overflow:auto;-webkit-overflow-scrolling:touch}
+#printRoot .ptool{position:sticky;top:0;z-index:2;display:flex;gap:8px;justify-content:center;padding:10px;background:#fff;border-bottom:1px solid var(--line)}
+.a5{position:relative;width:148mm;max-width:calc(100vw - 16px);min-height:210mm;margin:12px auto;background:#fff;color:#111;box-shadow:0 2px 12px rgba(0,0,0,.12);font-family:Arial,"IBM Plex Sans Arabic",sans-serif;overflow:hidden}
+.a5 .wm{position:absolute;left:50%;top:50%;width:78%;transform:translate(-50%,-50%);opacity:.3;pointer-events:none;z-index:0}
+.a5 table{min-width:0;background:transparent}
+.a5 .pg{width:100%;border-collapse:collapse;position:relative;z-index:1}.a5 .pg>*>tr>td{padding:0 11mm;border:0;background:transparent;text-align:start;white-space:normal;color:#111}
+.a5 .pgtop{height:10mm}.a5 .pgbot{height:24mm}
+.a5 .rh{text-align:center;font:700 22px/1.2 "Readex Pro",Arial,sans-serif;margin-bottom:4px}
+.a5 .rtitle{text-align:center;font-weight:700;font-size:16px;text-decoration:underline;margin-bottom:12px}
+.a5.en .rtitle{text-align:start;text-decoration:none;font-family:"Times New Roman",serif;font-size:17px}
+.a5 .rhead{font-size:15px;line-height:1.6;margin-bottom:10px}.a5 .rf{margin:2px 0}.a5 .rf b{font-weight:600}
+.a5.en .rhead{font-family:"Times New Roman",serif;font-size:13.5px}.a5.en .rh{text-align:center}.a5.en,.a5.en .pg>*>tr>td{text-align:left}.a5.en .rf{margin:6px 0}
+.a5 .rbody{font-size:13.5px;line-height:1.65}.a5 .rbody h4{font-size:14px;margin:10px 0 4px}.a5 .rbody p{margin:4px 0}.a5 .rbody ul{margin:2px 0 6px;padding-inline-start:22px;list-style:disc outside}.a5 .rbody li{margin:2px 0}
+.a5.en .rbody{font-family:"Times New Roman",serif}
+.a5 .rt{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;table-layout:fixed}
+.a5 .rt th,.a5 .rt td{border:1px solid #333;padding:5px 6px;text-align:center;white-space:normal;color:#111;font-size:13px;background:transparent}
+.a5 .rt th{background:rgba(160,170,185,.45);font-weight:500}.a5 .rt td:first-child{text-align:start}.a5 .rt tr.tot td{font-weight:600}.a5 .rt th:first-child,.a5 .rt td:first-child{width:44%}
+.a5 .rt tr{break-inside:avoid}
+.a5 .rsign{font-family:"Great Vibes",cursive;font-size:22px;text-align:center;margin:16px 0 8px;direction:ltr}
+.a5 .rfoot{position:absolute;bottom:6mm;left:0;right:0;text-align:center;font-size:12.5px;line-height:1.5;z-index:1}
+@media print{
+  @page{size:A5;margin:0}
+  body>*:not(#printRoot){display:none!important}
+  html,body{background:#fff!important}
+  #printRoot{position:static;overflow:visible;background:none}#printRoot .ptool{display:none}
+  .a5{width:auto;max-width:none;min-height:0;margin:0;box-shadow:none;overflow:visible}
+  .a5 .wm{position:fixed;width:115mm}.a5 .rfoot{position:fixed;bottom:6mm}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
 img{max-width:100%}
 .hbtns{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end}
 .login{max-width:400px;width:100%;margin:24px auto}

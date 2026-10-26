@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 24";
+const APP_VERSION="26 أكتوبر · 25";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -463,6 +463,109 @@ async function saveExt(id){
   const list=id?exts(true).map(x=>x.id===id?{...x,...body}:x):[...exts(true),{id:"x"+randId(),...body}];
   await S.db.doc("cfg/ext").set({list},{merge:true});closeSheet();toast("اتحفظ");
 }
+/* ---------- reports & invoices, printed on the clinic's A5 letterhead ---------- */
+const CLINIC={name:"مركز خطوات للعلاج الطبيعي والتأهيل",addr:"١٥ ب شارع الخمسين الرئيسي زهراء المعادي",phones:"01550551291-01128672805",sign:"Dr. Mohamed Mohi"};
+const ORD1=["","الأولى","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة","التاسعة","العاشرة"];
+const ORDU=["","الحادية","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة","التاسعة"];
+const TENS=["","","العشرون","الثلاثون","الأربعون","الخمسون","الستون","السبعون","الثمانون","التسعون"];
+function arOrd(n){if(n<1)return "";if(n<=10)return ORD1[n];if(n<20)return ORDU[n-10]+" عشرة";if(n===100)return "المائة";if(n>100)return "رقم "+n;const t=Math.floor(n/10),u=n%10;return u?`${ORDU[u]} و${TENS[t]}`:TENS[t]}
+function dmy(d){if(!d)return "";const [y,m,x]=d.split("-");return `${+x}/${+m}/${y}`}
+function rowValue(v){return Math.round(v.packId?(v.packValue||0):(v.net||0))}
+let RP=null; // the report being edited
+const REP_DEFAULT={ar:{title:"تقرير طبي"},en:{title:"PHYSIOTHERAPY TREATMENT & PROGRESS REPORT"}};
+async function sheetReport(pid,savedId,kind){
+  const p=S.patients[pid];if(!p)return;
+  const saved=savedId?(p.reports||[]).find(r=>r.id===savedId):null;
+  let vs=[];try{vs=(await S.db.collection("visits").where("patientId","==",pid).get()).docs.map(rowOf)}catch(e){}
+  vs.sort((a,b)=>((a.date||"")+(a.time||"")).localeCompare((b.date||"")+(b.time||"")));
+  const invoice=kind==="invoice";
+  RP=saved?{...saved,rows:(saved.rows||[]).map(r=>({...r}))}:{pid,lang:"ar",title:invoice?"تقرير طبي":"تقرير طبي",diag:p.diagnosis||"",plan:invoice?(p.plan||""):"",body:"",showTable:invoice,showPrices:true,showTotal:true,
+    from:vs[0]?.date||today(),to:vs[vs.length-1]?.date||today(),typeId:"",withExam:true,startN:1,rows:[]};
+  RP.vs=vs;if(!saved)buildRows();
+  openSheet(saved?"تعديل "+(saved.title||"التقرير"):invoice?"فاتورة جلسات":"تقرير",`
+  <div class="seg"><label><input type="radio" name="rp_lang" value="ar" ${RP.lang!=="en"?"checked":""}> عربي</label><label><input type="radio" name="rp_lang" value="en" ${RP.lang==="en"?"checked":""}> English</label></div>
+  <label class="f">العنوان<input id="rp_title" value="${esc(RP.title)}"></label>
+  <label class="f">التشخيص<input id="rp_diag" value="${esc(RP.diag)}"></label>
+  <label class="f" id="rp_planbox">الخطة العلاجية (اختياري)<input id="rp_plan" value="${esc(RP.plan||"")}" placeholder="مثلاً عمل 6 جلسات علاج طبيعي"></label>
+  <label class="f">نص التقرير (اختياري)<textarea id="rp_body" style="min-height:150px" placeholder="اكتب أو الزق الكلام هنا. السطر اللي آخره «:» بيبقى عنوان، والسطر اللي أوله «-» بيبقى نقطة.">${esc(RP.body||"")}</textarea></label>
+  <div class="seg"><label><input type="checkbox" id="rp_table" ${RP.showTable?"checked":""}> جدول الجلسات</label><label><input type="checkbox" id="rp_prices" ${RP.showPrices?"checked":""}> بالأسعار</label><label><input type="checkbox" id="rp_total" ${RP.showTotal?"checked":""}> الإجمالي</label></div>
+  <div id="rp_tablebox" style="display:grid;gap:10px">
+    <div class="grid2"><label class="f">من يوم<input type="date" id="rp_from" value="${RP.from}"></label><label class="f">لحد يوم<input type="date" id="rp_to" value="${RP.to}"></label>
+    <label class="f">نوع الجلسة<select id="rp_type"><option value="">كل الأنواع</option>${S.types.map(t=>`<option value="${t.id}" ${RP.typeId===t.id?"selected":""}>${esc(t.name)}</option>`).join("")}</select></label>
+    <label class="f">سعر الجلسة في الجدول (اختياري)<input id="rp_price" inputmode="decimal" placeholder="زي ما اتسجل"></label></div>
+    <div class="seg"><label><input type="checkbox" id="rp_exam" ${RP.withExam?"checked":""}> الكشف يظهر «التقييم»</label><label>أول رقم جلسة <input id="rp_start" inputmode="numeric" value="${RP.startN}" style="width:70px"></label></div>
+    <p class="sub" style="margin:0">الجلسات بتتملى لوحدها من المتسجل. للجلسات القديمة اللي قبل السيستم دوس «+ جلسة» واكتب تاريخها وسعرها.</p>
+    <div id="rp_rows"></div><button class="btn sm" data-act="rpAddRow" type="button">+ جلسة</button>
+  </div>
+  <div class="err" id="formErr"></div>
+  <div class="bar"><button class="btn primary grow" data-act="rpPreview">معاينة وطباعة / PDF</button><button class="btn" data-act="rpSave" data-id="${savedId||""}">حفظ في ملف المريض</button>${saved?`<button class="btn danger" data-act="rpDel" data-id="${savedId}" data-confirm>حذف</button>`:""}</div>`,
+  ()=>{const E=i=>document.getElementById(i);
+    const sync=()=>{const en=radio("rp_lang")==="en";E("rp_planbox").hidden=en;E("rp_tablebox").hidden=!E("rp_table").checked;
+      const t=E("rp_title");if(t.value===REP_DEFAULT.ar.title&&en)t.value=REP_DEFAULT.en.title;else if(t.value===REP_DEFAULT.en.title&&!en)t.value=REP_DEFAULT.ar.title};
+    document.querySelectorAll('input[name="rp_lang"]').forEach(x=>x.addEventListener("change",sync));E("rp_table").addEventListener("change",sync);
+    const refilter=()=>{readReportForm();buildRows();drawRows()};
+    ["rp_from","rp_to","rp_type","rp_exam"].forEach(i=>E(i).addEventListener("change",refilter));
+    E("rp_start").addEventListener("input",()=>{RP.startN=Math.max(1,Math.round(num(E("rp_start").value))||1);drawRows()});
+    E("rp_price").addEventListener("input",()=>{const x=num(E("rp_price").value);if(x)RP.rows.forEach(r=>{if(!r.exam)r.price=x});drawRows()});
+    drawRows();sync()});
+}
+function buildRows(){ // sessions in the chosen period → rows; the first number continues from the sessions before it
+  const inT=v=>!RP.typeId||v.typeId===RP.typeId,isExam=v=>/كشف|تقييم/.test(v.typeName||"")||v.kind==="exam";
+  const before=RP.vs.filter(v=>inT(v)&&!isExam(v)&&(v.date||"")<RP.from).length;
+  RP.startN=before+1;
+  RP.rows=RP.vs.filter(v=>inT(v)&&(v.date||"")>=RP.from&&(v.date||"")<=RP.to&&(RP.withExam||!isExam(v))).map(v=>({date:v.date,price:rowValue(v),exam:isExam(v)}));
+}
+function rowLabels(){let n=RP.startN;return RP.rows.map(r=>r.exam?(RP.lang==="en"?"Assessment":"التقييم"):(RP.lang==="en"?`Session ${n++}`:`الجلسة ${arOrd(n++)}`))}
+function drawRows(){
+  const el=document.getElementById("rp_rows");if(!el)return;const L=rowLabels();
+  el.innerHTML=RP.rows.length?`<div class="list">${RP.rows.map((r,i)=>`<div class="row" style="cursor:default;grid-template-columns:minmax(0,1fr) auto"><span class="t">${esc(L[i])}</span>
+    <span class="end bar"><input type="date" data-rp="date" data-i="${i}" value="${r.date||""}" style="width:150px"><input data-rp="price" data-i="${i}" inputmode="decimal" value="${r.price??""}" style="width:80px" aria-label="السعر"><button class="btn sm danger" data-act="rpRmRow" data-i="${i}" type="button" aria-label="شيل">✕</button></span></div>`).join("")}</div>
+    <p class="sub" style="margin:0">${RP.rows.length} سطر · الإجمالي ${money(RP.rows.reduce((s,r)=>s+num(r.price),0))}</p>`:`<div class="empty"><b>مفيش جلسات في الفترة دي</b>غيّر التاريخ أو ضيف جلسات بإيدك.</div>`;
+  el.querySelectorAll("[data-rp]").forEach(x=>x.addEventListener("change",()=>{const r=RP.rows[+x.dataset.i];if(x.dataset.rp==="date"){r.date=x.value;RP.rows.sort((a,b)=>(a.exam===b.exam?0:a.exam?-1:1)||(a.date||"").localeCompare(b.date||""));drawRows()}else r.price=num(x.value)}));
+}
+function readReportForm(){const E=i=>document.getElementById(i);
+  Object.assign(RP,{lang:radio("rp_lang")||"ar",title:E("rp_title").value.trim(),diag:E("rp_diag").value.trim(),plan:E("rp_plan").value.trim(),body:E("rp_body").value,
+    showTable:E("rp_table").checked,showPrices:E("rp_prices").checked,showTotal:E("rp_total").checked,from:E("rp_from").value,to:E("rp_to").value,typeId:E("rp_type").value,withExam:E("rp_exam").checked})}
+function fmtBody(text){ // "Heading:" lines become headings, "- x" lines become bullets
+  const out=[];let ul=[];const flush=()=>{if(ul.length){out.push(`<ul>${ul.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`);ul=[]}};
+  const lines=(text||"").split(/\r?\n/);
+  lines.forEach((ln,i)=>{const t=ln.trim();if(!t){flush();return}
+    const b=t.match(/^[-•*·]\s*(.+)$/);if(b){ul.push(b[1]);return}flush();
+    const nextBullet=/^[-•*·]/.test((lines[i+1]||"").trim());
+    const next=(lines[i+1]||"").trim(),shortTitle=t.length<=45&&!/[.،,؛!?؟]$/.test(t)&&!!next&&t.split(/\s+/).length<=6;
+    if(/[:：]$/.test(t)||(t.length<=50&&nextBullet)||shortTitle)out.push(`<h4>${esc(t.replace(/\s*[:：]$/,""))}</h4>`);else out.push(`<p>${esc(t)}</p>`)});
+  flush();return out.join("")}
+function reportHtml(){
+  const p=S.patients[RP.pid]||{};const en=RP.lang==="en";const L=rowLabels();const total=RP.rows.reduce((s,r)=>s+num(r.price),0);
+  const nSess=RP.rows.filter(r=>!r.exam).length;const dates=RP.rows.map(r=>r.date).filter(Boolean).sort();
+  const field=(k,v)=>v?`<div class="rf"><b>${esc(k)}</b> ${esc(v)}</div>`:"";
+  const head=en?`${field("Patient Name:",p.name)}${field("Diagnosis:",RP.diag)}${RP.showTable||nSess?field("Number of Sessions:",nSess?nSess+" Sessions":""):""}${dates.length?field("Treatment Period:",`From ${dmy(dates[0])} to ${dmy(dates[dates.length-1])}`):""}`
+    :`${field("الاسم:",p.name)}${field("التشخيص:",RP.diag)}${field("الخطة العلاجية:",RP.plan)}`;
+  const body=RP.body.trim()?`${en?"":`<div class="rf"><b>التقرير:</b></div>`}<div class="rbody">${fmtBody(RP.body)}</div>`:"";
+  const table=RP.showTable&&RP.rows.length?`<table class="rt"><thead><tr><th>${en?"Session":"رقم الجلسة"}</th><th>${en?"Date":"تاريخ الجلسة"}</th>${RP.showPrices?`<th>${en?"Price":"سعر الجلسة"}</th>`:""}</tr></thead>
+    <tbody>${RP.rows.map((r,i)=>`<tr><td>${esc(L[i])}</td><td dir="ltr">${dmy(r.date)}</td>${RP.showPrices?`<td>${num(r.price)}</td>`:""}</tr>`).join("")}
+    ${RP.showPrices&&RP.showTotal?`<tr class="tot"><td>${en?"Total":"الإجمالي"}</td><td colspan="2">${total}</td></tr>`:""}</tbody></table>`:"";
+  return `<div class="a5 ${en?"en":""}" dir="${en?"ltr":"rtl"}"><img class="wm" src="icons/watermark.png" alt="">
+  <table class="pg"><thead><tr><td><div class="pgtop"></div></td></tr></thead><tfoot><tr><td><div class="pgbot"></div></td></tr></tfoot><tbody><tr><td>
+  <div class="rh">Stride Clinic</div>${RP.title?`<div class="rtitle">${esc(RP.title)}</div>`:""}
+  <div class="rhead">${head}</div>${body}${table}<div class="rsign">${CLINIC.sign}</div>
+  </td></tr></tbody></table>
+  <div class="rfoot" dir="rtl"><div>${CLINIC.name}</div><div>${CLINIC.addr}</div><div dir="ltr">${CLINIC.phones}</div></div></div>`;
+}
+function rpPreview(){
+  readReportForm();if(RP.showTable&&!RP.rows.length&&!RP.body.trim())return setErr("مفيش جلسات ولا كلام في التقرير");
+  let root=document.getElementById("printRoot");if(!root){root=document.createElement("div");root.id="printRoot";document.body.appendChild(root)}
+  root.innerHTML=`<div class="ptool"><button class="btn primary" data-act="rpPrint">اطبع / احفظ PDF</button><button class="btn" data-act="rpClose">رجوع</button></div>${reportHtml()}`;root.hidden=false;
+}
+async function rpSave(id){
+  readReportForm();const p=S.patients[RP.pid];const keep=["lang","title","diag","plan","body","showTable","showPrices","showTotal","from","to","typeId","withExam","startN"];
+  const rec={id:id||randId(),at:Date.now(),by:S.mySid,rows:RP.rows.map(r=>({date:r.date||"",price:num(r.price),exam:!!r.exam}))};keep.forEach(k=>rec[k]=RP[k]);
+  const list=id?(p.reports||[]).map(r=>r.id===id?rec:r):[...(p.reports||[]),rec];
+  await S.db.doc("patients/"+RP.pid).update({reports:list});toast("اتحفظ في ملف المريض");reopenPatient(RP.pid);
+}
+async function rpDel(id){const p=S.patients[RP.pid];await S.db.doc("patients/"+RP.pid).update({reports:(p.reports||[]).filter(r=>r.id!==id)});toast("اتحذف");reopenPatient(RP.pid)}
+function reportsHtml(pid){const rs=S.patients[pid]?.reports||[];if(!rs.length)return "";
+  return `<div class="list">${rs.slice().sort((a,b)=>b.at-a.at).map(r=>`<button class="row" data-act="openReport" data-id="${pid}" data-k="${r.id}"><span class="t">${esc(r.title||"تقرير")} ${r.showTable?`<span class="chip c-teal">${r.rows.length} جلسة</span>`:""}</span><span class="end sub">${new Date(r.at).toLocaleDateString("ar-EG-u-nu-latn")}</span><span class="m">${esc(r.lang==="en"?"English":"عربي")}${r.showTable&&r.showPrices?` · ${money(r.rows.reduce((s,x)=>s+num(x.price),0))}`:""}</span><span></span></button>`).join("")}</div>`}
 /* ---------- views: reports ---------- */
 function expenseTips(m,rv,ex,pr,flags){
   const tips=[];const salBase=pr.reduce((s,x)=>s+x.sal,0),otNow=pr.reduce((s,x)=>s+x.otPay,0);
@@ -1306,9 +1409,9 @@ function sheetPatient(id){
   const F=(k,l,t="input",extra="")=>t==="ta"?`<label class="f">${l}<textarea id="pt_${k}">${esc(p[k]||"")}</textarea></label>`:`<label class="f">${l}<input id="pt_${k}" value="${esc(p[k]||"")}" ${extra}></label>`;
   openSheet(id?p.name:"ملف مريض جديد",`
   ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b?`${b.count} جلسة · إجمالي ${money(b.charged)} · دفع ${money(b.paid)}`:""}</span></div>
-  <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
+  <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm teal" data-act="newInvoice" data-id="${id}">فاتورة جلسات</button><button class="btn sm teal" data-act="newReport" data-id="${id}">تقرير</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
-  ${packsHtml(id)}${ratesHtml(id)}`:""}
+  ${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
   <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
   <label class="f">النوع<select id="pt_gender"><option value="">—</option><option ${p.gender==="ذكر"?"selected":""}>ذكر</option><option ${p.gender==="أنثى"?"selected":""}>أنثى</option></select></label>
   <label class="f">عرف المركز منين<select id="pt_source">${sourceOptions(p.source)}</select></label>
@@ -1529,7 +1632,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newRate","editRate","saveRate","delRate","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newRate","editRate","saveRate","delRate","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -1629,6 +1732,16 @@ document.addEventListener("click",async e=>{
     case "saveLogin":guard(t,()=>createLogin(id,normUser(val("lg_user"))));break;
     case "sellPack":sheetSellPack(id);break;
     case "newRate":sheetRate(id,null);break;
+    case "newInvoice":sheetReport(id,null,"invoice");break;
+    case "newReport":sheetReport(id,null,"report");break;
+    case "openReport":sheetReport(id,t.dataset.k);break;
+    case "rpAddRow":{readReportForm();const last=RP.rows[RP.rows.length-1];RP.rows.push({date:"",price:last?last.price:0,exam:false});drawRows();break}
+    case "rpRmRow":RP.rows.splice(+t.dataset.i,1);drawRows();break;
+    case "rpPreview":rpPreview();break;
+    case "rpPrint":window.print();break;
+    case "rpClose":{const r=document.getElementById("printRoot");if(r){r.hidden=true;r.innerHTML=""}break}
+    case "rpSave":guard(t,()=>rpSave(id||null));break;
+    case "rpDel":guard(t,()=>rpDel(id));break;
     case "editRate":sheetRate(id,t.dataset.k);break;
     case "saveRate":guard(t,()=>saveRate(id,t.dataset.k||null,false));break;
     case "delRate":guard(t,()=>saveRate(id,t.dataset.k,true));break;
@@ -1663,7 +1776,7 @@ if("serviceWorker" in navigator&&location.protocol==="https:")window.addEventLis
   const TH=80;let y0=null,dy=0,el=null;
   const bar=()=>el||(el=Object.assign(document.body.appendChild(document.createElement("div")),{id:"ptr"}));
   const show=(d,txt)=>{const b=bar();b.textContent=txt;b.style.transform=`translate(-50%,${Math.min(d,TH+20)-50}px)`;b.style.opacity=Math.min(1,d/TH)};
-  document.addEventListener("touchstart",e=>{y0=(window.scrollY<=0&&!document.querySelector(".sheet")&&e.touches.length===1)?e.touches[0].clientY:null;dy=0},{passive:true});
+  document.addEventListener("touchstart",e=>{y0=(window.scrollY<=0&&!document.querySelector(".sheet")&&!(document.getElementById("printRoot")&&!document.getElementById("printRoot").hidden)&&e.touches.length===1)?e.touches[0].clientY:null;dy=0},{passive:true});
   document.addEventListener("touchmove",e=>{if(y0==null)return;dy=e.touches[0].clientY-y0;if(dy<=0){y0=null;show(0,"");return}show(dy*0.6,dy*0.6>=TH?"سيب عشان يتحدث":"اسحب لتحت للتحديث")},{passive:true});
   document.addEventListener("touchend",async()=>{if(y0==null)return;y0=null;
     if(dy*0.6<TH){show(0,"");return}show(TH,"بيتحدث…");
