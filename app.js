@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 27";
+const APP_VERSION="26 أكتوبر · 28";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -119,7 +119,7 @@ function setupRoleSubs(){
     r.push(sub(c("appts").where("doctors","array-contains",S.mySid),setLive("appts")));
     r.push(sub(c("att").where("staffId","==",S.mySid),setLive("att")));
   }
-  if(S.role==="owner")r.push(subDoc("priv/config",d=>S.config=d||{}));
+  if(S.role==="owner"){r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]))}
 }
 let prunedA=false;
 function pruneAppts(){ // finished appointments older than 4 months: the visit itself is the lasting record
@@ -276,6 +276,21 @@ function guessDays(s){const n=s.name||"";if(s.role==="secretary")return [6,0,1,2
 function workDaysOf(s){const w=cfg().workDays[s.id];return Array.isArray(w)?w:guessDays(s)} // the weekly schedule the salary is for
 function wday(d){return new Date(d+"T12:00").getDay()}
 function monthDates(m){const out=[];let d=dnum(m+"-01");const end=dnum(nextMonth(m)+"-01");for(;d<end;d++)out.push(dstr(d));return out}
+function leavesOf(sid,m){const o={};for(const l of S.leaves||[])if(l.sid===sid&&(!m||l.date.startsWith(m)))o[l.date]=l.type;return o}
+function yearLeave(sid,y){return (S.leaves||[]).filter(l=>l.sid===sid&&l.type==="paid"&&l.date.startsWith(y)).length}
+function sheetAbsence(sid,m){
+  const x=payroll(m).find(r=>r.s.id===sid);if(!x)return;const lv=(S.leaves||[]).filter(l=>l.sid===sid&&l.date.startsWith(m));
+  const dates=[...new Set([...x.absentDates,...lv.map(l=>l.date)])].sort();const T={"":"غياب من غير إذن",paid:"إذن من غير خصم (إجازة)",deduct:"إذن بخصم اليوم"};
+  openSheet(`غياب ${x.s.name} · ${monthLabel(m)}`,`<p class="sub" style="margin:0">اختار لكل يوم غياب: من غير إذن، أو إذن من غير خصم (بيتعد في إجازات السنة)، أو إذن بخصم اليوم (${money(x.dayRate)} لليوم). أيام الإذن مش مطلوب يعوّضها، فساعات شهره المطلوبة بتقل.</p>
+  <div class="note">إجازات ${esc(x.s.name)} من غير خصم في ${m.slice(0,4)}: <b>${yearLeave(sid,m.slice(0,4))} يوم</b></div>
+  ${dates.length?`<div class="list">${dates.map(d=>{const cur=lv.find(l=>l.date===d)?.type||"";return `<div class="row" style="cursor:default;grid-template-columns:minmax(0,1fr) auto"><span class="t">${esc(dayLabel(d))}</span><span class="end"><select data-leave="${d}" style="width:auto">${Object.entries(T).map(([k,l])=>`<option value="${k}" ${k===cur?"selected":""}>${l}</option>`).join("")}</select></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام غياب الشهر ده</b></div>`}
+  <div class="err" id="formErr"></div>${dates.length?`<button class="btn primary" data-act="saveLeave" data-id="${sid}" data-m="${m}">حفظ</button>`:""}`);
+}
+async function saveLeave(sid,m){
+  const keep=(S.leaves||[]).filter(l=>!(l.sid===sid&&l.date.startsWith(m)));
+  document.querySelectorAll("[data-leave]").forEach(x=>{if(x.value)keep.push({sid,date:x.dataset.leave,type:x.value,by:S.mySid,at:Date.now()})});
+  await S.db.doc("priv/leaves").set({list:keep});closeSheet();toast("اتحفظ");
+}
 function daysLabel(w){return w&&w.length?WEEK.filter(([d])=>w.includes(d)).map(x=>x[2]).join(" و"):"—"}
 function creditsOf(v){return v.doctor2Id?[[v.doctorId,"half"],[v.doctor2Id,"half"]]:[[v.doctorId,v.completion||"full"]]}
 function visitDocs(v){return v.doctor2Id?`${staffName(v.doctorId)} + ${staffName(v.doctor2Id)} (نص ونص)`:staffName(v.doctorId)}
@@ -288,16 +303,22 @@ function payroll(month){
     // with a weekly schedule: the salary covers the scheduled days of this month; a day off that he came in counts fully as overtime
     const sched=wd&&wd.length?monthDates(month).filter(d=>wd.includes(wday(d))):null;
     const minRate=sched?(sched.length?sal/(sched.length*c.hoursBase*60):0):sal/(c.daysBase*c.hoursBase*60);
-    let ot=0,days=0,short=0,extra=0;const came=new Set();
-    for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;came.add(r.date);
-      if(sched&&!wd.includes(wday(r.date))){extra++;ot+=w;continue}
-      if(w>base)ot+=w-base;else short+=base-w}
+    let ot=0,days=0,short=0,extra=0;const came=new Set(),mins={};
+    for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;came.add(r.date);mins[r.date]=(mins[r.date]||0)+w;
+      if(sched&&!wd.includes(wday(r.date)))extra++;
+      if(!sched){if(w>base)ot+=w-base;else short+=base-w}}
+    const lv=leavesOf(s.id,month);let deductDays=0,paidLeave=0;
+    if(sched){ // overtime only after the whole month's hours are done: a make-up day covers a missed day first
+      const req=sched.filter(d=>!lv[d]).length*base,got=Object.values(mins).reduce((a,b)=>a+b,0);
+      if(got>req)ot=got-req;else short=req-got;
+      for(const [d,t] of Object.entries(lv))if(wd.includes(wday(d))){t==="deduct"?deductDays++:paidLeave++}}
     const first=Object.values(S.att).filter(r=>r.staffId===s.id).map(r=>r.date).sort()[0]; // absences count only once attendance started being recorded
-    const absent=sched&&first?sched.filter(d=>d>=first&&d<=today()&&!came.has(d)).length:0;
+    const absentDates=sched&&first?sched.filter(d=>d>=first&&d<=today()&&!came.has(d)&&!lv[d]):[];const absent=absentDates.length;
+    const dayRate=sched&&sched.length?sal/sched.length:0;const deduction=Math.round(deductDays*dayRate);
     const otPay=ot*c.otMult*minRate;
     const cm=c.commission[s.id];let comm=0,full=0,half=0,base2=0;
     if(cm)for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))for(const [sid,comp] of creditsOf(v))if(sid===s.id){const pct=comp==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):(v.paid||0);comm+=base*pct/100;base2+=base;comp==="half"?half++:full++}
-    return{s,sal,ot,otPay,days,short,cm,comm,full,half,commBase:base2,total:sal+otPay+comm,wd,sched:sched?sched.length:null,absent,extra};
+    return{s,sal,ot,otPay,days,short,cm,comm,full,half,commBase:base2,total:sal-deduction+otPay+comm,wd,sched:sched?sched.length:null,absent,absentDates,extra,deductDays,paidLeave,deduction,dayRate};
   });
 }
 function revenue(month){
@@ -685,9 +706,10 @@ function vReports(){
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><h2>المرتبات</h2>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
-  ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.absent?`<div class="sub" style="color:var(--bad)">غاب ${x.absent}</div>`:""}${x.extra?`<div class="sub">${x.extra} يوم زيادة</div>`:""}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
+  ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.extra?`<div class="sub">${x.extra} يوم زيادة/تعويض</div>`:""}
+    ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
-  <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. لو جه يوم مش من أيامه، اليوم كله بيتحسب أوفر تايم. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
+  <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. الأوفر تايم بيتحسب على الشهر: بعد ما يكمّل ساعات كل أيامه في الشهر، يعني اليوم اللي بيعوّض بيه غياب مش أوفر تايم. أيام الإذن بتقلل الساعات المطلوبة. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
 }
 /* ---------- views: settings ---------- */
@@ -1643,7 +1665,7 @@ document.addEventListener("change",e=>{
   if(id==="monthPick"&&e.target.value){S.ui.month=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newRate","editRate","saveRate","delRate","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -1745,6 +1767,8 @@ document.addEventListener("click",async e=>{
     case "saveLogin":guard(t,()=>createLogin(id,normUser(val("lg_user"))));break;
     case "sellPack":sheetSellPack(id);break;
     case "newRate":sheetRate(id,null);break;
+    case "absence":sheetAbsence(id,S.ui.month);break;
+    case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
     case "newInvoice":sheetReport(id,null,"invoice");break;
     case "newReport":sheetReport(id,null,"report");break;
     case "openReport":sheetReport(id,t.dataset.k);break;
