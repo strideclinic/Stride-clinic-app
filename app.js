@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 25";
+const APP_VERSION="26 أكتوبر · 26";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -548,7 +548,7 @@ function reportHtml(){
   return `<div class="a5 ${en?"en":""}" dir="${en?"ltr":"rtl"}"><img class="wm" src="icons/watermark.png" alt="">
   <table class="pg"><thead><tr><td><div class="pgtop"></div></td></tr></thead><tfoot><tr><td><div class="pgbot"></div></td></tr></tfoot><tbody><tr><td>
   <div class="rh">Stride Clinic</div>${RP.title?`<div class="rtitle">${esc(RP.title)}</div>`:""}
-  <div class="rhead">${head}</div>${body}${table}<div class="rsign">${CLINIC.sign}</div>
+  <div class="rhead">${head}</div>${body}${table}<div class="rsign"><img src="icons/signature.png" alt="${CLINIC.sign}"></div>
   </td></tr></tbody></table>
   <div class="rfoot" dir="rtl"><div>${CLINIC.name}</div><div>${CLINIC.addr}</div><div dir="ltr">${CLINIC.phones}</div></div></div>`;
 }
