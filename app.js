@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 35";
+const APP_VERSION="26 أكتوبر · 36";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -38,7 +38,8 @@ function toast(msg){const t=document.createElement("div");t.className="toast";t.
 function pLabel(p){return p.phone?`${p.name} — ${p.phone}`:p.name}
 function patientsSorted(){return Object.values(S.patients).sort((a,b)=>(a.name||"").localeCompare(b.name||"","ar"))}
 function doctors(){return Object.values(S.staff).filter(s=>s.role==="doctor"&&s.active!==false).sort((a,b)=>(a.order||0)-(b.order||0))}
-function activeStaff(){return Object.values(S.staff).filter(s=>s.active!==false).sort((a,b)=>(a.order||0)-(b.order||0))}
+function activeStaff(){return Object.values(S.staff).filter(s=>s.active!==false&&!s.me).sort((a,b)=>(a.order||0)-(b.order||0))} // staff with salary & attendance
+function meDoc(){return Object.values(S.staff).find(s=>s.me&&s.role==="doctor"&&s.active!==false)} // د. محي's own doctor account
 function typeName(id){return S.types.find(t=>t.id===id)?.name||"—"}
 function dayMoney(test){ // cash / InstaPay collected from visits + payments whose date passes test
   const o={cash:0,insta:0};const add=(method,x)=>{if(x)o[method==="instapay"?"insta":"cash"]+=x};
@@ -168,7 +169,7 @@ function syncBackfillSub(){
 function defaultTab(){return {owner:"sessions",secretary:"sessions",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
-  if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),["myatt","حضوري"]]}
+  if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),...(S.staff[S.mySid]?.me?[]:[["myatt","حضوري"]])]}
   const pend=pendingEntries().length;
   const base=[["sessions","جلسات اليوم",Object.values(S.appts).filter(needsRecord).length],["appts","الحجز"],...(pend?[["review","تسجيلات الدكاترة",pend]]:[]),["patients","المرضى والكشف"],...(exts().length?[["ext","الدكاترة من بره"]]:[])];
   if(S.role==="owner")return [...base,["att","الحضور"],["reports","الحسابات والمرتبات"],["settings","الإعدادات"]];
@@ -334,7 +335,7 @@ function payroll(month){
   const c=cfg();const base=c.hoursBase*60;
   const worked=new Set();for(const r of Object.values(S.att))if((r.date||"").startsWith(month))worked.add(r.staffId);
   for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))creditsOf(v).forEach(([d])=>worked.add(d));
-  return Object.values(S.staff).filter(s=>s.active!==false||worked.has(s.id)).sort((a,b)=>(a.order||0)-(b.order||0)).map(s=>{
+  return Object.values(S.staff).filter(s=>!s.me&&(s.active!==false||worked.has(s.id))).sort((a,b)=>(a.order||0)-(b.order||0)).map(s=>{
     const sal=num(c.salary[s.id]);const wd=workDaysOf(s);
     // with a weekly schedule: the salary covers the scheduled days of this month; a day off that he came in counts fully as overtime
     const sched=wd&&wd.length?monthDates(month).filter(d=>wd.includes(wday(d))):null;
@@ -972,7 +973,7 @@ function apptTimes(a){const p=[];if(a.arrived)p.push(`وصل ${a.arrived}`);
   else if(a.status==="started"){const e=apptElapsed(a);if(e!=null)p.push(`شغّال من ${hm(e)}`)}
   return p.join(" · ")}
 function isDoc(sid){return sid==="owner"||S.staff[sid]?.role==="doctor"||!!extById(sid)}
-function workerOpts(){return [...doctors().map(x=>[x.id,x.name]),["owner","د. محي"],...exts().map(x=>[x.id,x.name+" (من بره)"])]}
+function workerOpts(){return [...doctors().map(x=>[x.id,x.name]),...(meDoc()?[]:[["owner","د. محي"]]),...exts().map(x=>[x.id,x.name+" (من بره)"])]}
 function provisionalCredit(a){ // who gets the session until Reham confirms
   if(!a.startBy)return{mode:"full",a:apptDocs(a)[0]};
   if(a.endBy&&isDoc(a.endBy)&&a.endBy!==a.startBy)return{mode:"split",a:a.startBy,b:a.endBy};
@@ -1683,10 +1684,26 @@ function sheetStaff(id){
   openSheet(id?"تعديل":"إضافة للفريق",`<label class="f">الاسم<input id="s_name" value="${esc(s.name||"")}"></label>
   ${owner?`<div class="seg"><label><input type="radio" name="s_role" value="doctor" ${s.role!=="secretary"?"checked":""}> دكتور</label><label><input type="radio" name="s_role" value="secretary" ${s.role==="secretary"?"checked":""}> استقبال / سكرتارية</label></div>`:""}
   ${id?"":`<label class="f">اسم المستخدم (بالإنجليزي، للدخول)<input id="s_user" autocapitalize="none" spellcheck="false" placeholder="مثلاً ahmed"></label>`}
+  ${owner?`<div class="seg"><label><input type="checkbox" id="s_me" ${s.me?"checked":""}> ده حسابي أنا كدكتور: من غير مرتب ولا حضور</label></div>`:""}
+  ${id&&owner&&s.me?`<div class="note" style="display:grid;gap:8px"><b>انقل الجلسات المتسجلة باسم «د. محي (صاحب المركز)» للحساب ده</b>
+    <div class="grid2"><label class="f">من يوم<input type="date" id="mv_from" value="${today()}"></label><label class="f">لحد يوم<input type="date" id="mv_to" value="${today()}"></label></div>
+    <button class="btn" data-act="moveOwner" data-id="${id}" data-confirm>انقل</button></div>`:""}
   ${id?`<div class="seg"><label><input type="radio" name="s_act" value="1" ${s.active!==false?"checked":""}> شغال</label><label><input type="radio" name="s_act" value="0" ${s.active===false?"checked":""}> متوقف (مايقدرش يدخل)</label></div>
   <p class="sub" style="margin:0">لو حد ساب الشغل خليه «متوقف»: مش هيقدر يدخل، ومش هيظهر في اختيار الدكاترة، بس جلساته وحضوره ومرتب آخر شهر بيفضلوا محفوظين.</p>`:""}
   <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveStaff" data-id="${id||""}">حفظ</button>${id&&owner?`<button class="btn danger" data-act="delStaff" data-id="${id}" data-confirm>حذف</button>`:""}</div>
   ${id&&owner&&staffHasHistory(id)?`<p class="sub" style="margin:0">ليه شغل متسجل: لو اتحذف هيختفي من الفريق والاختيارات وحساب دخوله هيتقفل، بس جلساته وحضوره اللي فاتوا بيفضلوا في الحسابات باسمه.</p>`:""}`);
+}
+async function moveOwner(sid){ // sessions recorded under the owner → his doctor account (bookings, finished sessions, doctor entries)
+  const from=val("mv_from"),to=val("mv_to");if(!from||!to||from>to)return setErr("اختار الأيام صح");
+  [from.slice(0,7),to.slice(0,7)].forEach(m=>ensureMonth(m));
+  const sw=x=>x==="owner"?sid:x,ops=[];
+  for(const a of Object.values(S.appts))if(a.date>=from&&a.date<=to&&[...apptDocs(a),a.startBy,a.endBy,a.credit?.a,a.credit?.b].includes("owner")){
+    const u={doctorSid:sw(a.doctorSid),doctors:apptDocs(a).map(sw)};if(a.startBy)u.startBy=sw(a.startBy);if(a.endBy)u.endBy=sw(a.endBy);if(a.credit)u.credit={...a.credit,a:sw(a.credit.a),...(a.credit.b?{b:sw(a.credit.b)}:{})};ops.push(["appts/"+a.id,u])}
+  for(const v of Object.values(S.visits))if(v.date>=from&&v.date<=to&&(v.doctorId==="owner"||v.doctor2Id==="owner"))ops.push(["visits/"+v.id,{doctorId:sw(v.doctorId),doctor2Id:v.doctor2Id?sw(v.doctor2Id):null}]);
+  for(const e of Object.values(S.log))if(e.date>=from&&e.date<=to&&e.doctorSid==="owner")ops.push(["log/"+e.id,{doctorSid:sid}]);
+  if(!ops.length)return setErr("مفيش حاجة متسجلة باسم صاحب المركز في الأيام دي");
+  for(let i=0;i<ops.length;i+=400){const b=S.db.batch();ops.slice(i,i+400).forEach(([p,u])=>b.update(S.db.doc(p),u));await b.commit()}
+  closeSheet();toast(`اتنقل ${ops.length} تسجيل`);
 }
 function staffHasHistory(sid){return Object.values(S.visits).some(v=>creditsOf(v).some(([d])=>d===sid))||Object.values(S.att).some(r=>r.staffId===sid)||Object.values(S.appts).some(a=>apptDocs(a).includes(sid))||Object.values(S.log).some(e=>e.doctorSid===sid)}
 async function delStaff(id){ // only for someone added by mistake: no sessions, attendance or bookings
@@ -1700,7 +1717,8 @@ async function saveStaff(id){
   const role=S.role==="owner"?(radio("s_role")||"doctor"):(id?S.staff[id]?.role:"doctor")||"doctor";
   if(id){
     const s=S.staff[id];const active=radio("s_act")!=="0";const b=S.db.batch();
-    b.update(S.db.doc("staff/"+id),{name,role,active});
+    const me=S.role==="owner"&&document.getElementById("s_me")?document.getElementById("s_me").checked&&role==="doctor":!!s.me;
+    b.update(S.db.doc("staff/"+id),{name,role,active,me});
     if(s.uid&&S.users[s.uid]&&S.users[s.uid].staffId===id)b.update(S.db.doc("users/"+s.uid),{active,role});
     await b.commit();closeSheet();toast("اتحفظ");return;
   }
@@ -1708,8 +1726,9 @@ async function saveStaff(id){
   if(!USER_RE.test(user))return setErr("اسم المستخدم من 3 لـ 30 حرف إنجليزي أو أرقام، من غير مسافات");
   if((await S.db.doc("usernames/"+user).get()).exists)return setErr("اسم المستخدم ده مستخدم قبل كده");
   const ref=S.db.collection("staff").doc();
-  await ref.set({name,role,active:true,order:Object.keys(S.staff).length+1,uid:null});
-  S.staff[ref.id]={id:ref.id,name,role,active:true,uid:null};
+  const me=S.role==="owner"&&!!document.getElementById("s_me")?.checked&&role==="doctor";
+  await ref.set({name,role,active:true,me,order:Object.keys(S.staff).length+1,uid:null});
+  S.staff[ref.id]={id:ref.id,name,role,active:true,me,uid:null};
   await createLogin(ref.id,user);
 }
 function sheetLogin(sid){
@@ -1768,7 +1787,7 @@ document.addEventListener("change",e=>{
   if(id==="monthPick"&&e.target.value){S.ui.month=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","moveOwner","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","delPack","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -1865,6 +1884,7 @@ document.addEventListener("click",async e=>{
     case "delExp":guard(t,async()=>{await db.doc("exp/"+id).delete();forget("exp",id);closeSheet()});break;
     case "newStaff":sheetStaff(null);break;
     case "editStaff":sheetStaff(id);break;
+    case "moveOwner":guard(t,()=>moveOwner(id));break;
     case "delStaff":guard(t,()=>delStaff(id));break;
     case "saveStaff":guard(t,()=>saveStaff(id));break;
     case "makeLogin":sheetLogin(id);break;
