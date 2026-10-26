@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 39";
+const APP_VERSION="26 أكتوبر · 40";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -421,7 +421,7 @@ function vPatients(){
 function renderPatientList(){
   const el=document.getElementById("plist");if(!el)return;
   const q=nd(S.ui.q).trim();const b=balances();
-  let ps=patientsSorted();if(q)ps=ps.filter(p=>(p.name||"").includes(q)||nd(p.phone||"").includes(q));
+  let ps=patientsSorted();if(q){const nq=normName(q);ps=ps.filter(p=>(p.name||"").includes(q)||normName(p.name).includes(nq)||nd(p.phone||"").includes(q)||nd(p.phone2||"").includes(q))}
   const owe=Object.values(b).reduce((s,x)=>s+Math.max(0,x.charged-x.paid),0);
   const pyEl=document.getElementById("payerBox");if(pyEl)pyEl.innerHTML=payersPanel();
   const shown=ps.slice(0,200);
@@ -902,7 +902,8 @@ function vMine(){
   </button>`).join("")}</div><p class="sub">الجلسات اللي اتراجعت بتفضل ظاهرة هنا ${LOG_KEEP_DAYS} يوم.</p>`:`<div class="empty"><b>لسه مسجلتش جلسات</b>بعد كل حالة اضغط «سجّل جلسة» واكتب كومنت لو فيه حاجة. ريهام هتأكدها والنتيجة هتوصلك هنا.</div>`}`;
 }
 /* ---------- sheet (modal) ---------- */
-function openSheet(title,body,mount){
+var patWarned=false;
+function openSheet(title,body,mount){patWarned=false;
   const root=document.getElementById("sheetRoot");
   root.innerHTML=`<div class="sheet-bg" data-act="bgClose"><div class="sheet" dir="rtl" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="sheet-h"><h2>${esc(title)}</h2><button class="btn ghost" data-act="close" aria-label="إغلاق">✕</button></div>${body}</div></div>`;
   mount&&mount(root.querySelector(".sheet"));
@@ -926,11 +927,19 @@ function typeOptions(sel){return `<option value="">اختار نوع الجلس�
 function compSeg(name,v){return `<div class="seg"><label><input type="radio" name="${name}" value="full" ${v!=="half"?"checked":""}> حالة كاملة</label><label><input type="radio" name="${name}" value="half" ${v==="half"?"checked":""}> نص حالة <span class="sub">(مكملهاش أو حد ساعد)</span></label></div>`}
 function sourceOptions(sel){return `<option value="">اختار</option>`+SOURCES.map(s=>`<option ${s===sel?"selected":""}>${s}</option>`).join("")}
 function patientPicker(id,current){return `<input id="${id}" list="${id}_dl" value="${esc(current||"")}" placeholder="اكتب اسم الحالة" autocomplete="off"><datalist id="${id}_dl">${patientsSorted().map(p=>`<option value="${esc(pLabel(p))}"></option>`).join("")}</datalist>`}
-function findPatient(v){v=(v||"").trim();if(!v)return null;return patientsSorted().find(p=>pLabel(p)===v)||patientsSorted().find(p=>p.name===v)||null}
-function newPatientFields(prefix){return `<div id="${prefix}_new" class="grid2" hidden><div class="note" style="grid-column:1/-1">حالة جديدة. هيتعمل لها ملف، وتقدر تكمّل شيت الكشف بعدين من «المرضى».</div><label class="f">الموبايل<input id="${prefix}_phone" inputmode="tel"></label><label class="f">عرف المركز منين<select id="${prefix}_src">${sourceOptions("")}</select></label></div>`}
-function watchNewPatient(prefix,inputId){const i=document.getElementById(inputId);const upd=()=>{document.getElementById(prefix+"_new").hidden=!(i.value.trim()&&!findPatient(i.value))};i.addEventListener("input",upd);upd()}
+function normName(n){return nd(n||"").trim().replace(/\s+/g," ").replace(/[أإآ]/g,"ا").replace(/ة/g,"ه").replace(/ى/g,"ي").replace(/[ًٌٍَُِّْـ]/g,"")}
+function digits(x){return nd(x||"").replace(/\D/g,"").replace(/^(002|2)(?=01)/,"")}
+function findPatient(v){v=(v||"").trim();if(!v)return null;const ps=patientsSorted();
+  return ps.find(p=>pLabel(p)===v)||ps.find(p=>p.name===v)||(()=>{const n=normName(v),m=ps.filter(p=>normName(p.name)===n);return m.length===1?m[0]:null})()||null}
+function sameName(name,exceptId){const n=normName(name);return n?Object.values(S.patients).filter(p=>p.id!==exceptId&&normName(p.name)===n):[]}
+function newPatientFields(prefix){return `<div id="${prefix}_new" class="grid2" hidden><div class="note" style="grid-column:1/-1">حالة جديدة. هيتعمل لها ملف، وتقدر تكمّل شيت الكشف بعدين من «المرضى».</div><div class="note" id="${prefix}_match" style="grid-column:1/-1;border-color:var(--warn)" hidden></div><label class="f">الموبايل<input id="${prefix}_phone" inputmode="tel"></label><label class="f">عرف المركز منين<select id="${prefix}_src">${sourceOptions("")}</select></label></div>`}
+function watchNewPatient(prefix,inputId){const i=document.getElementById(inputId),ph=document.getElementById(prefix+"_phone"),note=document.getElementById(prefix+"_match");
+  const upd=()=>{const isNew=!!(i.value.trim()&&!findPatient(i.value));document.getElementById(prefix+"_new").hidden=!isNew;if(!note)return;
+    const byPhone=isNew&&phoneTaken(ph?.value),byName=isNew?sameName(i.value):[];
+    note.hidden=!(byPhone||byName.length);note.innerHTML=byPhone?`الرقم ده متسجل لـ <b>${esc(pLabel(byPhone))}</b>، فالجلسة هتتسجل على ملفه، مش ملف جديد.`:byName.length?`فيه ملف بنفس الاسم تقريباً: ${byName.map(p=>`<b>${esc(pLabel(p))}</b>`).join("، ")}. لو هو نفس الشخص اختاره من القايمة.`:""};
+  i.addEventListener("input",upd);if(ph)ph.addEventListener("input",upd);upd()}
 async function ensurePatient(v,phone,src){
-  const p=findPatient(v);if(p)return{id:p.id,name:p.name};
+  const p=findPatient(v)||phoneTaken(phone);if(p)return{id:p.id,name:p.name}; // same name or same phone → the same file, never a second one
   const name=v.trim();const ref=S.db.collection("patients").doc();
   const b=S.db.batch();
   b.set(ref,{name,phone:nd(phone||"").trim(),source:src||"",examDate:today(),createdAt:Date.now(),charged:0,paid:0,count:0,payer:payerFor(name)?.id||""});
@@ -1099,7 +1108,7 @@ function remindText(a){
   const d=a.date,when=d===today()?"النهارده":d===dstr(dnum(today())+1)?"بكره":`يوم ${dayLabel(d)}`;
   return `أهلاً يا فندم، بنفكّرك بميعاد ${a.kind==="exam"?"الكشف":"الجلسة"} بتاع ${when} الساعة ${hour12(a.time)}`}
 function remindBtn(a){
-  if(a.date<today()||!["booked"].includes(a.status))return "";const num=waNumber(S.patients[a.patientId]?.phone);
+  if(a.date<today()||!["booked"].includes(a.status))return "";const num=waNumber(S.patients[a.patientId]?.phone)||waNumber(S.patients[a.patientId]?.phone2);
   if(!num)return `<span class="chip c-mute">مفيش موبايل للتذكير</span>`;
   return `<a class="btn sm ${a.remindedAt?"":"teal"}" href="https://wa.me/${num}?text=${encodeURIComponent(remindText(a))}" target="_blank" rel="noopener" data-act="remind" data-id="${a.id}">${a.remindedAt?"اتفكّر ✓":"تذكير واتساب"}</a>`}
 function apptRow(a,view,showDoc){
@@ -1560,11 +1569,12 @@ function sheetQuick(){
   <label class="f">رصيد قديم<input id="q_bal" inputmode="decimal" placeholder="0"></label><label class="f">الرصيد ده<select id="q_baltype"><option value="owe">عليه</option><option value="credit">ليه</option></select></label></div>
   <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveQuick">حفظ وضيف التاني</button><button class="btn" data-act="close">خلصت</button></div><p class="sub" id="q_count" style="margin:0"></p>`);
 }
-function phoneTaken(phone){phone=nd(phone).replace(/\D/g,"");return phone?Object.values(S.patients).find(p=>nd(p.phone||"").replace(/\D/g,"")===phone):null}
+function phoneTaken(phone,exceptId){phone=digits(phone);return phone.length>=7?Object.values(S.patients).find(p=>p.id!==exceptId&&(digits(p.phone)===phone||digits(p.phone2)===phone)):null} // either of the patient's numbers
 function newPatientDoc(name,phone,source,date,opening){return{payer:payerFor(name)?.id||"",name,phone:nd(phone||"").trim(),source:source||"",examDate:date||"",imported:true,createdAt:Date.now(),charged:opening>0?opening:0,paid:opening<0?-opening:0,count:0,opening:opening||0}}
 async function saveQuick(){
   const name=val("q_name").trim(),phone=val("q_phone").trim();if(!name)return setErr("اكتب الاسم");
   const dup=phoneTaken(phone);if(dup)return setErr(`الموبايل ده متسجل لـ ${dup.name}`);
+  const dn=sameName(name);if(dn.length&&!patWarned){patWarned=true;return setErr(`فيه ملف بنفس الاسم: ${dn.map(pLabel).join("، ")}. لو شخص تاني دوس حفظ تاني.`)}patWarned=false;
   const bal=num(val("q_bal"));const opening=val("q_baltype")==="credit"?-bal:bal;
   const ref=S.db.collection("patients").doc();const b=S.db.batch();
   b.set(ref,newPatientDoc(name,phone,val("q_src"),val("q_date"),opening));b.set(S.db.doc("pdir/"+ref.id),{name});await b.commit();
@@ -1640,7 +1650,7 @@ function sheetPatient(id){
   <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm teal" data-act="newInvoice" data-id="${id}">فاتورة جلسات</button><button class="btn sm teal" data-act="newReport" data-id="${id}">تقرير</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
   ${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
-  <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
+  <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("phone2","موبايل تاني (اختياري)","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
   <label class="f">النوع<select id="pt_gender"><option value="">—</option><option ${p.gender==="ذكر"?"selected":""}>ذكر</option><option ${p.gender==="أنثى"?"selected":""}>أنثى</option></select></label>
   <label class="f">عرف المركز منين<select id="pt_source">${sourceOptions(p.source)}</select></label>
   ${payers().length?`<label class="f">مين بيدفع<select id="pt_payer"><option value="">المريض نفسه</option>${payers().map(x=>`<option value="${x.id}" ${p.payer===x.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label>`:""}
@@ -1690,10 +1700,12 @@ async function uploadSheet(id,input){
   input.value="";
 }
 async function savePatient(id){
-  const keys=["name","phone","age","gender","source","sourceDetail","examDate","examDoctor","complaint","history","findings","diagnosis","plan","notes"];
+  const keys=["name","phone","phone2","age","gender","source","sourceDetail","examDate","examDoctor","complaint","history","findings","diagnosis","plan","notes"];
   const body={};keys.forEach(k=>body[k]=(val("pt_"+k)||"").trim());if(document.getElementById("pt_broughtBy"))body.broughtBy=val("pt_broughtBy");
-  if(document.getElementById("pt_payer"))body.payer=val("pt_payer")||(!id&&payerFor(body.name)?.id)||"";body.phone=nd(body.phone);body.age=nd(body.age);
-  if(!body.name)return setErr("اكتب اسم المريض");const isNew=!id;
+  if(document.getElementById("pt_payer"))body.payer=val("pt_payer")||(!id&&payerFor(body.name)?.id)||"";body.phone=nd(body.phone);body.phone2=nd(body.phone2||"");body.age=nd(body.age);
+  if(!body.name)return setErr("اكتب اسم المريض");
+  const dupP=phoneTaken(body.phone,id)||phoneTaken(body.phone2,id);if(dupP)return setErr(`الرقم ده متسجل لـ ${dupP.name}. افتح ملفه بدل ما يبقى ليه ملفين.`);
+  const dupN=!id?sameName(body.name):[];if(dupN.length&&!patWarned){patWarned=true;return setErr(`فيه ملف بنفس الاسم: ${dupN.map(pLabel).join("، ")}. لو هو نفس الشخص اقفل وافتح ملفه، لو شخص تاني دوس حفظ تاني.`)}patWarned=false;const isNew=!id;
   const b=S.db.batch();
   if(id)b.update(S.db.doc("patients/"+id),body);else{const ref=S.db.collection("patients").doc();b.set(ref,{...body,createdAt:Date.now(),charged:0,paid:0,count:0});id=ref.id}
   if(S.pdir[id]?.name!==body.name)b.set(S.db.doc("pdir/"+id),{name:body.name});
