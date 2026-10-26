@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 34";
+const APP_VERSION="26 أكتوبر · 35";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -773,9 +773,12 @@ function vSettings(){
   <label class="f">الصلاحية تقفل بعد<select id="bf_days"><option value="1">يوم</option><option value="3" selected>3 أيام</option><option value="7">أسبوع</option></select></label></div>
   <button class="btn primary" data-act="setBackfill">فعّل الصلاحية</button>`}</div>`:""}
   ${S.role==="owner"?`<div class="panel"><div class="sec-title"><h2>إشعارات على موبايلك</h2>${S.notify?.topic?`<span class="chip ${S.notify.on===false?"c-mute":"c-ok"}">${S.notify.on===false?"متوقفة":"شغالة"}</span>`:""}</div>
-  ${S.notify?.topic?`<p class="sub" style="margin:0">بيوصلك إشعار لو حد حاول يسجل حضور أو انصراف من بره المركز، أو رفض يدّي مكانه.</p>
+  ${S.notify?.topic?`<p class="sub" style="margin:0">بيوصلك إشعار لو حد حاول يسجل حضور أو انصراف من بره المركز، وكمان لما مريض يوصل أو يدخل أو يخرج، أو يستنى كتير.</p>
   <ol class="sub" style="margin:0;padding-inline-start:20px;display:grid;gap:4px"><li>نزّل تطبيق <b>ntfy</b> من App Store أو Google Play، وهو مجاني.</li><li>افتحه ودوس <b>+</b> واكتب اسم القناة ده بالظبط:</li></ol>
   <div class="bar"><code id="ntfyTopic" style="direction:ltr;background:var(--sunk);padding:6px 10px;border-radius:8px;user-select:all">${esc(S.notify.topic)}</code><button class="btn sm" data-act="copyTopic">نسخ</button></div>
+  <h3 style="font-size:14px;margin:6px 0 0">إشعارات المرضى</h3>
+  <div class="seg">${[["arrive","وصل"],["start","دخل"],["done","خرج"]].map(([k,l])=>`<label><input type="checkbox" id="pt_${k}" ${ptCfg()[k]?"checked":""}> ${l}</label>`).join("")}</div>
+  <div class="bar"><label class="f" style="flex:1">مستني ولسه مدخلش أكتر من (دقيقة، 0 = من غير)<input id="pt_wait" inputmode="numeric" value="${ptCfg().wait}"></label><button class="btn sm primary" data-act="savePtAlerts">حفظ</button></div>
   <div class="bar"><button class="btn sm" data-act="testAlert">ابعت إشعار تجربة</button><button class="btn sm" data-act="toggleAlerts">${S.notify.on===false?"شغّل الإشعارات":"وقّف الإشعارات"}</button></div>`
   :`<p class="sub" style="margin:0">لو حد حاول يسجل حضور من بره المركز يوصلك إشعار على موبايلك حتى لو التطبيق مقفول.</p><button class="btn primary" data-act="setupAlerts">فعّل الإشعارات</button>`}</div>`:""}
   ${S.role==="owner"?`  <div class="panel"><div class="sec-title"><h2>مكان المركز للحضور</h2>${S.geo?.lat?`<span class="chip ${S.geo.required===false?"c-mute":"c-ok"}">${S.geo.required===false?"متوقف":"شغال"}</span>`:""}</div>
@@ -1012,7 +1015,7 @@ function apptRow(a,view,showDoc){
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
@@ -1076,8 +1079,8 @@ async function saveAppt(id){
 }
 const TSV=()=>firebase.firestore.FieldValue.serverTimestamp();
 async function apptArrive(id){await S.db.doc("appts/"+id).update({arrivedAt:TSV(),status:"arrived"});toast("اتسجل وصوله")}
-async function apptStart(id){await S.db.doc("appts/"+id).update({startAt:TSV(),startBy:S.mySid,status:"started"});toast("العدّاد اشتغل")}
-async function apptFinishByDesk(id){await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done"});toast("اتسجل إنها خلصت")}
+async function apptStart(id){ptChanged(S.appts[id],"started");await S.db.doc("appts/"+id).update({startAt:TSV(),startBy:S.mySid,status:"started"});toast("العدّاد اشتغل")}
+async function apptFinishByDesk(id){ptChanged(S.appts[id],"done");await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done"});toast("اتسجل إنها خلصت")}
 function apptEnd(id){ // doctor finishing: optional comment + photos, then stamp the end time
   const a=S.appts[id];if(!a)return;entryAppt=a;
   openSheet("خلصت الجلسة",`<div class="note">${esc(a.patientName)} · ${esc(a.kindLabel||"")}${a.start?` · بدأت ${esc(a.start)}${a.startBy&&a.startBy!==S.mySid?` مع ${esc(staffName(a.startBy))}`:""}`:""}</div>
@@ -1088,6 +1091,7 @@ function apptEnd(id){ // doctor finishing: optional comment + photos, then stamp
   ()=>{entryMedia=[];drawEntryMedia(false);const f=document.getElementById("e_file");f.addEventListener("change",()=>addEntryMedia(f))});
 }
 async function saveApptEnd(id){
+  ptChanged(S.appts[id],"done");
   await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done",docNote:val("e_note").trim(),media:entryMedia.slice(0,MEDIA_MAX)});
   entryAppt=null;closeSheet();toast("اتسجلت. ريهام هتأكدها.");
 }
@@ -1134,7 +1138,7 @@ function sessionRow(a){
   const quick=(a.status==="booked"?`<button class="btn sm" data-act="quickArrive" data-id="${a.id}">وصل</button>`:"")
     +(["booked","arrived"].includes(a.status)?`<button class="btn sm danger" data-act="quickCancel" data-id="${a.id}">لغى</button>`:"")
     +`<button class="btn sm ${needsRecord(a)?"teal":""}" data-act="openSession" data-id="${a.id}">${needsRecord(a)?"أكّد":"فتح"}</button>`;
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${lateChip(a)} ${payChip(a)}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} ${lateChip(a)} ${payChip(a)}</span>
   <span class="end bar">${quick}</span>
   <span class="m">${packMismatch(a)} ${[kindOf(a),docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
@@ -1214,9 +1218,10 @@ async function saveSession(id){
     if(a.media?.length&&!a.photosCopied){a.media.forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));upd.photosCopied=true}
     upd.visitId=id;upd.credit=doc2?{mode:"split",a:doc1,b:doc2}:{mode:"full",a:doc1};upd.creditSet=status==="done";
   }
+  ptChanged(a,status,{arrived:upd.arrivedT,start:upd.startT,end:upd.endT});
   b.update(ref,upd);await b.commit();closeSheet();toast("اتحفظت");
 }
-async function quickArrive(id){await S.db.doc("appts/"+id).update({status:"arrived",arrivedT:S.ui.date===today()?nowHM():(S.appts[id]?.time||null)});toast("اتسجل وصوله")}
+async function quickArrive(id){ptChanged(S.appts[id],"arrived");await S.db.doc("appts/"+id).update({status:"arrived",arrivedT:S.ui.date===today()?nowHM():(S.appts[id]?.time||null)});toast("اتسجل وصوله")}
 function sheetQuickCancel(id){const a=S.appts[id];if(!a)return;
   openSheet(`إلغاء ${a.patientName}`,`<p class="sub" style="margin:0">${esc(a.time||"")} · ${esc(kindOf(a))}</p>
   <div style="display:grid;gap:8px">${["المريض لغى","المركز لغى","اتأجل لميعاد تاني","محضرش من غير ما يبلغ"].map(r=>`<button class="btn" data-act="doCancel" data-id="${id}" data-r="${r}">${r}</button>`).join("")}</div>`)}
@@ -1237,6 +1242,7 @@ async function saveWalkin(){
   const pat=await ensurePatient(pv,val("w_phone"),val("w_src"));const type=val("w_type");const info=sessionInfo(pat.id,kind,null,date,time,type);
   const ref=S.db.collection("appts").doc();
   const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:[doc],kind,kindLabel:info.label,packId:info.packId||null,date,time,duration:60,typeId:type||null,typeName:type?typeName(type):"",note:"من غير ميعاد",walkin:true,status:"arrived",arrivedT:time,confirmed:false,createdAt:Date.now(),by:S.mySid};
+  ptChanged({...body,status:"booked"},"arrived",{arrived:time});
   await ref.set(body);S.live.appts[ref.id]={id:ref.id,...body,arrived:time};merge();sheetSession(ref.id);
 }
 /* ---------- review ---------- */
@@ -1597,6 +1603,33 @@ function alertOwner(title,message,priority=4){
   const topic=S.notify?.topic;if(!topic||S.notify.on===false)return;
   fetch("https://ntfy.sh/",{method:"POST",body:JSON.stringify({topic,title,message,priority,tags:["warning"]})}).catch(()=>{});
 }
+/* patient flow alerts: arrived / went in / came out / still waiting */
+function ptCfg(){const p=S.notify?.pt||{};return{arrive:p.arrive!==false,start:p.start!==false,done:p.done!==false,wait:p.wait??10}}
+function nowMin(){const d=new Date();return d.getHours()*60+d.getMinutes()}
+function waitMin(a){if(a.status!=="arrived"||a.date!==today())return null;const x=mins(a.arrived);return x==null?null:Math.max(0,nowMin()-x)}
+function waitChip(a){const w=waitMin(a);return w==null?"":`<span class="chip ${w>=(ptCfg().wait||10)?"c-bad":"c-warn"}">مستني من ${hm(w)}</span>`}
+function ptAlert(kind,a,extra){ // sent from the phone that recorded it, straight to the owner's ntfy
+  const c=ptCfg();if(!a||a.date!==today())return;if(kind!=="wait"&&!c[kind])return; // "wait" is governed by its minutes (0 = off)
+  const who=`${a.patientName}${a.kind==="exam"?" (كشف)":""}`,doc=apptDocs(a).map(staffName).filter(x=>x!=="—").join(" و");
+  const t={arrive:"وصل",start:"دخل",done:"خرج",wait:"مستني"}[kind];
+  const msg={arrive:`${who} · ميعاده ${hour12(a.time)}${extra?.late>5?` · اتأخر ${hm(extra.late)}`:""}${doc?` · مع ${doc}`:""}`,
+    start:`${who}${doc?` مع ${doc}`:""}${extra?.waited!=null?` · استنى ${hm(extra.waited)}`:""}`,
+    done:`${who}${extra?.dur!=null?` · الجلسة ${hm(extra.dur)}`:""}${doc?` · ${doc}`:""}`,
+    wait:`${who} مستني بقاله ${hm(extra?.w||0)} ولسه مدخلش${doc?` (مع ${doc})`:""}`}[kind];
+  alertOwner(`${t}: ${a.patientName}`,msg,kind==="wait"?4:3);
+}
+function ptChanged(a,status,times={}){ // compare old → new status and send what happened
+  if(!a||a.status===status)return;const nm=nowMin();
+  if(status==="arrived")ptAlert("arrive",a,{late:(mins(times.arrived)??nm)-(mins(a.time)??nm)});
+  else if(status==="started"){const ar=mins(a.arrived),st=mins(times.start)??nm;ptAlert("start",a,{waited:ar!=null?Math.max(0,st-ar):null})}
+  else if(status==="done"){const sa=mins(a.start),en=mins(times.end)??nm;ptAlert("done",a,{dur:sa!=null?Math.max(0,en-sa):null})}
+}
+function watchWaiting(){ // reception / owner phones check every minute who has been waiting too long
+  if(!isAdmin())return;const lim=ptCfg().wait;if(!lim)return;
+  for(const a of Object.values(S.appts)){const w=waitMin(a);if(w==null||w<lim)continue;const lvl=Math.floor(w/lim);
+    if(lvl>(a.waitLevel||0)){a.waitLevel=lvl;S.db.doc("appts/"+a.id).update({waitLevel:lvl}).catch(()=>{});ptAlert("wait",a,{w})}}
+}
+setInterval(()=>{watchWaiting();if(["sessions","myappts","appts"].includes(S.tab))sched()},60000);
 async function checkPlace(kind){ // returns location info, or throws a readable message when outside the clinic
   const g=S.geo;if(!g||!g.lat||g.required===false)return null;
   const what=kind==="in"?"حضور":"انصراف",who=staffName(S.mySid),at=nowHM();
@@ -1764,6 +1797,7 @@ document.addEventListener("click",async e=>{
       const until=new Date(Date.now()+num(val("bf_days"))*864e5);await db.doc("pub/backfill").set({on:true,from,to,until,by:S.mySid,at:Date.now()});toast("الصلاحية اتفعّلت")});break;
     case "stopBackfill":guard(t,async()=>{await db.doc("pub/backfill").set({on:false,at:Date.now()});toast("الصلاحية اتقفلت")});break;
     case "setupAlerts":if(S.role==="owner")guard(t,async()=>{await db.doc("pub/notify").set({topic:"stride-"+randId()+randId(),on:true,at:Date.now()});toast("الإشعارات اتفعّلت. كمّل الخطوات اللي ظهرت.")});break;
+    case "savePtAlerts":if(S.role==="owner")guard(t,async()=>{await db.doc("pub/notify").set({pt:{arrive:document.getElementById("pt_arrive").checked,start:document.getElementById("pt_start").checked,done:document.getElementById("pt_done").checked,wait:Math.max(0,Math.round(num(val("pt_wait"))))}},{merge:true});toast("اتحفظ")});break;
     case "toggleAlerts":if(S.role==="owner")guard(t,async()=>{await db.doc("pub/notify").update({on:S.notify?.on===false})});break;
     case "testAlert":if(S.role==="owner"){const n=S.notify;if(n?.topic)fetch("https://ntfy.sh/",{method:"POST",body:JSON.stringify({topic:n.topic,title:"Stride Clinic",message:"الإشعارات شغالة. هيوصلك تنبيه هنا لو حد سجل حضور من بره المركز.",priority:3})}).then(r=>toast(r.ok?"اتبعت. بص على موبايلك.":"مااتبعتش، جرب تاني.")).catch(()=>toast("مااتبعتش. اتأكد من النت."))}break;
     case "copyTopic":{const tp=S.notify?.topic||"";navigator.clipboard?.writeText(tp).then(()=>toast("اتنسخ")).catch(()=>{const el=document.getElementById("ntfyTopic");const r=document.createRange();r.selectNodeContents(el);const sel=getSelection();sel.removeAllRanges();sel.addRange(r)})}break;
