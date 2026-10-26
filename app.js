@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 أكتوبر · 26";
+const APP_VERSION="26 أكتوبر · 27";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -270,7 +270,13 @@ function balances(){const b={};for(const p of Object.values(S.patients))if(p.cou
 function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات</span>`;const d=Math.round(x.charged-x.paid);
   return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">خالص</span>`}
 function attMinutes(rec){const a=mins(rec.in),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
-function cfg(){const c=S.config||{};return{salary:c.salary||{},commission:c.commission||{},otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
+function cfg(){const c=S.config||{};return{salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
+const WEEK=[[6,"س","السبت"],[0,"ح","الحد"],[1,"ن","الاتنين"],[2,"ث","التلات"],[3,"ر","الأربع"],[4,"خ","الخميس"],[5,"ج","الجمعة"]]; // getDay(): 0 = Sunday … 6 = Saturday
+function guessDays(s){const n=s.name||"";if(s.role==="secretary")return [6,0,1,2,3,4];if(/سلم|محمد/.test(n))return [6,1,3];if(/حبيب/.test(n))return [0,2,4];return null}
+function workDaysOf(s){const w=cfg().workDays[s.id];return Array.isArray(w)?w:guessDays(s)} // the weekly schedule the salary is for
+function wday(d){return new Date(d+"T12:00").getDay()}
+function monthDates(m){const out=[];let d=dnum(m+"-01");const end=dnum(nextMonth(m)+"-01");for(;d<end;d++)out.push(dstr(d));return out}
+function daysLabel(w){return w&&w.length?WEEK.filter(([d])=>w.includes(d)).map(x=>x[2]).join(" و"):"—"}
 function creditsOf(v){return v.doctor2Id?[[v.doctorId,"half"],[v.doctor2Id,"half"]]:[[v.doctorId,v.completion||"full"]]}
 function visitDocs(v){return v.doctor2Id?`${staffName(v.doctorId)} + ${staffName(v.doctor2Id)} (نص ونص)`:staffName(v.doctorId)}
 function payroll(month){
@@ -278,13 +284,20 @@ function payroll(month){
   const worked=new Set();for(const r of Object.values(S.att))if((r.date||"").startsWith(month))worked.add(r.staffId);
   for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))creditsOf(v).forEach(([d])=>worked.add(d));
   return Object.values(S.staff).filter(s=>s.active!==false||worked.has(s.id)).sort((a,b)=>(a.order||0)-(b.order||0)).map(s=>{
-    const sal=num(c.salary[s.id]);const minRate=sal/(c.daysBase*c.hoursBase*60);
-    let ot=0,days=0,short=0;
-    for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;if(w>base)ot+=w-base;else short+=base-w}
+    const sal=num(c.salary[s.id]);const wd=workDaysOf(s);
+    // with a weekly schedule: the salary covers the scheduled days of this month; a day off that he came in counts fully as overtime
+    const sched=wd&&wd.length?monthDates(month).filter(d=>wd.includes(wday(d))):null;
+    const minRate=sched?(sched.length?sal/(sched.length*c.hoursBase*60):0):sal/(c.daysBase*c.hoursBase*60);
+    let ot=0,days=0,short=0,extra=0;const came=new Set();
+    for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;came.add(r.date);
+      if(sched&&!wd.includes(wday(r.date))){extra++;ot+=w;continue}
+      if(w>base)ot+=w-base;else short+=base-w}
+    const first=Object.values(S.att).filter(r=>r.staffId===s.id).map(r=>r.date).sort()[0]; // absences count only once attendance started being recorded
+    const absent=sched&&first?sched.filter(d=>d>=first&&d<=today()&&!came.has(d)).length:0;
     const otPay=ot*c.otMult*minRate;
     const cm=c.commission[s.id];let comm=0,full=0,half=0,base2=0;
     if(cm)for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))for(const [sid,comp] of creditsOf(v))if(sid===s.id){const pct=comp==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):(v.paid||0);comm+=base*pct/100;base2+=base;comp==="half"?half++:full++}
-    return{s,sal,ot,otPay,days,short,cm,comm,full,half,commBase:base2,total:sal+otPay+comm};
+    return{s,sal,ot,otPay,days,short,cm,comm,full,half,commBase:base2,total:sal+otPay+comm,wd,sched:sched?sched.length:null,absent,extra};
   });
 }
 function revenue(month){
@@ -671,10 +684,10 @@ function vReports(){
   ${planPanel(m)}
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><h2>المرتبات</h2>
-  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
-  ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td>${money(x.sal)}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
-  </tbody><tfoot><tr><td>الإجمالي</td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
-  <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (${cfg().daysBase} يوم × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم × ${cfg().otMult}. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
+  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
+  ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.absent?`<div class="sub" style="color:var(--bad)">غاب ${x.absent}</div>`:""}${x.extra?`<div class="sub">${x.extra} يوم زيادة</div>`:""}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b></td></tr>`).join("")}
+  </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
+  <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. لو جه يوم مش من أيامه، اليوم كله بيتحسب أوفر تايم. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
 }
 /* ---------- views: settings ---------- */
@@ -713,8 +726,8 @@ function vSettings(){
   <div class="panel"><div class="sec-title"><h2>الباكدجات</h2><button class="btn sm" data-act="newPackType">+ باكدج</button></div>
   ${(S.packTypes||[]).length?`<div class="list">${S.packTypes.map(t=>`<button class="row" data-act="editPackType" data-id="${t.id}"><span class="t">${esc(t.name)} ${t.typeId?`<span class="chip c-teal">${esc(typeName(t.typeId))}</span>`:`<span class="chip c-warn">من غير نوع</span>`}</span><span class="end money">${money(t.price)}</span><span class="m">${t.sessions} جلسة · الجلسة بـ ${money(t.price/t.sessions)}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش باكدجات</b>مثلاً «علاج طبيعي 10 جلسات» بـ 4800، أو «تيكار 6 جلسات». بيتباع للمريض من ملفه، وكل جلسة من نفس النوع بتتخصم منه.</div>`}</div>
   ${owner?`<div class="panel"><h2>المرتبات والنسب (ليك انت بس)</h2>
-  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>المرتب الشهري</th><th>نسبة الحالة الكاملة %</th><th>نسبة نص الحالة %</th></tr></thead><tbody>
-  ${activeStaff().map(s=>`<tr><td>${esc(s.name)}</td><td><input id="sal_${s.id}" inputmode="numeric" value="${c.salary[s.id]??""}" style="width:110px"></td><td><input id="cf_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.full??""}" style="width:80px" placeholder="—"></td><td><input id="ch_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.half??""}" style="width:80px" placeholder="—"></td></tr>`).join("")}
+  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>المرتب الشهري</th><th>أيام الشغل</th><th>نسبة الحالة الكاملة %</th><th>نسبة نص الحالة %</th></tr></thead><tbody>
+  ${activeStaff().map(s=>`<tr><td>${esc(s.name)}</td><td><input id="sal_${s.id}" inputmode="numeric" value="${c.salary[s.id]??""}" style="width:110px"></td><td><span class="wdays">${(()=>{const w=workDaysOf(s)||[];return WEEK.map(([d,l,f])=>`<label title="${f}"><input type="checkbox" id="wd_${s.id}_${d}" ${w.includes(d)?"checked":""}><span>${l}</span></label>`).join("")})()}</span></td><td><input id="cf_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.full??""}" style="width:80px" placeholder="—"></td><td><input id="ch_${s.id}" inputmode="decimal" value="${c.commission[s.id]?.half??""}" style="width:80px" placeholder="—"></td></tr>`).join("")}
   </tbody></table></div>
   <div class="grid2"><label class="f">ساعات اليوم الأساسية<input id="cfgHours" inputmode="numeric" value="${c.hoursBase}"></label><label class="f">أيام الشهر في الحسبة<input id="cfgDays" inputmode="numeric" value="${c.daysBase}"></label><label class="f">الأوفر تايم (الدقيقة بكام دقيقة)<input id="cfgOt" inputmode="decimal" value="${c.otMult}"></label></div>
   <div class="bar"><button class="btn primary" data-act="saveCfg">حفظ المرتبات</button><span class="sub">سيب خانة النسبة فاضية لو مفيش نسبة.</span></div></div>
@@ -1761,7 +1774,7 @@ document.addEventListener("click",async e=>{
     case "editType":sheetType(id);break;
     case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
-    case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id]});await db.doc("priv/config").set({salary,commission,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
+    case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked)});await db.doc("priv/config").set({salary,commission,workDays,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
     case "newEntry":sheetEntry(null);break;
     case "myEntry":sheetEntry(S.log[id]);break;
