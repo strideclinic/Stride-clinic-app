@@ -3,14 +3,14 @@
 /* ---------- constants ---------- */
 const SOURCES=["إعلان فيسبوك","إعلان إنستجرام","تيك توك","جوجل / خرائط جوجل","ترشيح من مريض","ترشيح من دكتور","شاف المركز من الشارع","قريب أو صديق","أخرى"];
 const AD_SOURCES=["إعلان فيسبوك","إعلان إنستجرام","تيك توك","جوجل / خرائط جوجل"];
-const EXP_CATS=["إيجار","كهرباء ومياه وغاز","أدوات ومستلزمات","صيانة","إعلانات وتسويق","إنترنت وتليفون","نظافة وضيافة","مواصلات","أخرى"];
+const EXP_CATS=["استرداد مبلغ","إيجار","كهرباء ومياه وغاز","أدوات ومستلزمات","صيانة","إعلانات وتسويق","إنترنت وتليفون","نظافة وضيافة","مواصلات","أخرى"];
 const METHODS={cash:"كاش",instapay:"InstaPay",transfer:"تحويل / شيك"};
 const ROLE_NAMES={doctor:"دكتور",secretary:"استقبال",owner:"صاحب المركز"};
 const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="27 أكتوبر · 41";
+const APP_VERSION="27 أكتوبر · 42";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -732,7 +732,7 @@ function sheetRefund(pid,kid){
   openSheet(`استرجاع · ${packTitle(k)}`,`<div class="note">${esc(p.name)} · ${esc(packTitle(k))} · خلص <b>${used} من ${k.sessions}</b> · دفع على الباكدج <b>${money(paid)}</b>${k.paid==null?" (مش معروف دفع كام على الباكدج ده بالظبط)":""}</div>
   <p class="sub" style="margin:0">${esc(R.why)}.${R.rate==null?` <b style="color:var(--bad)">سعر الجلسة المنفردة مش متسجل لـ ${esc(typeName(k.typeId))}: اكتبه هنا أو من الإعدادات ← أنواع الجلسات.</b>`:""}</p>
   <div class="grid2"><label class="f">سعر الجلسة في الحسبة<input id="rf_rate" inputmode="decimal" value="${R.rate??""}"></label><label class="f">عدد الجلسات اللي اتعملت<input id="rf_used" inputmode="numeric" value="${used}"></label>
-  <label class="f">بيرجعله إزاي<select id="rf_method"><option value="cash">كاش</option><option value="instapay">InstaPay</option></select></label><label class="f">التاريخ<input type="date" id="rf_date" value="${today()}"></label></div>
+  <label class="f">بيرجعله إزاي (بيتسجل في المصروفات «استرداد مبلغ»)<select id="rf_method"><option value="cash">كاش</option><option value="instapay">InstaPay</option></select></label><label class="f">التاريخ<input type="date" id="rf_date" value="${today()}"></label></div>
   <div class="note" id="rf_sum"></div><div class="err" id="formErr"></div>
   <button class="btn danger" data-act="saveRefund" data-id="${pid}" data-k="${kid}" data-confirm>سجّل الاسترجاع وقفّل الباكدج</button>`,
   ()=>{const f=()=>{const r=num(val("rf_rate")),u=Math.round(num(val("rf_used"))),cost=r*u,back=paid-cost;
@@ -744,7 +744,7 @@ async function saveRefund(pid,kid){
   const rate=num(val("rf_rate")),used=Math.round(num(val("rf_used")));if(!rate)return setErr("اكتب سعر الجلسة");if(used<0||used>k.sessions)return setErr("عدد الجلسات مش مظبوط");
   const cost=Math.round(rate*used),paid=k.paid||0,back=Math.round(paid-cost),date=val("rf_date")||today();
   const b=S.db.batch();
-  if(back>0)b.set(S.db.collection("payments").doc(),{patientId:pid,patientName:p.name,amount:-back,method:val("rf_method"),date,packId:kid,kind:"refund",note:`استرجاع ${packTitle(k)}: ${used} جلسة × ${rate}`,createdAt:Date.now(),by:S.mySid});
+  if(back>0)b.set(S.db.collection("exp").doc(),{category:"استرداد مبلغ",amount:back,date,note:`${p.name} · ${packTitle(k)}: ${used} جلسة × ${rate} · ${METHODS[val("rf_method")]||""}`,patientId:pid,packId:kid,refund:true,createdAt:Date.now(),by:S.mySid}); // the money handed back is an expense
   const packs=p.packs.map(x=>x.id===kid?{...x,sessions:used,used,price:cost,paid:paid-Math.max(0,back),refund:{at:Date.now(),date,by:S.mySid,origSessions:k.sessions,origPrice:k.price,rate,cost,back}}:x);
   b.update(S.db.doc("patients/"+pid),{packs,charged:inc(cost-(k.price||0)),paid:inc(-Math.max(0,back))});
   await b.commit();toast(back>0?`اتسجل: يرجعله ${money(back)}`:back<0?`الباكدج اتقفل، وعليه ${money(-back)}`:"الباكدج اتقفل");setTimeout(()=>sheetPatient(pid),250);
@@ -807,7 +807,7 @@ function vReports(){
   const loadingNote=monthLoading(m)?`<div class="note">بيحمّل بيانات ${esc(monthLabel(m))}…</div>`:"";
   const expensesPanel=`<div class="panel"><div class="sec-title"><h2>المصروفات</h2><button class="btn primary sm" data-act="newExp">+ مصروف</button></div>
   ${exList.length?`<div class="list">${exList.map(x=>`<button class="row" data-act="editExp" data-id="${x.id}"><span class="t">${esc(x.category)}</span><span class="end money">${money(x.amount)}</span><span class="m">${esc(x.date)}${x.note?" · "+esc(x.note):""}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش مصروفات متسجلة الشهر ده</b>سجّل الإيجار والكهربا والمستلزمات والإعلانات.</div>`}
-  ${exList.length?`<p class="sub" style="margin:0">إجمالي المصروفات (من غير المرتبات): <b>${money(ex.t)}</b></p>`:""}</div>`;
+  ${exList.length?`<p class="sub" style="margin:0">إجمالي المصروفات${owner?" (من غير المرتبات)":""}: <b>${money(ex.t)}</b></p>`:""}</div>`;
   const bal=balances();const src={};let srcN=0;
   for(const p of Object.values(S.patients)){const dt=p.examDate||"";if(!S.ui.srcAll&&!dt.startsWith(m))continue;const k=p.source||"مش متسجل";src[k]=src[k]||{n:0,rev:0};src[k].n++;src[k].rev+=bal[p.id]?.charged||0;srcN++}
   const srcArr=Object.entries(src).sort((a,b)=>b[1].n-a[1].n);const maxN=srcArr[0]?.[1].n||1;
