@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 52";
+const APP_VERSION="28 أكتوبر · 53";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -381,7 +381,8 @@ function revenue(month){
   for(const pt of Object.values(S.patients))for(const k of pt.packs||[])if((k.date||"").startsWith(month))charged+=k.price||0;
   const mo=dayMoney(d=>d.startsWith(month));
   const unpaid=Object.values(S.patients).reduce((s,p)=>s+Math.max(0,(p.charged||0)-(p.paid||0)),0);
-  return{cash:mo.cash,insta:mo.insta,collected:mo.clinic,charged,sessions,unpaid};
+  const manual=(S.ext?.manual||[]).filter(e=>e.month===month).reduce((t,e)=>t+num(e.count)*num(e.price),0); // outside doctors' sessions from before the system
+  return{cash:mo.cash+manual,insta:mo.insta,collected:mo.clinic+manual,charged:charged+manual,sessions,unpaid,manual};
 }
 function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)){o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}return{o,t}}
 function dayNav(act,pickId,d){return `<button class="btn sm" data-act="${act}" data-n="-1">اليوم اللي قبله</button><input type="date" id="${pickId}" value="${d}" style="max-width:170px" aria-label="اليوم"><button class="btn sm" data-act="${act}" data-n="1">اللي بعده</button>`}
@@ -480,7 +481,8 @@ function vMyAtt(){
 function exts(all){return (S.ext?.list||[]).filter(x=>all||x.active!==false)}
 function extById(id){return (S.ext?.list||[]).find(x=>x.id===id)}
 const BY_LABEL={any:"أي حد",self:"هي/هو",clinic:"المركز"};
-function extRate(x,typeId,self){const r=x.rates||[];const m=r.find(q=>q.typeId===typeId&&q.by===(self?"self":"clinic"))||r.find(q=>q.typeId===typeId&&q.by==="any");return m?num(m.pct):null}
+function extRate(x,typeId,self){const r=x.rates||[],by=self?"self":"clinic";
+  const m=r.find(q=>q.typeId===typeId&&q.by===by)||r.find(q=>q.typeId===typeId&&q.by==="any")||r.find(q=>q.typeId==="*"&&q.by===by)||r.find(q=>q.typeId==="*"&&q.by==="any");return m?num(m.pct):null} // "*" = any session type, exams included
 function extRows(sid,test){ // every session the outside doctor worked, with its value and her share
   const x=extById(sid);if(!x)return[];const rows=[];
   for(const v of Object.values(S.visits)){if(!test(v.date||""))continue;
@@ -497,7 +499,39 @@ function extPeriod(x,date){ // the pay period that contains date: calendar month
 function nextMonth(m){let [y,mo]=m.split("-").map(Number);mo++;if(mo>12){mo=1;y++}return `${y}-${String(mo).padStart(2,"0")}`}
 function cycleLabel(x){return x.cycle==="m"?"كل شهر":x.cycle===14?"كل أسبوعين":"كل أسبوع"}
 function extPaid(sid,from){return (S.ext?.pays||[]).filter(p=>p.sid===sid&&p.from===from)}
-function extMonthShare(m){let t=0;for(const x of exts(true))t+=extRows(x.id,d=>d.startsWith(m)).reduce((s,r)=>s+r.share,0);return t}
+function extManual(sid,m){return (S.ext?.manual||[]).filter(e=>(!sid||e.sid===sid)&&(!m||e.month===m))}
+function manualCalc(e){const x=extById(e.sid);const value=num(e.count)*num(e.price);const pct=x?extRate(x,e.typeId==="exam"?"*":e.typeId,e.self):null;return{value,pct,share:pct==null?0:Math.round(value*pct/100)}}
+function extMonthShare(m){let t=0;for(const x of exts(true))t+=extRows(x.id,d=>d.startsWith(m)).reduce((s,r)=>s+r.share,0);for(const e of extManual(null,m))t+=manualCalc(e).share;return t}
+function manualTypeName(e){return e.typeId==="exam"?"كشف":typeName(e.typeId)}
+function sheetExtManual(sid,id){
+  const x=extById(sid);const e=id?extManual(sid).find(y=>y.id===id):{month:today().slice(0,7),self:true,settled:false,count:1};if(!x||!e)return;
+  openSheet(`${x.name} · جلسات قبل السيستم`,`<p class="sub" style="margin:0">للجلسات اللي اتعملت قبل ما تتسجل على السيستم. حقها بيتحسب بنسبتها، وفلوس الجلسات بتدخل في إيراد الشهر.</p>
+  <div class="grid2"><label class="f">الشهر<input type="month" id="xm_month" value="${e.month}"></label><label class="f">المريض<input id="xm_pat" value="${esc(e.patient||"")}"></label>
+  <label class="f">نوع الجلسة<select id="xm_type"><option value="exam" ${e.typeId==="exam"?"selected":""}>كشف</option>${S.types.map(t=>`<option value="${t.id}" ${t.id===e.typeId?"selected":""}>${esc(t.name)}</option>`).join("")}</select></label>
+  <label class="f">مين جاب الحالة<select id="xm_self"><option value="1" ${e.self?"selected":""}>${esc(x.name)}</option><option value="0" ${!e.self?"selected":""}>المركز</option></select></label>
+  <label class="f">عدد الجلسات<input id="xm_count" inputmode="numeric" value="${e.count||1}"></label><label class="f">سعر الجلسة<input id="xm_price" inputmode="decimal" value="${e.price||""}"></label></div>
+  <div class="seg"><label><input type="checkbox" id="xm_settled" ${e.settled?"checked":""}> اتحاسبت عليها خلاص</label><label>يوم الحساب <input type="date" id="xm_paid" value="${e.paidDate||""}" style="width:auto"></label></div>
+  <div class="note" id="xm_sum"></div><div class="err" id="formErr"></div>
+  <div class="bar"><button class="btn primary grow" data-act="saveExtManual" data-id="${sid}" data-k="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delExtManual" data-id="${sid}" data-k="${id}" data-confirm>حذف</button>`:""}</div>`,
+  ()=>{const f=()=>{const c=manualCalc({sid,typeId:val("xm_type"),self:val("xm_self")==="1",count:val("xm_count"),price:val("xm_price")});
+      document.getElementById("xm_sum").innerHTML=c.pct==null?`<b style="color:var(--bad)">مفيش نسبة متسجلة ليها على النوع ده. ظبطها من الإعدادات ← الدكاترة من بره.</b>`:`الإجمالي <b>${money(c.value)}</b> · نسبتها ${c.pct}% = <b>${money(c.share)}</b> · للمركز <b>${money(c.value-c.share)}</b>`};
+    ["xm_type","xm_self","xm_count","xm_price"].forEach(i=>{document.getElementById(i).addEventListener("input",f);document.getElementById(i).addEventListener("change",f)});f()});
+}
+async function saveExtManual(sid,id){
+  const e={id:id||randId(),sid,month:val("xm_month")||today().slice(0,7),patient:val("xm_pat").trim(),typeId:val("xm_type"),self:val("xm_self")==="1",count:Math.round(num(val("xm_count"))),price:num(val("xm_price")),settled:document.getElementById("xm_settled").checked,paidDate:val("xm_paid")||"",by:S.mySid,at:Date.now()};
+  if(!e.patient)return setErr("اكتب اسم المريض");if(e.count<1)return setErr("اكتب عدد الجلسات");if(!e.price)return setErr("اكتب سعر الجلسة");
+  const list=id?(S.ext?.manual||[]).map(y=>y.id===id?e:y):[...(S.ext?.manual||[]),e];
+  await S.db.doc("cfg/ext").set({manual:list},{merge:true});const c=manualCalc(e);
+  audit("money",id?"عدّل جلسات قبل السيستم لدكتور من بره":"جلسات قبل السيستم لدكتور من بره",{target:staffName(sid),info:`${e.patient} · ${manualTypeName(e)} · ${e.count} × ${money(e.price)} · حقها ${money(c.share)}${e.settled?" · اتحاسبت":""}`});closeSheet();toast("اتحفظ");
+}
+async function delExtManual(sid,id){await S.db.doc("cfg/ext").set({manual:(S.ext?.manual||[]).filter(y=>y.id!==id)},{merge:true});closeSheet();toast("اتحذف")}
+async function settleExtManual(sid){const list=(S.ext?.manual||[]).map(e=>e.sid===sid&&!e.settled?{...e,settled:true,paidDate:today()}:e);const due=extManual(sid).filter(e=>!e.settled).reduce((s,e)=>s+manualCalc(e).share,0);
+  await S.db.doc("cfg/ext").set({manual:list},{merge:true});audit("money","صرف لدكتور من بره (قبل السيستم)",{target:staffName(sid),info:money(due)});toast(`اتسجل إنها خدت ${money(due)}`)}
+function manualHtml(x){
+  const es=(S.ext?.manual||[]).filter(e=>e.sid===x.id).sort((a,b)=>b.month.localeCompare(a.month));
+  const due=es.filter(e=>!e.settled).reduce((s,e)=>s+manualCalc(e).share,0);
+  return `<div class="sec-title" style="margin-top:8px"><h3 style="font-size:14px;margin:0">قبل السيستم</h3><span class="bar">${S.role==="owner"?`<button class="btn sm" data-act="extManual" data-id="${x.id}">+ جلسات</button>`:""}${due>0&&S.role==="owner"?`<button class="btn sm teal" data-act="settleExtManual" data-id="${x.id}" data-confirm>اتصرفلها ${money(due)}</button>`:""}</span></div>
+  ${es.length?`<div class="list">${es.map(e=>{const c=manualCalc(e);return `<${S.role==="owner"?"button":"div"} class="row" ${S.role==="owner"?`data-act="extManual" data-id="${x.id}" data-k="${e.id}"`:`style="cursor:default"`}><span class="t">${esc(e.patient)} · ${esc(manualTypeName(e))} ${e.settled?`<span class="chip c-ok">اتحاسبت${e.paidDate?` ${esc(dmy(e.paidDate))}`:""}</span>`:`<span class="chip c-warn">لسه</span>`}</span><span class="end money">${money(c.share)}</span><span class="m">${esc(monthLabel(e.month))} · ${e.count} × ${money(e.price)} = ${money(c.value)} · ${c.pct==null?"مفيش نسبة":c.pct+"%"} · ${e.self?"هي جابتها":"المركز جابها"}</span><span></span></${S.role==="owner"?"button":"div"}>`}).join("")}</div>`:""}`}
 function vExt(){
   const list=exts();if(!list.length)return `<div class="empty"><b>مفيش دكاترة من بره</b>ضيفهم من الإعدادات.</div>`;
   return `<p class="sub" style="margin:0">النسبة على الجلسات اللي اتعملت بس (الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته). «مين جاب الحالة» بيتحدد من ملف المريض.</p>`+list.map(x=>{
@@ -509,7 +543,7 @@ function vExt(){
       return `<div class="row stack" style="cursor:default"><span class="t">${esc(fmtRange(q))}${q.from===cur.from?` <span class="chip c-acc">الفترة الحالية</span>`:""} ${paid&&left<=0?`<span class="chip c-ok">اتصرفلها</span>`:left>0&&paid?`<span class="chip c-warn">فاضل ${money(left)}</span>`:""} ${miss?`<span class="chip c-bad">فيه جلسة من غير نسبة</span>`:""}</span>
       <span class="end bar"><button class="btn sm" data-act="extPeriod" data-id="${x.id}" data-from="${q.from}">التفاصيل</button>${left>0?`<button class="btn sm teal" data-act="extPay" data-id="${x.id}" data-from="${q.from}" data-confirm>اتصرفلها ${money(left)}</button>`:""}</span>
       <span class="m">${rows.length} جلسة · حقها ${money(due)}${paid?` · اتصرف ${money(paid)}`:""}</span><span></span></div>`}).join("");
-    return `<div class="panel"><div class="sec-title"><h2>${esc(x.name)}</h2><span class="sub">بتتحاسب ${cycleLabel(x)}</span></div><div class="list">${rowsHtml}</div></div>`}).join("");
+    return `<div class="panel"><div class="sec-title"><h2>${esc(x.name)}</h2><span class="sub">بتتحاسب ${cycleLabel(x)}</span></div><div class="list">${rowsHtml}</div>${manualHtml(x)}</div>`}).join("");
 }
 function fmtRange(q){const f=d=>new Date(d+"T12:00").toLocaleDateString("ar-EG-u-nu-latn",{day:"numeric",month:"short"});return `${f(q.from)} ← ${f(q.to)}`}
 function sheetExtPeriod(sid,from){
@@ -527,7 +561,7 @@ async function extPay(sid,from){
   await S.db.doc("cfg/ext").set({pays},{merge:true});toast(`اتسجل إن ${x.name} خدت ${money(left)}`);
 }
 async function extUnpay(pid){await S.db.doc("cfg/ext").set({pays:(S.ext?.pays||[]).filter(p=>p.id!==pid)},{merge:true});closeSheet();toast("اتلغى")}
-function extRateRow(r){const t=S.types;return `<div class="grid2 extrate" style="align-items:end"><label class="f">نوع الجلسة<select class="er_type">${t.map(y=>`<option value="${y.id}" ${y.id===r.typeId?"selected":""}>${esc(y.name)}</option>`).join("")}</select></label>
+function extRateRow(r){const t=S.types;return `<div class="grid2 extrate" style="align-items:end"><label class="f">نوع الجلسة<select class="er_type"><option value="*" ${r.typeId==="*"?"selected":""}>كل الأنواع (والكشف)</option>${t.map(y=>`<option value="${y.id}" ${y.id===r.typeId?"selected":""}>${esc(y.name)}</option>`).join("")}</select></label>
   <label class="f">لو الحالة جايبها<select class="er_by">${Object.entries(BY_LABEL).map(([k,l])=>`<option value="${k}" ${k===(r.by||"any")?"selected":""}>${l}</option>`).join("")}</select></label>
   <label class="f">نسبتها %<input class="er_pct" inputmode="decimal" value="${r.pct??""}"></label><button class="btn sm danger" data-act="rmRate" type="button">شيل</button></div>`}
 function sheetExt(id){
@@ -867,6 +901,17 @@ function discountsPanel(m){
   ${rows.length?`<div class="tblwrap"><table><thead><tr><th>التاريخ</th><th>المريض</th><th>على إيه</th><th>الخصم</th><th>السبب</th><th>مين عمله</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.date)}</td><td>${esc(r.patient)}</td><td>${esc(r.what)}</td><td>${money(r.amount)}</td><td style="white-space:normal;min-width:140px">${esc(r.reason)}</td><td>${esc(r.by?staffName(r.by):"—")}</td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>مفيش خصومات الشهر ده</b>أي خصم على جلسة أو باكدج أو حساب هيظهر هنا بسببه ومين عمله.</div>`}</div>`;
 }
+function extProfitPanel(m){
+  const xs=exts(true);if(!xs.length)return "";const rows=[];
+  for(const x of xs){const by={};const add=(t,n,val,sh)=>{const r=by[t]||(by[t]={n:0,val:0,sh:0});r.n+=n;r.val+=val;r.sh+=sh};
+    for(const r of extRows(x.id,d=>d.startsWith(m)))add(r.v.typeName||typeName(r.v.typeId),1,r.value,r.share);
+    for(const e of extManual(x.id,m)){const c=manualCalc(e);add(manualTypeName(e),num(e.count),c.value,c.share)}
+    for(const [t,r] of Object.entries(by))rows.push({x,t,...r})}
+  if(!rows.length)return "";const T=rows.reduce((a,r)=>({n:a.n+r.n,val:a.val+r.val,sh:a.sh+r.sh}),{n:0,val:0,sh:0});
+  return `<div class="panel"><h2>الدكاترة من بره كسبوا المركز كام</h2><div class="tblwrap"><table><thead><tr><th>الدكتورة</th><th>النوع</th><th>جلسات</th><th>دخل</th><th>حقها</th><th>صافي المركز</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr><td>${esc(r.x.name)}</td><td>${esc(r.t)}</td><td class="num">${r.n}</td><td>${money(r.val)}</td><td>${money(r.sh)}</td><td><b>${money(r.val-r.sh)}</b></td></tr>`).join("")}
+  </tbody><tfoot><tr><td colspan="2">الإجمالي</td><td class="num">${T.n}</td><td>${money(T.val)}</td><td>${money(T.sh)}</td><td>${money(T.val-T.sh)}</td></tr></tfoot></table></div>
+  <p class="sub" style="margin:0">قيمة الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته. فيها جلسات السيستم واللي اتسجلت «قبل السيستم».</p></div>`}
 function planPanel(m){ // which works better: packages or paying per session
   const DAY=864e5,stale=d=>!d||(Date.now()-new Date(d+"T12:00").getTime())>30*DAY;
   let pk={n:0,done:0,stop:0,on:0},ps={n:0,stop:0,on:0,sess:0};
@@ -939,7 +984,7 @@ function vReports(){
     <div class="stat"><div class="k">صافي الشهر</div><div class="v money" style="color:${net<0?"var(--bad)":"var(--ok)"}">${money(net)}</div></div>
   </div>
   <div class="verdict ${vcls}"><b style="font-family:var(--f-display)">${vt}</b><span>${vs}</span></div>
-  ${planPanel(m)}
+  ${extProfitPanel(m)}${planPanel(m)}
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><h2>المرتبات</h2>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
@@ -964,7 +1009,7 @@ function vSettings(){
   <div class="panel"><div class="sec-title"><h2>جهات بتدفع متأخر</h2><button class="btn sm" data-act="newPayerType">+ جهة</button></div>
   ${payers().length?`<div class="list">${payers().map(x=>`<button class="row" data-act="editPayerType" data-id="${x.id}"><span class="t">${esc(x.name)}</span><span class="end money">${money(x.price)} للجلسة</span><span class="m">${x.suffix?`أي مريض اسمه آخره «${esc(x.suffix)}» بيتربط بيها لوحده`:"بتتربط من ملف المريض"}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>مفيش جهات</b>زي نادي بيراميدز: جلسات اللاعبين على حساب النادي، والنادي بياخد فاتورة وبيدفع بعدين.</div>`}</div>
   <div class="panel"><div class="sec-title"><h2>الدكاترة من بره</h2>${owner?`<button class="btn sm" data-act="newExt">+ إضافة</button>`:""}</div>
-  ${exts(true).length?`<div class="list">${exts(true).map(x=>`<${owner?"button":"div"} class="row" ${owner?`data-act="editExt" data-id="${x.id}"`:`style="cursor:default"`}><span class="t">${esc(x.name)} ${x.active===false?`<span class="chip c-bad">وقف</span>`:""}</span><span class="end sub">${cycleLabel(x)}</span><span class="m">${(x.rates||[]).map(r=>`${typeName(r.typeId)}${r.by!=="any"?` (لو جابها ${BY_LABEL[r.by]})`:""}: ${r.pct}%`).map(esc).join(" · ")||"مفيش نسب"}</span><span></span></${owner?"button":"div"}>`).join("")}</div>`:`<div class="empty"><b>مفيش دكاترة من بره</b>زي د. هدير ود. منة: بيشتغلوا بنسبة وبيتحاسبوا كل أسبوع أو أسبوعين.</div>`}</div>
+  ${exts(true).length?`<div class="list">${exts(true).map(x=>`<${owner?"button":"div"} class="row" ${owner?`data-act="editExt" data-id="${x.id}"`:`style="cursor:default"`}><span class="t">${esc(x.name)} ${x.active===false?`<span class="chip c-bad">وقف</span>`:""}</span><span class="end sub">${cycleLabel(x)}</span><span class="m">${(x.rates||[]).map(r=>`${r.typeId==="*"?"كل الأنواع":typeName(r.typeId)}${r.by!=="any"?` (لو جابها ${BY_LABEL[r.by]})`:""}: ${r.pct}%`).map(esc).join(" · ")||"مفيش نسب"}</span><span></span></${owner?"button":"div"}>`).join("")}</div>`:`<div class="empty"><b>مفيش دكاترة من بره</b>زي د. هدير ود. منة: بيشتغلوا بنسبة وبيتحاسبوا كل أسبوع أو أسبوعين.</div>`}</div>
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   <p class="sub" style="margin:0">أسماء بس من غير فلوس. الفلوس كلها في الباكدجات تحت، وكل باكدج تابع لنوع جلسة.</p>
   ${S.types.length?`<div class="list">${S.types.map(t=>{const n=(S.packTypes||[]).filter(k=>k.typeId===t.id).length;return `<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)} </span><span class="end sub">${n?`${n} باكدج`:"مفيش باكدجات"}</span></button>`}).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: علاج طبيعي، تيكار، ليمفيديما. الدكاترة بيشوفوا الأسماء بس.</div>`}</div>
@@ -2123,7 +2168,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2188,6 +2233,10 @@ document.addEventListener("click",async e=>{
     case "payFor":sheetPay(null,id);break;
     case "payPack":sheetPay(null,id,t.dataset.k);break;
     case "extPeriod":sheetExtPeriod(id,t.dataset.from);break;
+    case "extManual":sheetExtManual(id,t.dataset.k||null);break;
+    case "saveExtManual":guard(t,()=>saveExtManual(id,t.dataset.k||null));break;
+    case "delExtManual":guard(t,()=>delExtManual(id,t.dataset.k));break;
+    case "settleExtManual":guard(t,()=>settleExtManual(id));break;
     case "extPay":guard(t,()=>extPay(id,t.dataset.from));break;
     case "extUnpay":guard(t,()=>extUnpay(id));break;
     case "newExt":sheetExt(null);break;
