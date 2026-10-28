@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="29 أكتوبر · 60";
+const APP_VERSION="29 أكتوبر · 61";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -793,7 +793,7 @@ function refundRate(k){ // the biggest package of this type the patient actually
   const used=k.used||0,tiers=(S.packTypes||[]).filter(t=>t.typeId&&t.typeId===k.typeId&&t.sessions>0&&(!pt||partsOfName(t.name)===kp)).sort((a,b)=>a.sessions-b.sessions);
   const hit=tiers.filter(t=>t.sessions<=used).pop();
   if(hit)return{rate:Math.round(hit.price/hit.sessions),why:`خلص ${used} جلسة، فبيتحاسب بسعر جلسة ${hit.name} (${hit.sessions} جلسات)`};
-  const single=pt?partsPrice(k.typeId,kp):S.single?.[k.typeId];
+  const single=pt?(partsPrice(k.typeId,kp)??S.single?.[k.typeId]):S.single?.[k.typeId];
   return{rate:single!=null?Math.round(single):null,why:tiers.length?`خلص ${used} جلسة، أقل من أصغر باكدج (${tiers[0].sessions} جلسات)، فبيتحاسب بسعر الجلسة المنفردة`:`بيتحاسب بسعر الجلسة المنفردة`};
 }
 function sheetRefund(pid,kid){
@@ -1163,7 +1163,8 @@ async function ensurePatient(v,phone,src){
 /* علاج طبيعي / تيكار / شوك ويف: a single session is priced by how many body parts (1–3); only the owner and Reham set it */
 const DEF_PARTS={1:500,2:750,3:1000};
 function partsType(tid){return !!tid&&/علاج\s*طبيعي|تي?كار|tecar|شوك|shock/i.test(typeName(tid)||"")}
-function partsPrice(tid,n){const c=S.parts?.[tid];return num(c?.[n])||DEF_PARTS[n]||null}
+function isPhysio(tid){return /علاج\s*طبيعي/.test(typeName(tid)||"")}
+function partsPrice(tid,n){const c=S.parts?.[tid];return num(c?.[n])||(isPhysio(tid)?DEF_PARTS[n]:null)||null} // TECAR / shockwave: no price until the owner sets one → typed by hand
 function partsOfName(n){n=nd(n||"");return /عضوين|(^|\D)2\s*(عضو|أعضاء|اعضاء)/.test(n)?2:/(^|\D)3\s*(عضو|أعضاء|اعضاء)|(تلات|ثلاث)(ة)?\s*(أعضاء|اعضاء)/.test(n)?3:1}
 function partsTxt(n){return n==2?"عضوين":n==3?"3 أعضاء":"عضو واحد"}
 function moneyFields(prefix,v){
@@ -1209,12 +1210,12 @@ function wirePack(prefix,cur,typeSel){ // pick the session type first; the patie
     const P=pat?payerOf(pat.id):null;
     if(!list.length&&P){box.innerHTML=`<div class="note">الجلسة دي على حساب <b>${esc(P.name)}</b> بـ ${money(P.price)}، والفلوس بتتاخد من الجهة بالفاتورة.</div><input type="hidden" id="${prefix}_payer" value="${P.id}">`;moneyEl.hidden=true;return}
     if(!list.length){const rate=pat&&tid?S.patients[pat.id]?.rates?.[tid]:null;const pt=isAdmin()&&partsType(tid)&&!cur?.exam;
-      const partsSeg=pt?`<div class="seg" id="${prefix}_partsseg"><span class="sub">عدد الأعضاء:</span>${[1,2,3].map(n=>`<label><input type="radio" name="${prefix}_parts" value="${n}" ${n===(+box.dataset.parts||1)?"checked":""}> ${partsTxt(n)}${rate==null?` · ${money(partsPrice(tid,n))}`:""}</label>`).join("")}</div>`:"";
+      const partsSeg=pt?`<div class="seg" id="${prefix}_partsseg"><span class="sub">عدد الأعضاء:</span>${[1,2,3].map(n=>`<label><input type="radio" name="${prefix}_parts" value="${n}" ${n===(+box.dataset.parts||1)?"checked":""}> ${partsTxt(n)}${rate==null&&partsPrice(tid,n)?` · ${money(partsPrice(tid,n))}`:""}</label>`).join("")}</div>${rate==null&&!partsPrice(tid,1)?`<p class="sub" style="margin:0">سعر ${esc(typeName(tid))} بعدد الأعضاء لسه متحددش، اكتب السعر تحت بإيدك.</p>`:""}`:"";
       box.innerHTML=!pat||!tid?"":partsSeg+(rate!=null?`<div class="note">${esc(typeName(tid))} بالجلسة للمريض ده: سعر الجلسة <b>${money(rate)}</b>. اكتب دفع كام، والباقي بيتحسب عليه.</div>`
         :pt?"":`<div class="note">مفيش باكدج ${esc(typeName(tid))} ولا سعر بالجلسة للمريض ده، فاكتب سعر الجلسة تحت. وعشان متكتبوش كل مرة، حدد له نظام من ملفه (+ باكدج أو + بالجلسة).</div>`);
       moneyEl.hidden=false;const pr=document.getElementById(prefix+"_price");
       if(pr&&rate!=null&&(!pr.value||pr.dataset.auto==="1")){pr.value=rate;pr.dataset.auto="1";pr.dispatchEvent(new Event("input"))}
-      if(pt&&pat&&rate==null){const setP=force=>{const n=+radio(prefix+"_parts")||1;box.dataset.parts=n;if(pr&&(force||!pr.value||pr.dataset.auto==="1")){pr.value=partsPrice(tid,n);pr.dataset.auto="1";pr.dispatchEvent(new Event("input"))}};
+      if(pt&&pat&&rate==null){const setP=force=>{const n=+radio(prefix+"_parts")||1;box.dataset.parts=n;const pv=partsPrice(tid,n);if(pr&&pv&&(force||!pr.value||pr.dataset.auto==="1")){pr.value=pv;pr.dataset.auto="1";pr.dispatchEvent(new Event("input"))}};
         box.querySelectorAll(`input[name="${prefix}_parts"]`).forEach(r=>r.addEventListener("change",()=>setP(true)));setP(false)}
       else if(pt)box.querySelectorAll(`input[name="${prefix}_parts"]`).forEach(r=>r.addEventListener("change",()=>{box.dataset.parts=r.value}));
       return}
@@ -2278,7 +2279,7 @@ function showTempPw(name,user,pw){
 function sheetType(id){
   const t=id?S.types.find(x=>x.id===id):{};
   openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label>
-  ${id&&partsType(id)?`<div class="grid2">${[1,2,3].map(n=>`<label class="f">الجلسة المنفردة · ${partsTxt(n)}<input id="t_p${n}" inputmode="decimal" value="${partsPrice(id,n)??""}"></label>`).join("")}</div><p class="sub" style="margin:0">مخفي عن الدكاترة. سعر العضو الواحد هو كمان اللي بيتحسب بيه الاسترجاع.</p><input type="hidden" id="t_single" value="">`
+  ${id&&partsType(id)?`<div class="grid2">${[1,2,3].map(n=>`<label class="f">الجلسة المنفردة · ${partsTxt(n)}<input id="t_p${n}" inputmode="decimal" value="${partsPrice(id,n)??""}"></label>`).join("")}</div><p class="sub" style="margin:0">مخفي عن الدكاترة. سعر العضو الواحد هو كمان اللي بيتحسب بيه الاسترجاع.${isPhysio(id)?"":" سيبها فاضية لو لسه متحددتش، والسعر يتكتب بالإيد في كل جلسة."}</p><input type="hidden" id="t_single" value="">`
   :`<label class="f">سعر الجلسة المنفردة (مخفي عن الدكاترة، للاسترجاع)<input id="t_single" inputmode="decimal" value="${id&&S.single?.[id]!=null?S.single[id]:""}"></label>`}
   <p class="sub" style="margin:0">الفلوس بتتحدد في الباكدج. سعر الجلسة المنفردة بيتستخدم لو مريض ساب قبل أصغر باكدج وعايز يسترجع فلوسه.</p><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveType" data-id="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delType" data-id="${id}" data-confirm>حذف</button>`:""}</div>`);
@@ -2483,7 +2484,7 @@ document.addEventListener("click",async e=>{
     case "editType":sheetType(id);break;
     case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});
       const single={...(S.single||{})};
-      if(document.getElementById("t_p1")){const pr={};[1,2,3].forEach(n=>{const x=num(val("t_p"+n));if(x)pr[n]=x});single[tid]=pr[1]||DEF_PARTS[1];await db.doc("cfg/prices").set({single,parts:{...(S.parts||{}),[tid]:pr}},{merge:true});audit("settings","أسعار الجلسة بعدد الأعضاء",{info:`${typeName(tid)}: ${[1,2,3].map(n=>partsTxt(n)+" "+(pr[n]||"—")).join(" · ")}`});closeSheet();toast("اتحفظ");return}
+      if(document.getElementById("t_p1")){const pr={};[1,2,3].forEach(n=>{const x=num(val("t_p"+n));if(x)pr[n]=x});if(pr[1])single[tid]=pr[1];else if(!isPhysio(tid))delete single[tid];else single[tid]=DEF_PARTS[1];await db.doc("cfg/prices").set({single,parts:{...(S.parts||{}),[tid]:pr}},{merge:true});audit("settings","أسعار الجلسة بعدد الأعضاء",{info:`${typeName(tid)}: ${[1,2,3].map(n=>partsTxt(n)+" "+(pr[n]||"—")).join(" · ")}`});closeSheet();toast("اتحفظ");return}
       const sg=val("t_single").trim();if(sg)single[tid]=num(sg);else delete single[tid];await db.doc("cfg/prices").set({single},{merge:true});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
     case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays},leaveAllow={...c0.leaveAllow};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked);const la=val("la_"+s.id).trim();if(la)leaveAllow[s.id]=Math.round(num(la));else delete leaveAllow[s.id]});{const ch=[];activeStaff().forEach(s=>{if(num(c0.salary[s.id])!==num(salary[s.id]))ch.push(`${s.name}: ${money(c0.salary[s.id]||0)} ← ${money(salary[s.id]||0)}`);const a=c0.commission[s.id]||{},b2=commission[s.id]||{};if(num(a.full)!==num(b2.full)||num(a.half)!==num(b2.half))ch.push(`نسبة ${s.name}: ${a.full||0}%/${a.half||0}% ← ${b2.full||0}%/${b2.half||0}%`)});if(ch.length)audit("settings","غيّر المرتبات",{info:ch.join(" · ")})}
