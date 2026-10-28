@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 56";
+const APP_VERSION="29 أكتوبر · 58";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1127,6 +1127,13 @@ async function guard(btn,fn){
   }catch(e){console.error(e);setErr(e?.code==="permission-denied"?"معندكش صلاحية تعمل ده.":e?.code==="resource-exhausted"?"الاستخدام المجاني لليوم خلص. جرب بكره أو فعّل خطة Blaze.":"حصلت مشكلة في الحفظ، جرب تاني.")}
   finally{btn.disabled=false}
 }
+/* our own doctors only do physio: a session with no type set is علاج طبيعي (outside doctors still pick theirs) */
+function physioId(){return (S.types.find(t=>/علاج\s*طبيعي/.test(t.name||""))||{}).id||""}
+function ourDoc(sid){return !!sid&&!extById(sid)}
+function defType(sid,typeId){return typeId||(ourDoc(sid)?physioId():"")}
+document.addEventListener("change",e=>{const id=e.target.id;const tsel={ap_doc:"ap_type",w_doc:"w_type"}[id];
+  if(tsel){const t=document.getElementById(tsel);if(t&&(!t.value||t.dataset.auto==="1")){t.value=defType(e.target.value,"");t.dataset.auto="1";t.dispatchEvent(new Event("change",{bubbles:true}))}}
+  else if((id==="ap_type"||id==="w_type")&&e.isTrusted)e.target.dataset.auto=""},true);
 function typeOptions(sel){return `<option value="">اختار نوع الجلسة</option>`+S.types.map(t=>`<option value="${t.id}" ${t.id===sel?"selected":""}>${esc(t.name)}</option>`).join("")}
 function compSeg(name,v){return `<div class="seg"><label><input type="radio" name="${name}" value="full" ${v!=="half"?"checked":""}> حالة كاملة</label><label><input type="radio" name="${name}" value="half" ${v==="half"?"checked":""}> نص حالة <span class="sub">(مكملهاش أو حد ساعد)</span></label></div>`}
 function sourceOptions(sel){return `<option value="">اختار</option>`+SOURCES.map(s=>`<option ${s===sel?"selected":""}>${s}</option>`).join("")}
@@ -1230,7 +1237,7 @@ function sheetEntry(e,fromAppt){
   ${ro?`<div class="note">${statusChip(e.status)} ${(e.review?.changes||[]).map(esc).join(" · ")}${e.review?.note?`<br>رد الاستقبال: ${esc(e.review.note)}`:""}</div>`:""}
   <label class="f">اسم الحالة<input id="e_pat" list="e_dl" value="${esc(e?.patientName||"")}" autocomplete="off" ${ro?"disabled":""}><datalist id="e_dl">${Object.values(S.pdir).map(p=>`<option value="${esc(p.name)}"></option>`).join("")}</datalist></label>
   <div class="grid2"><label class="f">التاريخ<input type="date" id="e_date" value="${e?.date||today()}" ${ro?"disabled":""}></label><label class="f">الساعة<input type="time" id="e_time" value="${e?.time||nowHM()}" ${ro?"disabled":""}></label></div>
-  <label class="f">نوع الجلسة<select id="e_type" ${ro?"disabled":""}>${typeOptions(e?.typeId)}</select></label>
+  <label class="f">نوع الجلسة<select id="e_type" ${ro?"disabled":""}>${typeOptions(e?.id?e.typeId:defType(S.mySid,e?.typeId))}</select></label>
   ${ro?"":compSeg("e_comp",e?.completion)}
   <label class="f">كومنت (اختياري)<textarea id="e_note" placeholder="مثلاً الحالة اتحسنت، أو د. سلمى ساعدتني في نص الجلسة" ${ro?"disabled":""}>${esc(e?.note||"")}</textarea></label>
   <div class="sec-title"><span class="sub">صور مع الكومنت (لحد ${MEDIA_MAX})</span>${ro?"":`<label class="btn sm">+ صورة<input type="file" id="e_file" accept="image/*" multiple hidden></label>`}</div>
@@ -1300,7 +1307,9 @@ function kindOf(a){ // the session's number is worked out live from the patient'
   return withNo(sessionInfo(a.patientId,a.kind,a.id,a.date,a.time||"",a.typeId).label,a.sessNo)}
 const labelSyncing=new Set();
 function syncLabels(list){ // write the live session number back to the booking, so the doctor's screen shows it too
-  if(!isAdmin())return;for(const a of list){if(a.kind==="exam"||labelSyncing.has(a.id))continue;const l=kindOf(a);
+  if(!isAdmin())return;for(const a of list){if(a.kind==="exam"||labelSyncing.has(a.id))continue;
+    if(!a.typeId&&!S.visits[a.id]&&!a.confirmed&&!["cancelled","noshow"].includes(a.status)&&!isLocked(a.date)){const t=defType(apptDocs(a)[0],"");if(t){a.typeId=t;a.typeName=typeName(t);labelSyncing.add(a.id);S.db.doc("appts/"+a.id).update({typeId:t,typeName:typeName(t)}).catch(()=>{}).finally(()=>setTimeout(()=>labelSyncing.delete(a.id),5000));continue}}
+    const l=kindOf(a);
     if(l&&l!==a.kindLabel&&!S.visits[a.id]&&!a.confirmed){labelSyncing.add(a.id);const pk=packsFor(a.patientId,a.typeId)[0];
       S.db.doc("appts/"+a.id).update({kindLabel:l,packId:pk?.id||null}).catch(()=>{}).finally(()=>setTimeout(()=>labelSyncing.delete(a.id),5000))}}}
 function packMismatch(a){ // has packages, but none of this session's type (and no per-session rate for it)
@@ -1362,7 +1371,7 @@ function sheetAppt(id){
   openSheet(id?"تعديل الحجز":"حجز جديد",`
   <label class="f">المريض${patientPicker("ap_pat",cur)}</label>${newPatientFields("ap")}
   <div class="seg"><label><input type="radio" name="ap_kind" value="exam" ${a.kind==="exam"?"checked":""}> كشف</label><label><input type="radio" name="ap_kind" value="session" ${a.kind!=="exam"?"checked":""}> جلسة</label></div>
-  <label class="f">نوع الجلسة<select id="ap_type">${typeOptions(a.typeId)}</select></label>
+  <label class="f">نوع الجلسة<select id="ap_type">${typeOptions(a.kind==="exam"?a.typeId:defType(ds[0],a.typeId))}</select></label>
   <div class="note" id="ap_info"></div>
   <div class="grid2"><label class="f">الدكتور<select id="ap_doc"><option value="">اختار الدكتور</option>${docOpts(ds[0])}</select></label>
   <label class="f">دكتور تاني (لو الحالة هتتحوّل له)<select id="ap_doc2"><option value="">مفيش</option>${docOpts(ds[1])}</select></label>
@@ -1404,6 +1413,19 @@ async function saveAppt(id){
 const TSV=()=>firebase.firestore.FieldValue.serverTimestamp();
 async function apptArrive(id){await S.db.doc("appts/"+id).update({arrivedAt:TSV(),status:"arrived"});toast("اتسجل وصوله")}
 async function apptStart(id){if(lockBlock(S.appts[id]?.date))return;ptChanged(S.appts[id],"started");await S.db.doc("appts/"+id).update({startAt:TSV(),startBy:S.mySid,status:"started"});toast("العدّاد اشتغل")}
+function sheetDeskStart(id){
+  const a=S.appts[id];if(!a)return;const booked=apptDocs(a);
+  const opts=workerOpts().sort((x,y)=>(booked.includes(y[0])?1:0)-(booked.includes(x[0])?1:0));
+  openSheet(`${a.patientName} دخل مع مين؟`,`<p class="sub" style="margin:0">دوس على الدكتور اللي بدأ معاه، والوقت بيتسجل دلوقتي لوحده.</p>
+  <div style="display:grid;gap:8px">${opts.map(([k,n])=>`<button class="btn ${booked.includes(k)?"primary":""}" data-act="deskStartGo" data-id="${id}" data-k="${k}">${esc(n)}${booked.includes(k)?" · ده اللي محجوز معاه":""}</button>`).join("")}</div>
+  <div class="err" id="formErr"></div>`)}
+async function deskStartGo(id,sid){
+  const a=S.appts[id];if(!a||lockBlock(a.date))return;const booked=apptDocs(a);
+  const upd={status:"started",startAt:TSV(),startBy:sid,doctors:booked.includes(sid)?booked:[sid]};if(!a.arrived)upd.arrivedT=nowHM();
+  if(!booked.includes(sid)&&!a.typeId&&a.kind!=="exam"){const t=defType(sid,"");if(t){upd.typeId=t;upd.typeName=typeName(t)}}
+  ptChanged(a,"started");await S.db.doc("appts/"+id).update(upd);
+  if(!booked.includes(sid))audit("session","غيّر الدكتور وهو داخل",{target:a.patientName,date:a.date,before:booked.map(staffName).join(" و"),after:staffName(sid)});
+  closeSheet();toast(`دخل مع ${staffName(sid)}`)}
 async function apptFinishByDesk(id){ptChanged(S.appts[id],"done");await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done"});toast("اتسجل إنها خلصت")}
 function apptEnd(id){ // doctor finishing: optional comment + photos, then stamp the end time
   const a=S.appts[id];if(!a)return;entryAppt=a;
@@ -1429,7 +1451,7 @@ function sheetApptConfirm(id){
   openSheet("تأكيد الجلسة",`
   <div class="note"><b>${esc(a.patientName)}</b> · ${esc(kindOf(a))}<br>${esc(apptTimes(a))}${a.docNote?`<br>كومنت الدكتور: ${esc(a.docNote)}`:""}${a.media?.length?`<div class="photos" style="margin-top:8px">${mediaImgs(a.media)}</div>`:""}</div>
   <div class="seg">${opts.map(o=>`<label><input type="radio" name="c_credit" value="${o.v}" ${o.v===def?"checked":""}> ${esc(o.l)}</label>`).join("")}</div>
-  <label class="f">نوع الجلسة<select id="c_type">${typeOptions(a.typeId)}</select></label>
+  <label class="f">نوع الجلسة<select id="c_type">${typeOptions(a.kind==="exam"?a.typeId:defType(a.startBy||apptDocs(a)[0],a.typeId))}</select></label>
   <input type="hidden" id="c_pat" value="${esc(p?pLabel(p):a.patientName)}">
   ${moneyFields("c",{price:price??"",paid:price??"",method:"cash"})}
   <div class="err" id="formErr"></div>
@@ -1508,6 +1530,8 @@ function sessionRow(a){
   const dup=false; // pending duplicates are hidden and handled in the owner's panel
   if(isLocked(a.date)&&S.role!=="owner")return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${payChip(a)}</span><span class="end"></span><span class="m">${esc([kindOf(a),docs].filter(Boolean).join(" · "))}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
   const quick=(dup?`<button class="btn sm danger" data-act="delDupAppt" data-id="${a.id}" data-confirm>امسح المكرر</button>`:"")+(a.status==="booked"&&!dup?`<button class="btn sm" data-act="quickArrive" data-id="${a.id}">وصل</button>`:"")
+    +(["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm teal" data-act="deskStart" data-id="${a.id}">دخل</button>`:"")
+    +(a.status==="started"&&a.date===today()?`<button class="btn sm" data-act="deskEnd" data-id="${a.id}">خرج</button>`:"")
     +(["booked","arrived"].includes(a.status)?`<button class="btn sm danger" data-act="quickCancel" data-id="${a.id}">لغى</button>`:"")
     +`<button class="btn sm ${needsRecord(a)?"teal":""}" data-act="openSession" data-id="${a.id}">${needsRecord(a)?"أكّد":"فتح"}</button>`;
   return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${dup?`<span class="chip c-bad">حجز مكرر</span>`:""} ${apptChip(a)} ${waitChip(a)} ${lateChip(a)} ${payChip(a)}</span>
@@ -1553,7 +1577,7 @@ function sheetSession(id){
   <label class="f">اشتغلها<select id="s_comp"><option value="full" ${comp==="full"?"selected":""}>حالة كاملة</option><option value="half" ${comp==="half"?"selected":""}>نص حالة</option></select></label>
   <label class="f">دكتور تاني (نص ونص)<select id="s_doc2"><option value="">مفيش</option>${docOpts(d2)}</select></label></div>
   <div class="hr"></div>
-  <div class="grid2"><label class="f">نوع الجلسة<select id="s_type">${typeOptions(v?.typeId||a.typeId)}</select></label>
+  <div class="grid2"><label class="f">نوع الجلسة<select id="s_type">${typeOptions(v?.typeId||(a.kind==="exam"?a.typeId:defType(a.startBy||apptDocs(a)[0],a.typeId)))}</select></label>
   ${a.kind==="exam"?"":`<label class="f">رقم الجلسة (لو عايز تغيّره)<input id="s_no" inputmode="numeric" value="${a.sessNo||""}" placeholder="${esc((kindOf(a).match(/\d+/)||[""])[0])}"></label>`}</div>
   <input type="hidden" id="s_pat" value="${esc(p?pLabel(p):a.patientName)}">
   ${moneyFields("s",v||{price:price??"",paid:"",method:"cash"})}
@@ -1633,7 +1657,7 @@ function sheetReview(id,done){
   ${done?`<div class="note">${statusChip(e.status)} ${(e.review?.changes||[]).map(esc).join(" · ")}${e.review?.note?`<br>ردك: ${esc(e.review.note)}`:""}</div>${e.status!=="rejected"?`<button class="btn" data-act="editVisit" data-id="${id}">فتح الجلسة والفلوس</button>`:""}`:`
   <label class="f">الحالة${patientPicker("r_pat",pat)}</label>${newPatientFields("r")}
   <div class="grid2"><label class="f">التاريخ<input type="date" id="r_date" value="${e.date}"></label><label class="f">الساعة<input type="time" id="r_time" value="${e.time||""}"></label></div>
-  <label class="f">نوع الجلسة<select id="r_type">${typeOptions(e.typeId)}</select></label>
+  <label class="f">نوع الجلسة<select id="r_type">${typeOptions(defType(e.doctorSid,e.typeId))}</select></label>
   ${compSeg("r_comp",e.completion)}
   ${moneyFields("r",{price:price??"",paid:price??"",method:"cash"})}
   <label class="f">رد للدكتور (لازم لو هترفض)<textarea id="r_note"></textarea></label>
@@ -1748,6 +1772,7 @@ function sheetSellPack(pid){
   <label class="f" id="k_usedbox" hidden>كام جلسة خلصت منه قبل كده<input id="k_used" inputmode="numeric" placeholder="0"></label></div>
   <p class="sub" id="k_rate" style="margin:0" hidden></p>
   ${moneyFields("k",{price:"",paid:"",method:"cash"})}
+  <div id="k_link"></div>
   <div id="k_oldbox" hidden style="display:grid;gap:10px">
     <div class="grid2"><label class="f">دفع كام قبل الشهر ده<input id="k_prepaid" inputmode="decimal" placeholder="0"></label>
     <label class="f">دفع كام الشهر ده<input id="k_mpaid" inputmode="decimal" placeholder="0"></label>
@@ -1763,18 +1788,31 @@ function sheetSellPack(pid){
     const E=i=>document.getElementById(i);
     const oldSum=()=>{const n=Math.round(num(E("k_sessions").value)),u=Math.round(num(E("k_used").value)),price=num(E("k_price").value),net=Math.max(0,price-discFrom("k",price)),paid=num(E("k_prepaid").value)+num(E("k_mpaid").value),d=net-paid;
       E("k_oldsum").innerHTML=n?`الجلسة الجاية رقم <b>${Math.min(u+1,n)} من ${n}</b>${u>=n?" (الباكدج خلص)":""} · دفع <b>${money(paid)}</b> من <b>${money(net)}</b> · ${d>0?`عليه دلوقتي <b style="color:var(--bad)">${money(d)}</b>`:d<0?`ليه <b style="color:var(--ok)">${money(-d)}</b>`:"خالص"}`:"اكتب عدد جلسات الباكدج."};
-    const mode=()=>{const old=radio("k_mode")==="old";E("k_usedbox").hidden=!old;E("k_oldbox").hidden=!old;E("k_oldsum").hidden=!old;E("k_paid").closest("label").hidden=old;E("k_method").closest("label").hidden=old;E("k_sum").hidden=old;oldSum()};
+    // payments already taken without a package (e.g. Reham took the money first): tick them and they count on this package, not twice
+    const loose=Object.values(S.payments).filter(x=>x.patientId===pid&&!x.packId&&!x.kind&&(x.amount||0)>0&&(x.date||"")>=dstr(dnum(today())-30)).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+    const linked=()=>[...document.querySelectorAll('input[name="k_lp"]:checked')].reduce((t,x)=>t+num(x.dataset.amt),0);
+    const drawLink=()=>{const box=E("k_link");if(!loose.length||radio("k_mode")==="old"){box.innerHTML="";return}
+      const d=E("k_date").value||today();
+      box.innerHTML=`<div class="note" style="display:grid;gap:6px"><b>فيه دفعات اتسجلت للمريض ده من غير باكدج</b><span class="sub">علّم على اللي اتدفع للباكدج ده، فتتحسب عليه ومتتكتبش تاني.</span>
+        ${loose.map(x=>`<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="k_lp" value="${x.id}" data-amt="${x.amount}" ${x.date===d?"checked":""}> <b>${money(x.amount)}</b> · ${esc(METHODS[x.method]||x.method||"")} · ${esc(dmy(x.date))}${x.note?` · ${esc(x.note)}`:""}</label>`).join("")}
+        <span id="k_linksum" class="sub"></span></div>`;
+      box.querySelectorAll('input[name="k_lp"]').forEach(c=>c.addEventListener("change",fixPaid));fixPaid()};
+    const fixPaid=()=>{const l=linked(),price=num(E("k_price").value),net=Math.max(0,price-discFrom("k",price));if(price)E("k_paid").value=Math.max(0,net-l);E("k_paid").dispatchEvent(new Event("input"));
+      const sm=E("k_linksum");if(sm)sm.innerHTML=l?`اتربط <b>${money(l)}</b> على الباكدج. «دفع كام» تحت = أي فلوس دفعها زيادة دلوقتي بس.`:""};
+    E("k_date").addEventListener("change",drawLink);
+    const mode=()=>{const old=radio("k_mode")==="old";drawLink();E("k_usedbox").hidden=!old;E("k_oldbox").hidden=!old;E("k_oldsum").hidden=!old;E("k_paid").closest("label").hidden=old;E("k_method").closest("label").hidden=old;E("k_sum").hidden=old;oldSum()};
     document.querySelectorAll('input[name="k_mode"]').forEach(r=>r.addEventListener("change",mode));
     ["k_sessions","k_used","k_price","k_disc","k_prepaid","k_mpaid"].forEach(i=>E(i).addEventListener("input",oldSum));E("k_dmode").addEventListener("change",oldSum);
     // pick a package, then just change the number of sessions: the price follows at that package's per-session rate
     let auto=null;const pr=E("k_price"),pd=E("k_paid"),ns=E("k_sessions"),hint=E("k_rate");
-    const setPrice=v=>{const old=pr.value;pr.value=v;if(!pd.value||pd.value===old)pd.value=v;pr.dispatchEvent(new Event("input"));oldSum()};
+    const setPrice=v=>{const old=pr.value;pr.value=v;if(!pd.value||pd.value===old||linked())pd.value=Math.max(0,v-linked());pr.dispatchEvent(new Event("input"));oldSum()};
     const rate=()=>{if(!auto){hint.hidden=true;return}const n=Math.round(num(ns.value));const per=auto.price/auto.sessions;
       hint.hidden=false;hint.textContent=n&&n!==auto.sessions?`${n} جلسة بسعر جلسة ${auto.name} (${money(per)}) = ${money(Math.round(per*n))}`:`سعر الجلسة في ${auto.name}: ${money(per)}. غيّر عدد الجلسات والسعر يتظبط لوحده.`};
     t.addEventListener("change",()=>{const x=types.find(y=>y.id===t.value);auto=x||null;if(!x){rate();return}if(x.typeId&&!cat.value)cat.value=x.typeId;
       E("k_name").value=x.name;ns.value=x.sessions;setPrice(x.price);rate()});
     ns.addEventListener("input",()=>{if(!auto)return;const n=Math.round(num(ns.value));if(n>0){setPrice(Math.round(auto.price/auto.sessions*n));E("k_name").value=n===auto.sessions?auto.name:`${auto.name} · ${n} جلسات`}rate()});
     pr.addEventListener("input",e=>{if(e.isTrusted&&auto){auto=null;hint.hidden=true}}); // typing a price by hand switches the auto-price off
+    drawLink();
   });
 }
 async function saveSellPack(pid){
@@ -1786,11 +1824,14 @@ async function saveSellPack(pid){
   if(old){prePaid=num(val("k_prepaid"));mPaid=num(val("k_mpaid"));mDate=val("k_mdate")||today();mMethod=val("k_mmethod");
     if(mPaid&&(mDate.slice(0,7)!==today().slice(0,7)||mDate>today()))return setErr("يوم الدفع لازم يكون في الشهر ده. لو دفع قبل كده اكتبه في «دفع كام قبل الشهر ده»");}
   else mPaid=m.paid;
-  const pack={id:randId(),name,typeId,typeName:typeName(typeId),sessions,listPrice:m.price,saleDiscount:m.discount,discount:m.discount,price:m.net,paid:prePaid+mPaid,prePaid,reason:m.discountReason,date,used,preUsed:used,old,by:S.mySid,discHist:[]};
+  const links=old?[]:[...document.querySelectorAll('input[name="k_lp"]:checked')].map(x=>S.payments[x.value]).filter(Boolean);
+  if(lockBlock(...links.map(x=>x.date)))return;const linkAmt=links.reduce((t,x)=>t+(x.amount||0),0);
+  const pack={id:randId(),name,typeId,typeName:typeName(typeId),sessions,listPrice:m.price,saleDiscount:m.discount,discount:m.discount,price:m.net,paid:prePaid+mPaid+linkAmt,prePaid,reason:m.discountReason,date,used,preUsed:used,old,by:S.mySid,discHist:[]};
   const b=S.db.batch();
   if(mPaid)b.set(S.db.collection("payments").doc(),{patientId:pid,patientName:p.name,amount:mPaid,method:mMethod,date:old?mDate:date,packId:pack.id,note:packTitle(pack),createdAt:Date.now(),by:S.mySid});
-  b.update(S.db.doc("patients/"+pid),{packs:[...(p.packs||[]),pack],charged:inc(m.net),paid:inc(prePaid+mPaid)});
-  await b.commit();audit("money",old?"سجّل باكدج قديم":"باع باكدج",{target:p.name,info:`${packTitle(pack)} · ${money(pack.price)}${m.discount?` · خصم ${money(m.discount)} (${m.discountReason})`:""}${prePaid?` · دفع قبل كده ${money(prePaid)}`:""}${mPaid?` · دفع ${money(mPaid)}`:""}`,discount:m.discount});
+  for(const x of links)b.update(S.db.doc("payments/"+x.id),{packId:pack.id,note:(x.note?x.note+" · ":"")+"على "+packTitle(pack)});
+  b.update(S.db.doc("patients/"+pid),{packs:[...(p.packs||[]),pack],charged:inc(m.net),paid:inc(prePaid+mPaid)}); // linked payments are already in his paid total
+  await b.commit();audit("money",old?"سجّل باكدج قديم":"باع باكدج",{target:p.name,info:`${packTitle(pack)} · ${money(pack.price)}${m.discount?` · خصم ${money(m.discount)} (${m.discountReason})`:""}${prePaid?` · دفع قبل كده ${money(prePaid)}`:""}${mPaid?` · دفع ${money(mPaid)}`:""}${linkAmt?` · اتربط عليه ${money(linkAmt)} كانت مدفوعة قبل كده`:""}`,discount:m.discount});
   toast("الباكدج اتسجل");reopenPatient(pid);
 }
 /* cancel a package entered by mistake: undo its price, its payments (or keep them as credit) and move its sessions */
@@ -2332,6 +2373,9 @@ document.addEventListener("click",async e=>{
     case "saveWarning":guard(t,()=>saveWarning(id));break;
     case "delWarning":guard(t,()=>delWarning(id));break;
     case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
+    case "deskStart":sheetDeskStart(id);break;
+    case "deskStartGo":guard(t,()=>deskStartGo(id,t.dataset.k));break;
+    case "deskEnd":guard(t,async()=>{const a=S.appts[id];if(!a||lockBlock(a.date))return;ptChanged(a,"done");await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:a.startBy||S.mySid,status:"done"});toast("اتسجل إنه خرج")});break;
     case "lockMonth":guard(t,()=>lockMonth(t.dataset.m));break;
     case "unlockMonth":guard(t,()=>unlockMonth(t.dataset.m));break;
     case "okDup":guard(t,()=>okDup(id));break;
