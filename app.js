@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="29 أكتوبر · 59";
+const APP_VERSION="29 أكتوبر · 60";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -126,7 +126,7 @@ function setupRoleSubs(){
     r.push(sub(c("visits").where("date",">=",winStart()),setLive("visits")));
     r.push(sub(c("payments").where("date",">=",winStart()),setLive("payments")));
     r.push(sub(c("exp").where("date",">=",winStart()),setLive("exp")));
-    r.push(subDoc("cfg/prices",d=>{S.prices={};S.packTypes=d?.packs||[];S.single=d?.single||{}}));
+    r.push(subDoc("cfg/prices",d=>{S.prices={};S.packTypes=d?.packs||[];S.single=d?.single||{};S.parts=d?.parts||{}}));
     r.push(subDoc("cfg/ext",d=>{S.ext=d||{}}));
     r.push(sub(c("cfg"),o=>{S.payerList=o.payers?.list||[];const acct={};for(const [k,v] of Object.entries(o))if(k.startsWith("payer_"))acct[k.slice(6)]=v;S.payerAcct=acct}));
     r.push(sub(c("patients"),o=>S.patients=o));
@@ -789,10 +789,11 @@ async function payerIssue(id){
 function payerOldBill(id,no){const inv=payerAcct(id).invoices.find(x=>String(x.no)===String(no));if(!inv)return;PB.from=inv.from;PB.to=inv.to;const rows=billRows();showPrint(payerBillHtml(PB.P,rows,inv.from,inv.to,inv.no))}
 /* ---------- leaving before the package ends: recharge done sessions at the right tier, refund the rest ---------- */
 function refundRate(k){ // the biggest package of this type the patient actually reached; below the smallest one → single-session price
-  const used=k.used||0,tiers=(S.packTypes||[]).filter(t=>t.typeId&&t.typeId===k.typeId&&t.sessions>0).sort((a,b)=>a.sessions-b.sessions);
+  const pt=partsType(k.typeId),kp=partsOfName(k.name); // a 2-part package is refunded against 2-part packages and the 2-part single price
+  const used=k.used||0,tiers=(S.packTypes||[]).filter(t=>t.typeId&&t.typeId===k.typeId&&t.sessions>0&&(!pt||partsOfName(t.name)===kp)).sort((a,b)=>a.sessions-b.sessions);
   const hit=tiers.filter(t=>t.sessions<=used).pop();
   if(hit)return{rate:Math.round(hit.price/hit.sessions),why:`خلص ${used} جلسة، فبيتحاسب بسعر جلسة ${hit.name} (${hit.sessions} جلسات)`};
-  const single=S.single?.[k.typeId];
+  const single=pt?partsPrice(k.typeId,kp):S.single?.[k.typeId];
   return{rate:single!=null?Math.round(single):null,why:tiers.length?`خلص ${used} جلسة، أقل من أصغر باكدج (${tiers[0].sessions} جلسات)، فبيتحاسب بسعر الجلسة المنفردة`:`بيتحاسب بسعر الجلسة المنفردة`};
 }
 function sheetRefund(pid,kid){
@@ -1159,8 +1160,14 @@ async function ensurePatient(v,phone,src){
   return{id:ref.id,name};
 }
 /* ---------- money, discounts, packages ---------- */
+/* علاج طبيعي / تيكار / شوك ويف: a single session is priced by how many body parts (1–3); only the owner and Reham set it */
+const DEF_PARTS={1:500,2:750,3:1000};
+function partsType(tid){return !!tid&&/علاج\s*طبيعي|تي?كار|tecar|شوك|shock/i.test(typeName(tid)||"")}
+function partsPrice(tid,n){const c=S.parts?.[tid];return num(c?.[n])||DEF_PARTS[n]||null}
+function partsOfName(n){n=nd(n||"");return /عضوين|(^|\D)2\s*(عضو|أعضاء|اعضاء)/.test(n)?2:/(^|\D)3\s*(عضو|أعضاء|اعضاء)|(تلات|ثلاث)(ة)?\s*(أعضاء|اعضاء)/.test(n)?3:1}
+function partsTxt(n){return n==2?"عضوين":n==3?"3 أعضاء":"عضو واحد"}
 function moneyFields(prefix,v){
-  return `<div id="${prefix}_packbox"></div>
+  return `<div id="${prefix}_packbox" data-parts="${v?.parts||""}"></div>
   <div id="${prefix}_money" style="display:grid;gap:10px"><div class="grid2">
     <label class="f">السعر<input id="${prefix}_price" inputmode="decimal" value="${v.price??""}"></label>
     <label class="f">خصم<span style="display:flex;gap:6px"><input id="${prefix}_disc" inputmode="decimal" value="${v.discount||""}" placeholder="0"><select id="${prefix}_dmode" style="width:auto" aria-label="نوع الخصم"><option value="amount">مبلغ</option><option value="final">السعر بعد الخصم</option></select></span></label>
@@ -1186,8 +1193,8 @@ function readMoney(prefix){
   if(py&&!document.getElementById(prefix+"_usepack")?.checked){const P=payerById(py.value);if(P)return{price:P.price,discount:0,net:P.price,paid:0,method:"",discountReason:"",packId:null,packName:"",packValue:0,payerId:P.id,payerName:P.name}}
   if(document.getElementById(prefix+"_usepack")?.checked){const pk=selectedPack(prefix);if(!pk)return{_err:"اختار الباكدج"};
     return{price:0,discount:0,net:0,paid:0,method:"",discountReason:"",packId:pk.id,packName:pk.name,packValue:Math.round((pk.price||0)/(pk.sessions||1)),packPay:num(val(prefix+"_kpay")),packPayMethod:val(prefix+"_kmethod")||"cash"}}
-  const price=num(val(prefix+"_price")),discount=discFrom(prefix,price);
-  return{price,discount,net:Math.max(0,price-discount),paid:num(val(prefix+"_paid")),method:val(prefix+"_method"),discountReason:discount?val(prefix+"_dreason").trim():"",packId:null,packName:"",packValue:0};
+  const price=num(val(prefix+"_price")),discount=discFrom(prefix,price);const parts=document.getElementById(prefix+"_partsseg")?(+radio(prefix+"_parts")||1):null;
+  return{price,discount,net:Math.max(0,price-discount),paid:num(val(prefix+"_paid")),method:val(prefix+"_method"),discountReason:discount?val(prefix+"_dreason").trim():"",packId:null,packName:"",packValue:0,parts};
 }
 function moneyError(m){return m._err||(m.discount&&!m.discountReason?"اكتب سبب الخصم":"")}
 function activePacks(pid,keepId){return (S.patients[pid]?.packs||[]).filter(k=>(k.used||0)<k.sessions||k.id===keepId)}
@@ -1201,11 +1208,15 @@ function wirePack(prefix,cur,typeSel){ // pick the session type first; the patie
   const draw=()=>{const pat=findPatient(pick.value);const tid=tsel?tsel.value:"";const list=pat?packsFor(pat.id,tid,cur?.packId):[];
     const P=pat?payerOf(pat.id):null;
     if(!list.length&&P){box.innerHTML=`<div class="note">الجلسة دي على حساب <b>${esc(P.name)}</b> بـ ${money(P.price)}، والفلوس بتتاخد من الجهة بالفاتورة.</div><input type="hidden" id="${prefix}_payer" value="${P.id}">`;moneyEl.hidden=true;return}
-    if(!list.length){const rate=pat&&tid?S.patients[pat.id]?.rates?.[tid]:null;
-      box.innerHTML=!pat||!tid?"":rate!=null?`<div class="note">${esc(typeName(tid))} بالجلسة للمريض ده: سعر الجلسة <b>${money(rate)}</b>. اكتب دفع كام، والباقي بيتحسب عليه.</div>`
-        :`<div class="note">مفيش باكدج ${esc(typeName(tid))} ولا سعر بالجلسة للمريض ده، فاكتب سعر الجلسة تحت. وعشان متكتبوش كل مرة، حدد له نظام من ملفه (+ باكدج أو + بالجلسة).</div>`;
+    if(!list.length){const rate=pat&&tid?S.patients[pat.id]?.rates?.[tid]:null;const pt=isAdmin()&&partsType(tid)&&!cur?.exam;
+      const partsSeg=pt?`<div class="seg" id="${prefix}_partsseg"><span class="sub">عدد الأعضاء:</span>${[1,2,3].map(n=>`<label><input type="radio" name="${prefix}_parts" value="${n}" ${n===(+box.dataset.parts||1)?"checked":""}> ${partsTxt(n)}${rate==null?` · ${money(partsPrice(tid,n))}`:""}</label>`).join("")}</div>`:"";
+      box.innerHTML=!pat||!tid?"":partsSeg+(rate!=null?`<div class="note">${esc(typeName(tid))} بالجلسة للمريض ده: سعر الجلسة <b>${money(rate)}</b>. اكتب دفع كام، والباقي بيتحسب عليه.</div>`
+        :pt?"":`<div class="note">مفيش باكدج ${esc(typeName(tid))} ولا سعر بالجلسة للمريض ده، فاكتب سعر الجلسة تحت. وعشان متكتبوش كل مرة، حدد له نظام من ملفه (+ باكدج أو + بالجلسة).</div>`);
       moneyEl.hidden=false;const pr=document.getElementById(prefix+"_price");
       if(pr&&rate!=null&&(!pr.value||pr.dataset.auto==="1")){pr.value=rate;pr.dataset.auto="1";pr.dispatchEvent(new Event("input"))}
+      if(pt&&pat&&rate==null){const setP=force=>{const n=+radio(prefix+"_parts")||1;box.dataset.parts=n;if(pr&&(force||!pr.value||pr.dataset.auto==="1")){pr.value=partsPrice(tid,n);pr.dataset.auto="1";pr.dispatchEvent(new Event("input"))}};
+        box.querySelectorAll(`input[name="${prefix}_parts"]`).forEach(r=>r.addEventListener("change",()=>setP(true)));setP(false)}
+      else if(pt)box.querySelectorAll(`input[name="${prefix}_parts"]`).forEach(r=>r.addEventListener("change",()=>{box.dataset.parts=r.value}));
       return}
     const on=cur?!!cur.packId:true;
     box.innerHTML=`<div class="seg"><label><input type="checkbox" id="${prefix}_usepack" style="width:auto" ${on?"checked":""}> الجلسة دي من الباكدج</label><select id="${prefix}_pack" style="flex:1 1 200px">${list.map(k=>{const o=packOwed(k);return `<option value="${k.id}" ${k.id===cur?.packId?"selected":""}>${esc(packTitle(k))} · فاضل ${k.sessions-(k.used||0)} من ${k.sessions}${o>0?` · عليه ${money(o)}`:o===0?" · خالص":""}</option>`}).join("")}</select></div>
@@ -1498,7 +1509,7 @@ function sheetApptConfirm(id){
   ${moneyFields("c",{price:price??"",paid:price??"",method:"cash"})}
   <div class="err" id="formErr"></div>
   <button class="btn primary" data-act="saveApptConfirm" data-id="${id}">تأكيد وتسجيل الجلسة</button>`,
-  ()=>{wireMoney("c","c_type");wirePack("c",a.kind==="exam"?{packId:null}:null,"c_type")});
+  ()=>{wireMoney("c","c_type");wirePack("c",a.kind==="exam"?{packId:null,exam:true}:null,"c_type")});
 }
 async function saveApptConfirm(id){
   const a=S.appts[id];if(!a)return;const cv=radio("c_credit")||"";const [mode,x,y]=cv.split(":");
@@ -1626,7 +1637,7 @@ function sheetSession(id){
   <p class="sub" style="margin:0">الفلوس تقدر تسجلها في أي وقت، قبل الجلسة أو بعدها، وتعدّلها لما يدفع الباقي.</p></div>
   <div class="err" id="formErr"></div>
   <button class="btn primary" data-act="saveSession" data-id="${id}">حفظ</button>`,
-  ()=>{wireMoney("s","s_type");wirePack("s",v?{packId:v.packId}:(a.kind==="exam"?{packId:null}:null),"s_type");
+  ()=>{wireMoney("s","s_type");wirePack("s",a.kind==="exam"?{packId:v?.packId||null,exam:true}:v?{packId:v.packId}:null,"s_type");
     const st=document.getElementById("s_status");const sync=()=>{const x=st.value;document.getElementById("s_cancelbox").hidden=x!=="cancelled";document.getElementById("s_body").hidden=["noshow","cancelled"].includes(x)};
     st.addEventListener("change",()=>{const x=st.value,set=(i)=>{const el=document.getElementById(i);if(!el.value&&S.ui.date===today())el.value=nowHM()};
       if(["arrived","started","done"].includes(x))set("s_arr");if(["started","done"].includes(x))set("s_start");if(x==="done")set("s_end");sync()});
@@ -1653,6 +1664,7 @@ async function saveSession(id){
     const lbl=a.kind==="exam"?null:sessionInfo(a.patientId,a.kind,id,a.date,a.time,type);if(lbl&&(!old||vis.packId!==(old.packId||null))){const pk=(S.patients[a.patientId]?.packs||[]).find(k=>k.id===vis.packId);upd.kindLabel=pk?`جلسة ${Math.min((pk.used||0)+1,pk.sessions)} من ${pk.sessions} · ${packTitle(pk)}`:lbl.label;upd.packId=vis.packId||null}
     upd.typeId=type;upd.typeName=typeName(type);
     if(document.getElementById("s_no")){const n=Math.round(num(val("s_no")))||null;upd.sessNo=n;upd.kindLabel=withNo(upd.kindLabel||kindOf(a),n)}
+    if(mny.parts){const base=String(upd.kindLabel||a.kindLabel||kindOf(a)).replace(/ · (عضو واحد|عضوين|3 أعضاء)$/,"");upd.kindLabel=base+" · "+partsTxt(mny.parts)}
     b.__vis=vis;if(old)b.update(S.db.doc("visits/"+id),vis);else b.set(S.db.doc("visits/"+id),{...vis,createdAt:Date.now()});
     visitEffect(acc,old,-1);visitEffect(acc,vis,1);flushPatients(b,acc);
     if(a.media?.length&&!a.photosCopied){a.media.forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));upd.photosCopied=true}
@@ -2266,7 +2278,8 @@ function showTempPw(name,user,pw){
 function sheetType(id){
   const t=id?S.types.find(x=>x.id===id):{};
   openSheet(id?"تعديل نوع جلسة":"نوع جلسة جديد",`<label class="f">الاسم (الدكاترة بيشوفوه)<input id="t_name" value="${esc(t?.name||"")}" placeholder="مثلاً علاج طبيعي، تيكار، ليمفيديما"></label>
-  <label class="f">سعر الجلسة المنفردة (مخفي عن الدكاترة، للاسترجاع)<input id="t_single" inputmode="decimal" value="${id&&S.single?.[id]!=null?S.single[id]:""}"></label>
+  ${id&&partsType(id)?`<div class="grid2">${[1,2,3].map(n=>`<label class="f">الجلسة المنفردة · ${partsTxt(n)}<input id="t_p${n}" inputmode="decimal" value="${partsPrice(id,n)??""}"></label>`).join("")}</div><p class="sub" style="margin:0">مخفي عن الدكاترة. سعر العضو الواحد هو كمان اللي بيتحسب بيه الاسترجاع.</p><input type="hidden" id="t_single" value="">`
+  :`<label class="f">سعر الجلسة المنفردة (مخفي عن الدكاترة، للاسترجاع)<input id="t_single" inputmode="decimal" value="${id&&S.single?.[id]!=null?S.single[id]:""}"></label>`}
   <p class="sub" style="margin:0">الفلوس بتتحدد في الباكدج. سعر الجلسة المنفردة بيتستخدم لو مريض ساب قبل أصغر باكدج وعايز يسترجع فلوسه.</p><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveType" data-id="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delType" data-id="${id}" data-confirm>حذف</button>`:""}</div>`);
 }
@@ -2469,7 +2482,9 @@ document.addEventListener("click",async e=>{
     case "newType":sheetType(null);break;
     case "editType":sheetType(id);break;
     case "saveType":guard(t,async()=>{const name=val("t_name").trim();if(!name)return setErr("اكتب اسم الجلسة");const tid=id||("t"+Date.now().toString(36));const list=id?S.types.map(x=>x.id===id?{...x,name}:x):[...S.types,{id:tid,name}];await db.doc("pub/types").set({list});
-      const sg=val("t_single").trim(),single={...(S.single||{})};if(sg)single[tid]=num(sg);else delete single[tid];await db.doc("cfg/prices").set({single},{merge:true});closeSheet();toast("اتحفظ")});break;
+      const single={...(S.single||{})};
+      if(document.getElementById("t_p1")){const pr={};[1,2,3].forEach(n=>{const x=num(val("t_p"+n));if(x)pr[n]=x});single[tid]=pr[1]||DEF_PARTS[1];await db.doc("cfg/prices").set({single,parts:{...(S.parts||{}),[tid]:pr}},{merge:true});audit("settings","أسعار الجلسة بعدد الأعضاء",{info:`${typeName(tid)}: ${[1,2,3].map(n=>partsTxt(n)+" "+(pr[n]||"—")).join(" · ")}`});closeSheet();toast("اتحفظ");return}
+      const sg=val("t_single").trim();if(sg)single[tid]=num(sg);else delete single[tid];await db.doc("cfg/prices").set({single},{merge:true});closeSheet();toast("اتحفظ")});break;
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
     case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays},leaveAllow={...c0.leaveAllow};activeStaff().forEach(s=>{const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked);const la=val("la_"+s.id).trim();if(la)leaveAllow[s.id]=Math.round(num(la));else delete leaveAllow[s.id]});{const ch=[];activeStaff().forEach(s=>{if(num(c0.salary[s.id])!==num(salary[s.id]))ch.push(`${s.name}: ${money(c0.salary[s.id]||0)} ← ${money(salary[s.id]||0)}`);const a=c0.commission[s.id]||{},b2=commission[s.id]||{};if(num(a.full)!==num(b2.full)||num(a.half)!==num(b2.half))ch.push(`نسبة ${s.name}: ${a.full||0}%/${a.half||0}% ← ${b2.full||0}%/${b2.half||0}%`)});if(ch.length)audit("settings","غيّر المرتبات",{info:ch.join(" · ")})}
       await db.doc("priv/config").set({salary,commission,workDays,leaveAllow,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5,docStart:val("cfgDocStart")||"15:00",secStart:val("cfgSecStart")||"14:30",secLead:val("cfgSecLead").trim()===""?30:Math.max(0,Math.round(num(val("cfgSecLead"))))});toast("المرتبات اتحفظت")});break;
