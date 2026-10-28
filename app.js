@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="27 أكتوبر · 43";
+const APP_VERSION="28 أكتوبر · 44";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -776,6 +776,45 @@ function vAudit(){
   <select id="auKind" style="width:auto"><option value="">كل الأنواع</option>${Object.entries(AUDIT_KINDS).map(([k,l])=>`<option value="${k}" ${kind===k?"selected":""}>${l}</option>`).join("")}</select><span class="sub grow">${list.length} تعديل</span></div>
   ${list.length?`<div class="list">${html}</div>`:`<div class="empty"><b>مفيش تعديلات لسه</b>أي مسح أو تعديل هيظهر هنا.</div>`}`;
 }
+/* ---------- temporary: import attendance from before the system (pasted lines), owner only ---------- */
+const IMPORT_UNTIL="2026-11-30";
+function importOn(){return S.role==="owner"&&today()<=IMPORT_UNTIL&&!S.config?.importHidden}
+function parseTime(t){ // "3:30 م", "15:30", "3.30", "٣:٣٠" → "15:30"; afternoon is assumed for 1–11 without ص/م
+  t=nd(t||"").trim();if(!t)return "";const pm=/م|pm|مساء/i.test(t),am=/ص|am|صباح/i.test(t);
+  const m=t.match(/(\d{1,2})(?:[:.٫](\d{1,2}))?/);if(!m)return null;let h=+m[1],mi=+(m[2]||0);if(h>23||mi>59)return null;
+  if(pm&&h<12)h+=12;else if(am&&h===12)h=0;else if(!pm&&!am&&h>=1&&h<=11)h+=12;return `${String(h).padStart(2,"0")}:${String(mi).padStart(2,"0")}`}
+function parseDate(t){t=nd(t||"").trim();let m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);if(m)return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+  m=t.match(/^(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?$/);if(!m)return null;const y=m[3]?(m[3].length===2?"20"+m[3]:m[3]):today().slice(0,4);
+  return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`}
+function staffByName(n){const q=normName(n).replace(/^د\.?\s*/,"");if(!q)return null;const st=Object.values(S.staff).filter(s=>!s.deleted&&!s.me);
+  return st.find(s=>normName(s.name).replace(/^د\.?\s*/,"")===q)||st.find(s=>normName(s.name).includes(q))||null}
+function parseImport(text){ // each line: day, name, in, out  (comma, tab, dash or several spaces between)
+  return (text||"").split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(line=>{
+    const parts=nd(line).split(/\s*[,،\t|]\s*|\s{2,}/).filter(Boolean);
+    const [d,n,i,o]=parts;const date=parseDate(d),s=staffByName(n),tin=parseTime(i),tout=parseTime(o);
+    const err=!date?"التاريخ مش مفهوم":!s?"الاسم مش موجود في الفريق":tin===null||tout===null?"الساعة مش مفهومة":!tin&&!tout?"مفيش حضور ولا انصراف":tin&&tout&&mins(tout)<=mins(tin)?"الانصراف قبل الحضور":"";
+    return{line,date,sid:s?.id,name:s?.name,tin,tout,err,exists:!!(date&&s&&S.att[`${date}_${s.id}`])}})}
+function importPanel(){
+  if(!importOn())return "";
+  return `<div class="panel"><div class="sec-title"><h2>استيراد حضور قبل السيستم (مؤقت)</h2><button class="btn sm" data-act="hideImport" data-confirm>اخفيها</button></div>
+  <p class="sub" style="margin:0">الزق هنا الكلام اللي Claude بعتهولك. كل سطر: اليوم، الاسم، الحضور، الانصراف. مثلاً: <span dir="ltr">5/10, سلمى, 3:00, 10:15</span>. الخانة دي بتختفي لوحدها بعد ${dmy(IMPORT_UNTIL)}.</p>
+  <textarea id="imp_text" style="min-height:140px;direction:rtl" placeholder="5/10, سلمى, 3:00, 10:15"></textarea>
+  <div class="seg"><label><input type="checkbox" id="imp_over"> لو اليوم ده متسجل قبل كده، استبدله</label></div>
+  <div id="imp_prev"></div><div class="err" id="impErr"></div>
+  <button class="btn primary" data-act="doImport">استيراد</button></div>`}
+function drawImportPreview(){
+  const el=document.getElementById("imp_prev");if(!el)return;const rows=parseImport(val("imp_text"));if(!rows.length){el.innerHTML="";return}
+  const ok=rows.filter(r=>!r.err).length,bad=rows.length-ok,ex=rows.filter(r=>!r.err&&r.exists).length;
+  el.innerHTML=`<div class="note">${ok} يوم جاهز${bad?` · <b style="color:var(--bad)">${bad} سطر فيه مشكلة</b>`:""}${ex?` · ${ex} متسجل قبل كده`:""}</div>
+  <div class="tblwrap"><table><thead><tr><th>اليوم</th><th>الاسم</th><th>حضور</th><th>انصراف</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.date?esc(dmy(r.date)):"—"}</td><td>${esc(r.name||"—")}</td><td>${esc(r.tin||"—")}</td><td>${esc(r.tout||"—")}</td><td style="white-space:normal">${r.err?`<span class="chip c-bad">${esc(r.err)}</span><div class="sub">${esc(r.line)}</div>`:r.exists?`<span class="chip c-warn">متسجل</span>`:`<span class="chip c-ok">تمام</span>`}</td></tr>`).join("")}</tbody></table></div>`}
+async function doImport(){
+  const rows=parseImport(val("imp_text")).filter(r=>!r.err),over=document.getElementById("imp_over").checked,err=document.getElementById("impErr");
+  const todo=rows.filter(r=>over||!r.exists);if(!todo.length){err.textContent="مفيش أيام جديدة تتسجل";return}
+  for(let i=0;i<todo.length;i+=400){const b=S.db.batch();todo.slice(i,i+400).forEach(r=>b.set(S.db.doc(`att/${r.date}_${r.sid}`),{date:r.date,staffId:r.sid,in:r.tin||"",out:r.tout||"",note:"من قبل السيستم",by:S.mySid,imported:true}));await b.commit()}
+  todo.forEach(r=>{S.old.att[`${r.date}_${r.sid}`]={id:`${r.date}_${r.sid}`,date:r.date,staffId:r.sid,in:r.tin||"",out:r.tout||""}});merge();
+  audit("att","استيراد حضور قبل السيستم",{info:`${todo.length} يوم · ${[...new Set(todo.map(r=>r.name))].join("، ")}`});
+  document.getElementById("imp_text").value="";drawImportPreview();err.textContent="";toast(`اتسجل ${todo.length} يوم حضور`);
+}
 /* ---------- views: reports ---------- */
 function expenseTips(m,rv,ex,pr,flags){
   const tips=[];const salBase=pr.reduce((s,x)=>s+x.sal,0),otNow=pr.reduce((s,x)=>s+x.otPay,0);
@@ -908,6 +947,7 @@ function vSettings(){
   <div class="panel"><div class="sec-title"><h2>أنواع الجلسات</h2><button class="btn sm" data-act="newType">+ نوع جلسة</button></div>
   <p class="sub" style="margin:0">أسماء بس من غير فلوس. الفلوس كلها في الباكدجات تحت، وكل باكدج تابع لنوع جلسة.</p>
   ${S.types.length?`<div class="list">${S.types.map(t=>{const n=(S.packTypes||[]).filter(k=>k.typeId===t.id).length;return `<button class="row" data-act="editType" data-id="${t.id}"><span class="t">${esc(t.name)} </span><span class="end sub">${n?`${n} باكدج`:"مفيش باكدجات"}</span></button>`}).join("")}</div>`:`<div class="empty"><b>مفيش أنواع جلسات</b>مثلاً: علاج طبيعي، تيكار، ليمفيديما. الدكاترة بيشوفوا الأسماء بس.</div>`}</div>
+  ${importPanel()}
   ${S.role==="owner"?`<div class="panel"><div class="sec-title"><h2>صلاحية مؤقتة لريهام</h2>${backfillOn()?`<span class="chip c-acc">شغالة</span>`:""}</div>
   ${backfillOn()?`<p class="sub" style="margin:0">ريهام تقدر تسجل حضور وانصراف الفريق من ${esc(S.backfill.from)} لحد ${esc(S.backfill.to)}، والصلاحية بتقفل لوحدها ${tsDate(S.backfill.until).toLocaleString("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",hour:"numeric",minute:"2-digit"})}.</p><button class="btn danger" data-act="stopBackfill">اقفلها دلوقتي</button>`
   :`<p class="sub" style="margin:0">عشان ريهام تسجل الحضور والانصراف القديم من غير GPS. الجلسات القديمة بتسجلها عادي من «الجلسات والفلوس».</p>
@@ -1987,7 +2027,7 @@ document.addEventListener("submit",e=>{
   if(e.target.id==="loginForm"){e.preventDefault();doLogin().catch(err=>{console.error(err);document.getElementById("loginErr").textContent="حصلت مشكلة، جرب تاني."})}
   if(e.target.id==="setupForm"){e.preventDefault();doSetup()}
 });
-document.addEventListener("input",e=>{if(e.target.id==="q"){S.ui.q=e.target.value;renderPatientList()}});
+document.addEventListener("input",e=>{if(e.target.id==="q"){S.ui.q=e.target.value;renderPatientList()}if(e.target.id==="imp_text")drawImportPreview()});
 document.addEventListener("change",e=>{
   const id=e.target.id;
   if(id==="dayPick"&&e.target.value){S.ui.date=e.target.value;e.target.blur();render()}
@@ -1997,7 +2037,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","moveOwner","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","doImport","hideImport","moveOwner","absence","saveLeave","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2118,6 +2158,8 @@ document.addEventListener("click",async e=>{
     case "payerPreview":payerPreview(null);break;
     case "payerIssue":guard(t,()=>payerIssue(id));break;
     case "payerOldBill":payerOldBill(id,t.dataset.k);break;
+    case "doImport":guard(t,()=>doImport());break;
+    case "hideImport":guard(t,async()=>{await db.doc("priv/config").set({importHidden:true},{merge:true});toast("الخانة اتخفت")});break;
     case "newInvoice":sheetReport(id,null,"invoice");break;
     case "newReport":sheetReport(id,null,"report");break;
     case "openReport":sheetReport(id,t.dataset.k);break;
