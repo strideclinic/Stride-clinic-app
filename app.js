@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 45";
+const APP_VERSION="28 أكتوبر · 46";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -779,10 +779,10 @@ function vAudit(){
 /* ---------- temporary: import attendance from before the system (pasted lines), owner only ---------- */
 const IMPORT_UNTIL="2026-11-30";
 function importOn(){return S.role==="owner"&&today()<=IMPORT_UNTIL&&!S.config?.importHidden}
-function parseTime(t){ // the clinic works from noon to before midnight: 12 = noon, 1–11 = afternoon/evening ("3:30" → 15:30)
+function parseTime(t){ // times are written 1–12 and always mean afternoon/evening: 1–11 → 13:00–23:59, 12 → midnight (kept as 23:59, same day)
   t=nd(t||"").trim();if(!t)return "";
   const m=t.match(/(\d{1,2})(?:[:.٫](\d{1,2}))?/);if(!m)return null;let h=+m[1],mi=+(m[2]||0);if(h>23||mi>59)return null;
-  if(h>=1&&h<=11)h+=12;return `${String(h).padStart(2,"0")}:${String(mi).padStart(2,"0")}`}
+  if(h===12||h===0)return "23:59";if(h>=1&&h<=11)h+=12;return `${String(h).padStart(2,"0")}:${String(mi).padStart(2,"0")}`}
 function parseDate(t){t=nd(t||"").trim();let m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);if(m)return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
   m=t.match(/^(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?$/);if(!m)return null;const y=m[3]?(m[3].length===2?"20"+m[3]:m[3]):today().slice(0,4);
   return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`}
