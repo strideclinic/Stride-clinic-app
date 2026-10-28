@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 55";
+const APP_VERSION="28 أكتوبر · 56";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1896,7 +1896,8 @@ function reopenPatient(pid){const cur=document.querySelector(".sheet");setTimeou
 function packTitle(k){return /باكدج|باقة/.test(k.name||"")?k.name:`باكدج ${k.name}`}
 function packsHtml(pid){
   const packs=S.patients[pid]?.packs||[];if(!packs.length)return "";
-  return `<div class="list">${packs.map(k=>{const left=k.sessions-(k.used||0);const o=packOwed(k);return `<div class="row stack" style="cursor:default"><span class="t">${esc(packTitle(k))} ${k.typeId?`<span class="chip c-acc">${esc(typeName(k.typeId)||k.typeName||"")}</span>`:""} ${left>0?`<span class="chip c-teal">فاضل ${left} من ${k.sessions}</span>`:`<span class="chip c-mute">خلص</span>`} ${packMoneyChip(k)}</span>
+  const head=packs.length>1?`<div class="note">خد ${packs.length} باكدج لحد دلوقتي · خلص <b>${doneCount(S.patients[pid])} جلسة</b> من الأول. كل باكدج بيبدأ عدّه من 1.</div>`:"";
+  return `${head}<div class="list">${packs.map((k,i)=>{const left=k.sessions-(k.used||0);const o=packOwed(k);return `<div class="row stack" style="cursor:default"><span class="t">${packs.length>1?`<span class="chip c-mute">رقم ${i+1}</span> `:""}${esc(packTitle(k))} ${k.typeId?`<span class="chip c-acc">${esc(typeName(k.typeId)||k.typeName||"")}</span>`:""} ${left>0?`<span class="chip c-teal">فاضل ${left} من ${k.sessions}</span>`:`<span class="chip c-mute">خلص</span>`} ${packMoneyChip(k)}</span>
     <span class="end bar">${o>0?`<button class="btn sm teal" data-act="payPack" data-id="${pid}" data-k="${k.id}">+ دفعة</button>`:""}<button class="btn sm" data-act="editPackUse" data-id="${pid}" data-k="${k.id}">تعديل العدد</button>${left>0&&!k.refund?`<button class="btn sm" data-act="refundPack" data-id="${pid}" data-k="${k.id}">استرجاع</button>`:""}<button class="btn sm danger" data-act="cancelPack" data-id="${pid}" data-k="${k.id}">إلغاء الباكدج</button></span>
     <span class="m">${[k.date||"",`السعر ${k.discount?`${money(k.listPrice)} ← `:""}${money(k.price)}`,k.paid!=null?`دفع ${money(k.paid)}`:"",k.refund?`اتقفل باسترجاع: كان ${k.refund.origSessions} جلسة بـ ${money(k.refund.origPrice)}، اتحاسب ${k.refund.cost?money(k.refund.cost):0}${k.refund.back>0?` ورجعله ${money(k.refund.back)}`:""}`:"",k.old?`من قبل السيستم (كان عمل ${k.preUsed||0}${k.prePaid?`، ودفع ${money(k.prePaid)} قبل الشهر اللي اتسجل فيه`:""})`:"",k.discount?`خصم ${money(k.discount)}: ${[k.reason,...(k.discHist||[]).map(h=>h.reason)].filter(Boolean).join("، ")}`:""].filter(Boolean).map(esc).join(" · ")}</span><span></span></div>`}).join("")}</div>`;
 }
@@ -1935,7 +1936,7 @@ function sheetPatient(id){
   const docOpts=[["owner","د. محي"],...doctors().map(d=>[d.id,d.name])];
   const F=(k,l,t="input",extra="")=>t==="ta"?`<label class="f">${l}<textarea id="pt_${k}">${esc(p[k]||"")}</textarea></label>`:`<label class="f">${l}<input id="pt_${k}" value="${esc(p[k]||"")}" ${extra}></label>`;
   openSheet(id?p.name:"ملف مريض جديد",`
-  ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b||doneCount(p)?`خلص ${doneCount(p)} جلسة · إجمالي ${money(b?.charged||0)} · دفع ${money(b?.paid||0)}`:""}</span></div>
+  ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b||doneCount(p)?`خلص ${doneCount(p)} جلسة من الأول · إجمالي ${money(b?.charged||0)} · دفع ${money(b?.paid||0)}`:""}</span></div>
   <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm teal" data-act="newInvoice" data-id="${id}">فاتورة جلسات</button><button class="btn sm teal" data-act="newReport" data-id="${id}">تقرير</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
   ${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
