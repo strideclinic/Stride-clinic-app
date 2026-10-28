@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 48";
+const APP_VERSION="28 أكتوبر · 49";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -171,7 +171,7 @@ function syncBackfillSub(){
 function defaultTab(){return {owner:"sessions",secretary:"sessions",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
-  if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),...(S.staff[S.mySid]?.me?[]:[["myatt","حضوري"]])]}
+  if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),...(S.staff[S.mySid]?.me?[]:[["myatt","حضوري"]])]}
   const pend=pendingEntries().length;
   const base=[["sessions","جلسات اليوم",Object.values(S.appts).filter(needsRecord).length],["appts","الحجز"],...(pend?[["review","تسجيلات الدكاترة",pend]]:[]),["patients","المرضى والكشف"],...(exts().length?[["ext","الدكاترة من بره"]]:[])];
   if(S.role==="owner")return [...base,["att","الحضور"],["reports","الحسابات والمرتبات"],["audit","سجل التعديلات"],["settings","الإعدادات"]];
@@ -1174,6 +1174,7 @@ async function saveEntry(id){
 }
 /* ---------- appointments ---------- */
 let entryAppt=null,apptWarned=false,apptDupWarned=false;
+function x2(o){return `حجز الساعة ${hour12(o.time)}${o.typeName?` (${o.typeName})`:""} مع ${apptDocs(o).map(staffName).join(" و")}`}
 const APPT_STATUS={booked:["c-mute","محجوز"],arrived:["c-warn","وصل ومستني"],started:["c-acc","جوه الجلسة"],done:["c-ok","خلص"],noshow:["c-warn","محضرش"],cancelled:["c-bad","اتلغى"]};
 function apptChip(a){const [c,l]=APPT_STATUS[a.status]||APPT_STATUS.booked;return `<span class="chip ${c}">${l}</span>`}
 function apptDocs(a){return (a.doctors&&a.doctors.length?a.doctors:[a.doctorSid]).filter(Boolean)}
@@ -1196,7 +1197,7 @@ function creditLabel(c){return c.mode==="split"?`نص ونص: ${staffName(c.a)} 
 function sessionInfo(pid,kind,excludeId,date,time,typeId){ // "جلسة 4 من 10 · باكدج علاج طبيعي" from the package of that type, "جلسة رقم 7" otherwise
   if(kind==="exam")return{label:"كشف",packId:null};
   const pack=packsFor(pid,typeId)[0];
-  const before=Object.values(S.appts).filter(x=>x.id!==excludeId&&x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!S.visits[x.id]&&!["cancelled","noshow"].includes(x.status)&&((x.date||"")+(x.time||""))<(date+time)&&(!pack||x.packId===pack.id)).length;
+  const before=Object.values(S.appts).filter(x=>x.id!==excludeId&&x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!S.visits[x.id]&&!["cancelled","noshow"].includes(x.status)&&shownAppt(x)&&((x.date||"")+(x.time||""))<(date+time)&&(!pack||x.packId===pack.id)).length;
   if(pack){const n=(pack.used||0)+before+1;return{label:`جلسة ${Math.min(n,pack.sessions)} من ${pack.sessions} · ${packTitle(pack)}`,packId:pack.id}}
   const rate=typeId?S.patients[pid]?.rates?.[typeId]:null;
   return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} ${rate!=null?"بالجلسة":"منفردة"}`:""}`,packId:null};
@@ -1229,25 +1230,26 @@ function apptRow(a,view,showDoc){
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${dupOf(a)?`<span class="chip c-bad">حجز مكرر</span>`:""} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
 function vAppts(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
-  const list=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(list),0);
+  const list=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(list),0);
   const active=list.filter(a=>a.status!=="cancelled");
   const byDoc={};active.forEach(a=>{const k=apptDocs(a)[0]||"—";(byDoc[k]=byDoc[k]||[]).push(a)});
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn primary" data-act="newAppt">+ حجز</button></div>
   ${(()=>{const due=active.filter(a=>a.status==="booked"&&a.date>=today());if(!due.length)return "";const done=due.filter(a=>a.remindedAt).length;
     return `<div class="note">تذكيرات اليوم ده: اتبعت <b>${done}</b> من <b>${due.length}</b>${done<due.length?". دوس «تذكير واتساب» جنب كل حجز، والرسالة بتبقى جاهزة.":"."}</div>`})()}
+  ${dupPanel()}
   <p class="sub" style="margin:0">هنا الحجز بس. اللي حصل فعلاً (جه، كنسل، دفع، دخل إمتى) بيتسجل في «جلسات اليوم».</p>
   <div class="stats"><div class="stat"><div class="k">محجوز اليوم ده</div><div class="v num">${active.length}</div></div>${Object.entries(byDoc).map(([sid,arr])=>`<div class="stat"><div class="k">${esc(staffName(sid))}</div><div class="v num">${arr.length}</div></div>`).join("")}</div>
   ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} حجز</span></h2><div class="list">${arr.map(a=>apptRow(a,"admin",apptDocs(a).length>1)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش حجوزات اليوم ده</b>اضغط «+ حجز» واختار المريض والدكتور والساعة.</div>`}
   ${list.length>active.length?`<p class="sub">${list.length-active.length} حجز اتلغى.</p>`:""}`;
 }
 function vMyAppts(){
-  const d=S.ui.date;const list=Object.values(S.appts).filter(a=>a.date===d&&a.status!=="cancelled"&&apptDocs(a).includes(S.mySid)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const d=S.ui.date;const list=Object.values(S.appts).filter(a=>a.date===d&&a.status!=="cancelled"&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span></div>
   <p class="sub" style="margin:0">دوس «بدأت» أول ما المريض يدخل، و«خلصت» في آخر الجلسة. لو حد تاني من الدكاترة كمّل الجلسة، هو اللي يدوس «خلصت» من عنده.</p>
   ${list.length?`<div class="list">${list.map(a=>apptRow(a,"doctor",apptDocs(a).length>1)).join("")}</div>`:`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}`;
@@ -1284,16 +1286,18 @@ async function saveAppt(id){
   const s0=mins(time),clash=Object.values(S.appts).find(x=>x.id!==id&&apptDocs(x).includes(doc)&&x.date===date&&!["cancelled","noshow","done"].includes(x.status)&&s0<mins(x.time)+(x.duration||60)&&mins(x.time)<s0+dur);
   const pp0=findPatient(pv);
   if(pp0){const same=Object.values(S.appts).filter(x=>x.id!==id&&x.patientId===pp0.id&&x.date===date&&!["cancelled","noshow"].includes(x.status));
-    const overlap=same.find(x=>s0<mins(x.time)+(x.duration||60)&&mins(x.time)<s0+dur);
-    if(overlap)return setErr(`${pp0.name} عنده حجز فعلاً الساعة ${hour12(overlap.time)} اليوم ده مع ${apptDocs(overlap).map(staffName).join(" و")}. مينفعش يتحجز مرتين في نفس الميعاد؛ لو عايز تغيّر الميعاد افتح الحجز القديم وعدّله.`);
-    if(same.length&&!apptDupWarned){apptDupWarned=true;return setErr(`${pp0.name} عنده حجز تاني اليوم ده الساعة ${same.map(x=>hour12(x.time)).join(" و")}. لو ده حجز تاني فعلاً (نوع جلسة تاني مثلاً) دوس حفظ تاني.`)}}
+    const type0=val("ap_type"),dupe=same.find(x=>x.time===time||(type0&&x.typeId===type0));
+    if(dupe&&!apptDupWarned){apptDupWarned=true;return setErr(S.role==="owner"?`${pp0.name} عنده ${x2(dupe)} اليوم ده. لو عايزه فعلاً دوس حفظ تاني، وهيتسجل على طول.`
+      :`${pp0.name} عنده ${x2(dupe)} اليوم ده. لو دوست حفظ تاني، الحجز هيتسجل بس مش هيظهر غير لما د. محي يوافق عليه.`)}
+    if(!dupe&&same.length&&!apptDupWarned){apptDupWarned=true;return setErr(`${pp0.name} عنده حجز تاني اليوم ده الساعة ${same.map(x=>hour12(x.time)).join(" و")}، بنوع جلسة مختلف. لو صح دوس حفظ تاني.`)}}
   if(clash&&!apptWarned){apptWarned=true;return setErr(`${staffName(doc)} عنده ميعاد مع ${clash.patientName} الساعة ${clash.time}. لو متأكد دوس حفظ تاني.`)}
   const pat=await ensurePatient(pv,val("ap_phone"),val("ap_src"));const type=val("ap_type");
   const info=sessionInfo(pat.id,kind,id,date,time,type);
   const docsList=[...new Set([doc,doc2].filter(Boolean))];
   const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:docsList,kind,kindLabel:withNo(info.label,Math.round(num(val("ap_no")))||null),sessNo:kind==="exam"?null:(Math.round(num(val("ap_no")))||null),packId:info.packId||null,date,time,duration:dur,typeId:type||null,typeName:type?typeName(type):"",note:val("ap_note").trim()};
   if(id){await S.db.doc("appts/"+id).update(body);if(S.old.appts[id]){S.old.appts[id]={...S.old.appts[id],...body};merge()}}
-  else await S.db.collection("appts").doc().set({...body,status:"booked",confirmed:false,createdAt:Date.now(),by:S.mySid});
+  else{const full={...body,status:"booked",confirmed:false,createdAt:Date.now(),by:S.mySid};if(S.role==="owner"&&dupOf({...full,id:"_new"}))full.dupOk=true;
+    await S.db.collection("appts").doc().set(full);if(!full.dupOk&&dupOf({...full,id:"_new"})){dupNotify(full);closeSheet();toast("اتسجل، ومستني موافقة د. محي عشان يظهر");return}}
   closeSheet();toast("الميعاد اتحفظ");
 }
 const TSV=()=>firebase.firestore.FieldValue.serverTimestamp();
@@ -1352,15 +1356,29 @@ function payChip(a){
   const v=S.visits[a.id];const P=payerOf(a.patientId);
   return (v?"":`<span class="chip c-mute">لسه ما اتسجلش</span> `)+(P?`<span class="chip c-acc">على ${esc(P.name)}</span>`:patBalChip(a.patientId));
 }
-function needsRecord(a){return a.status==="done"&&(!S.visits[a.id]||!a.creditSet)} // finished, but Reham hasn't settled doctor + money yet
-function dupOf(a){ // an earlier booking for the same patient, same day and time → this one is the duplicate
-  if(["cancelled","noshow"].includes(a.status))return null;
-  return Object.values(S.appts).find(x=>x.id!==a.id&&x.patientId===a.patientId&&x.date===a.date&&x.time===a.time&&!["cancelled","noshow"].includes(x.status)&&((x.createdAt||0)<(a.createdAt||0)||((x.createdAt||0)===(a.createdAt||0)&&x.id<a.id)))||null}
-async function delDupAppt(id){const a=S.appts[id];if(!a||S.visits[id]||!dupOf(a))return;
+function needsRecord(a){return a.status==="done"&&(!S.visits[a.id]||!a.creditSet)&&shownAppt(a)} // finished, but Reham hasn't settled doctor + money yet
+function sameSlot(x,a){return x.patientId===a.patientId&&x.date===a.date&&(x.time===a.time||(!!a.typeId&&x.typeId===a.typeId))}
+function dupOf(a){ // an earlier booking for the same patient, same day, same time or same session type → this one is a duplicate
+  if(!a||a.dupOk||["cancelled","noshow"].includes(a.status))return null;
+  return Object.values(S.appts).find(x=>x.id!==a.id&&sameSlot(x,a)&&!["cancelled","noshow"].includes(x.status)&&((x.createdAt||0)<(a.createdAt||0)||((x.createdAt||0)===(a.createdAt||0)&&x.id<a.id)))||null}
+function dupPending(a){return !!dupOf(a)&&!S.visits[a.id]} // waits for the owner; hidden from everyone else until then
+function shownAppt(a){return !dupPending(a)}
+function dupPanel(){ // owner: duplicates waiting for approval
+  const list=Object.values(S.appts).filter(a=>a.date>=today()&&dupPending(a)).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  if(!list.length)return "";
+  if(S.role!=="owner")return `<div class="note">فيه ${list.length} حجز مكرر مستني موافقة د. محي، ومش هيظهر لحد ما يوافق.</div>`;
+  return `<div class="panel" style="border-color:var(--bad)"><h2>حجوزات مكررة محتاجة موافقتك</h2><div class="list">${list.map(a=>{const o=dupOf(a);return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.patientName)} · ${esc(dayLabel(a.date))} ${esc(hour12(a.time))} <span class="chip c-bad">مكرر</span></span>
+  <span class="end bar"><button class="btn sm teal" data-act="okDup" data-id="${a.id}">وافق</button><button class="btn sm danger" data-act="delDupAppt" data-id="${a.id}" data-confirm>امسح</button></span>
+  <span class="m">${esc(a.typeName||"")} مع ${esc(apptDocs(a).map(staffName).join(" و"))} · عنده حجز تاني الساعة ${esc(hour12(o.time))} ${esc(o.typeName||"")} مع ${esc(apptDocs(o).map(staffName).join(" و"))}${a.by?` · حجزه ${esc(staffName(a.by))}`:""}</span><span></span></div>`}).join("")}</div></div>`}
+async function okDup(id){const a=S.appts[id];if(!a)return;await S.db.doc("appts/"+id).update({dupOk:true,dupOkAt:Date.now()});audit("session","وافق على حجز مكرر",{target:a.patientName,date:a.date,info:`${hour12(a.time)} · ${a.typeName||""}`});toast("اتوافق عليه، وبقى ظاهر")}
+function dupNotify(body){ // tell the owner a duplicate is waiting
+  if(S.role==="owner")return;const o=dupOf(body);if(!o)return;
+  alertOwner(`حجز مكرر محتاج موافقتك`,`${body.patientName} · ${dmy(body.date)} ${hour12(body.time)} ${body.typeName||""} · عنده حجز تاني ${hour12(o.time)} · ${staffName(S.mySid)}`,4)}
+async function delDupAppt(id){const a=S.appts[id];if(!a||S.visits[id]||!dupOf(a)||S.role!=="owner"&&!a.by)return;
   await S.db.doc("appts/"+id).delete();delete S.live.appts[id];forget("appts",id);audit("session","مسح حجز مكرر",{target:a.patientName,date:a.date,info:`الساعة ${hour12(a.time)}`});toast("الحجز المكرر اتمسح")}
 function sessionRow(a){
   const v=S.visits[a.id];const docs=v?visitDocs(v):apptDocs(a).map(staffName).join(" + ");
-  const dup=dupOf(a)&&!S.visits[a.id]&&["booked","arrived"].includes(a.status);
+  const dup=false; // pending duplicates are hidden and handled in the owner's panel
   const quick=(dup?`<button class="btn sm danger" data-act="delDupAppt" data-id="${a.id}" data-confirm>امسح المكرر</button>`:"")+(a.status==="booked"&&!dup?`<button class="btn sm" data-act="quickArrive" data-id="${a.id}">وصل</button>`:"")
     +(["booked","arrived"].includes(a.status)?`<button class="btn sm danger" data-act="quickCancel" data-id="${a.id}">لغى</button>`:"")
     +`<button class="btn sm ${needsRecord(a)?"teal":""}" data-act="openSession" data-id="${a.id}">${needsRecord(a)?"أكّد":"فتح"}</button>`;
@@ -1370,7 +1388,7 @@ function sessionRow(a){
 }
 function vSessions(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
-  const appts=Object.values(S.appts).filter(a=>a.date===d).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(appts),0);
+  const appts=Object.values(S.appts).filter(a=>a.date===d&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(appts),0);
   const loose=Object.values(S.visits).filter(v=>v.date===d&&!(v.apptId&&S.appts[v.apptId])).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   const ps=Object.values(S.payments).filter(p=>p.date===d);
   let remain=0;const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta;
@@ -1378,6 +1396,7 @@ function vSessions(){
   const came=appts.filter(a=>["arrived","started","done"].includes(a.status)).length+loose.length;
   const missing=Object.values(S.appts).filter(needsRecord);
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn" data-act="newPay">+ دفعة</button><button class="btn primary" data-act="newWalkin">+ جلسة من غير ميعاد</button></div>
+  ${dupPanel()}
   ${missing.length?`<div class="note">فيه ${missing.length} جلسة خلصت ومستنية تأكيدك للدكتور والفلوس${missing.some(a=>a.date!==d)?"، منهم في أيام تانية":""}. دوس «أكّد» جنبها.</div>`:""}
   <div class="stats">
     <div class="stat"><div class="k">جم النهارده</div><div class="v num">${came}</div></div>
@@ -1473,6 +1492,7 @@ async function saveWalkin(){
   const pat=await ensurePatient(pv,val("w_phone"),val("w_src"));const type=val("w_type");const info=sessionInfo(pat.id,kind,null,date,time,type);
   const ref=S.db.collection("appts").doc();
   const body={patientId:pat.id,patientName:pat.name,doctorSid:doc,doctors:[doc],kind,kindLabel:info.label,packId:info.packId||null,date,time,duration:60,typeId:type||null,typeName:type?typeName(type):"",note:"من غير ميعاد",walkin:true,status:"booked",confirmed:false,createdAt:Date.now(),by:S.mySid};
+  if(dupOf({...body,id:ref.id})){if(S.role==="owner")body.dupOk=true;else{await ref.set(body);dupNotify(body);closeSheet();toast("المريض ده عنده حجز تاني النهارده بنفس النوع أو الميعاد، فاتسجل ومستني موافقة د. محي");return}}
   await ref.set(body);S.live.appts[ref.id]={id:ref.id,...body};merge();sheetSession(ref.id);
 }
 /* ---------- review ---------- */
@@ -2063,9 +2083,9 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","delDupAppt","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -2177,6 +2197,7 @@ document.addEventListener("click",async e=>{
     case "saveWarning":guard(t,()=>saveWarning(id));break;
     case "delWarning":guard(t,()=>delWarning(id));break;
     case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
+    case "okDup":guard(t,()=>okDup(id));break;
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
     case "newPayerType":sheetPayerType(null);break;
