@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 47";
+const APP_VERSION="28 أكتوبر · 48";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1173,7 +1173,7 @@ async function saveEntry(id){
   closeSheet();toast("اتبعتت للمراجعة");
 }
 /* ---------- appointments ---------- */
-let entryAppt=null,apptWarned=false;
+let entryAppt=null,apptWarned=false,apptDupWarned=false;
 const APPT_STATUS={booked:["c-mute","محجوز"],arrived:["c-warn","وصل ومستني"],started:["c-acc","جوه الجلسة"],done:["c-ok","خلص"],noshow:["c-warn","محضرش"],cancelled:["c-bad","اتلغى"]};
 function apptChip(a){const [c,l]=APPT_STATUS[a.status]||APPT_STATUS.booked;return `<span class="chip ${c}">${l}</span>`}
 function apptDocs(a){return (a.doctors&&a.doctors.length?a.doctors:[a.doctorSid]).filter(Boolean)}
@@ -1229,7 +1229,7 @@ function apptRow(a,view,showDoc){
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${dupOf(a)?`<span class="chip c-bad">حجز مكرر</span>`:""} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
@@ -1253,7 +1253,7 @@ function vMyAppts(){
   ${list.length?`<div class="list">${list.map(a=>apptRow(a,"doctor",apptDocs(a).length>1)).join("")}</div>`:`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}`;
 }
 function sheetAppt(id){
-  const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session"};if(!a)return;apptWarned=false;
+  const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session"};if(!a)return;apptWarned=false;apptDupWarned=false;
   const cur=a.patientId&&S.patients[a.patientId]?pLabel(S.patients[a.patientId]):(a.patientName||"");
   const docOpts=sel=>workerOpts().map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
   const ds=apptDocs(a);
@@ -1282,6 +1282,11 @@ async function saveAppt(id){
   const pv=val("ap_pat").trim(),doc=val("ap_doc"),doc2=val("ap_doc2"),date=val("ap_date"),time=val("ap_time"),dur=num(val("ap_dur"))||60,kind=radio("ap_kind")||"session";
   if(!pv)return setErr("اختار المريض");if(!doc)return setErr("اختار الدكتور");if(!date||!time)return setErr("اختار اليوم والساعة");
   const s0=mins(time),clash=Object.values(S.appts).find(x=>x.id!==id&&apptDocs(x).includes(doc)&&x.date===date&&!["cancelled","noshow","done"].includes(x.status)&&s0<mins(x.time)+(x.duration||60)&&mins(x.time)<s0+dur);
+  const pp0=findPatient(pv);
+  if(pp0){const same=Object.values(S.appts).filter(x=>x.id!==id&&x.patientId===pp0.id&&x.date===date&&!["cancelled","noshow"].includes(x.status));
+    const overlap=same.find(x=>s0<mins(x.time)+(x.duration||60)&&mins(x.time)<s0+dur);
+    if(overlap)return setErr(`${pp0.name} عنده حجز فعلاً الساعة ${hour12(overlap.time)} اليوم ده مع ${apptDocs(overlap).map(staffName).join(" و")}. مينفعش يتحجز مرتين في نفس الميعاد؛ لو عايز تغيّر الميعاد افتح الحجز القديم وعدّله.`);
+    if(same.length&&!apptDupWarned){apptDupWarned=true;return setErr(`${pp0.name} عنده حجز تاني اليوم ده الساعة ${same.map(x=>hour12(x.time)).join(" و")}. لو ده حجز تاني فعلاً (نوع جلسة تاني مثلاً) دوس حفظ تاني.`)}}
   if(clash&&!apptWarned){apptWarned=true;return setErr(`${staffName(doc)} عنده ميعاد مع ${clash.patientName} الساعة ${clash.time}. لو متأكد دوس حفظ تاني.`)}
   const pat=await ensurePatient(pv,val("ap_phone"),val("ap_src"));const type=val("ap_type");
   const info=sessionInfo(pat.id,kind,id,date,time,type);
@@ -1348,12 +1353,18 @@ function payChip(a){
   return (v?"":`<span class="chip c-mute">لسه ما اتسجلش</span> `)+(P?`<span class="chip c-acc">على ${esc(P.name)}</span>`:patBalChip(a.patientId));
 }
 function needsRecord(a){return a.status==="done"&&(!S.visits[a.id]||!a.creditSet)} // finished, but Reham hasn't settled doctor + money yet
+function dupOf(a){ // an earlier booking for the same patient, same day and time → this one is the duplicate
+  if(["cancelled","noshow"].includes(a.status))return null;
+  return Object.values(S.appts).find(x=>x.id!==a.id&&x.patientId===a.patientId&&x.date===a.date&&x.time===a.time&&!["cancelled","noshow"].includes(x.status)&&((x.createdAt||0)<(a.createdAt||0)||((x.createdAt||0)===(a.createdAt||0)&&x.id<a.id)))||null}
+async function delDupAppt(id){const a=S.appts[id];if(!a||S.visits[id]||!dupOf(a))return;
+  await S.db.doc("appts/"+id).delete();delete S.live.appts[id];forget("appts",id);audit("session","مسح حجز مكرر",{target:a.patientName,date:a.date,info:`الساعة ${hour12(a.time)}`});toast("الحجز المكرر اتمسح")}
 function sessionRow(a){
   const v=S.visits[a.id];const docs=v?visitDocs(v):apptDocs(a).map(staffName).join(" + ");
-  const quick=(a.status==="booked"?`<button class="btn sm" data-act="quickArrive" data-id="${a.id}">وصل</button>`:"")
+  const dup=dupOf(a)&&!S.visits[a.id]&&["booked","arrived"].includes(a.status);
+  const quick=(dup?`<button class="btn sm danger" data-act="delDupAppt" data-id="${a.id}" data-confirm>امسح المكرر</button>`:"")+(a.status==="booked"&&!dup?`<button class="btn sm" data-act="quickArrive" data-id="${a.id}">وصل</button>`:"")
     +(["booked","arrived"].includes(a.status)?`<button class="btn sm danger" data-act="quickCancel" data-id="${a.id}">لغى</button>`:"")
     +`<button class="btn sm ${needsRecord(a)?"teal":""}" data-act="openSession" data-id="${a.id}">${needsRecord(a)?"أكّد":"فتح"}</button>`;
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} ${lateChip(a)} ${payChip(a)}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${dup?`<span class="chip c-bad">حجز مكرر</span>`:""} ${apptChip(a)} ${waitChip(a)} ${lateChip(a)} ${payChip(a)}</span>
   <span class="end bar">${quick}</span>
   <span class="m">${packMismatch(a)} ${[kindOf(a),docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
@@ -2054,7 +2065,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","delDupAppt","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -2166,6 +2177,7 @@ document.addEventListener("click",async e=>{
     case "saveWarning":guard(t,()=>saveWarning(id));break;
     case "delWarning":guard(t,()=>delWarning(id));break;
     case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
+    case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
     case "newPayerType":sheetPayerType(null);break;
     case "editPayerType":sheetPayerType(id);break;
