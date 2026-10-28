@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 49";
+const APP_VERSION="28 أكتوبر · 50";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1376,6 +1376,31 @@ function dupNotify(body){ // tell the owner a duplicate is waiting
   alertOwner(`حجز مكرر محتاج موافقتك`,`${body.patientName} · ${dmy(body.date)} ${hour12(body.time)} ${body.typeName||""} · عنده حجز تاني ${hour12(o.time)} · ${staffName(S.mySid)}`,4)}
 async function delDupAppt(id){const a=S.appts[id];if(!a||S.visits[id]||!dupOf(a)||S.role!=="owner"&&!a.by)return;
   await S.db.doc("appts/"+id).delete();delete S.live.appts[id];forget("appts",id);audit("session","مسح حجز مكرر",{target:a.patientName,date:a.date,info:`الساعة ${hour12(a.time)}`});toast("الحجز المكرر اتمسح")}
+/* tapping a stat on the day's sessions lists who is behind the number */
+function statSheet(k){
+  const d=S.ui.date,appts=Object.values(S.appts).filter(a=>a.date===d&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const loose=Object.values(S.visits).filter(v=>v.date===d&&!(v.apptId&&S.appts[v.apptId]));
+  const docs=a=>{const v=S.visits[a.id];return v?visitDocs(v):apptDocs(a).map(staffName).join(" + ")};
+  const row=(t,end,m)=>`<div class="row" style="cursor:default"><span class="t">${t}</span><span class="end">${end||""}</span><span class="m">${m||""}</span><span></span></div>`;
+  let title="",body="";
+  if(k==="came"){title="اللي جم";
+    const st=a=>a.status==="arrived"?`<span class="chip c-warn">مستني${waitMin(a)!=null?` من ${hm(waitMin(a))}`:""}</span>`:a.status==="started"?`<span class="chip c-acc">جوه دلوقتي${apptElapsed(a)!=null?` من ${hm(apptElapsed(a))}`:""}</span>`:`<span class="chip c-ok">خلص${a.end?` ${esc(hour12(a.end))}`:""}</span>`;
+    const list=appts.filter(a=>["arrived","started","done"].includes(a.status));
+    const order={arrived:0,started:1,done:2};list.sort((a,b)=>order[a.status]-order[b.status]||(a.time||"").localeCompare(b.time||""));
+    body=(list.length||loose.length)?`<div class="list">${list.map(a=>row(esc(a.patientName),st(a),esc([`ميعاده ${hour12(a.time)}`,docs(a),apptTimes(a)].filter(Boolean).join(" · ")))).join("")}${loose.map(v=>row(esc(v.patientName),`<span class="chip c-ok">اتسجلت</span>`,esc(visitDocs(v)))).join("")}</div>`:`<div class="empty"><b>محدش جه لسه</b></div>`;
+    const c={arrived:list.filter(a=>a.status==="arrived").length,started:list.filter(a=>a.status==="started").length,done:list.filter(a=>a.status==="done").length+loose.length};
+    body=`<div class="stats"><div class="stat"><div class="k">مستني</div><div class="v num">${c.arrived}</div></div><div class="stat"><div class="k">جوه دلوقتي</div><div class="v num">${c.started}</div></div><div class="stat"><div class="k">خلص</div><div class="v num">${c.done}</div></div></div>`+body}
+  else if(k==="no"){title="محضروش أو كنسلوا";const list=appts.filter(a=>["noshow","cancelled"].includes(a.status));
+    body=list.length?`<div class="list">${list.map(a=>row(esc(a.patientName),`<span class="chip ${a.status==="noshow"?"c-warn":"c-bad"}">${a.status==="noshow"?"محضرش":"اتلغى"}</span>`,esc([`ميعاده ${hour12(a.time)}`,docs(a),a.cancelReason||""].filter(Boolean).join(" · ")))).join("")}</div>`:`<div class="empty"><b>مفيش</b></div>`}
+  else if(k==="paid"){title="اتحصّل النهارده";const items=[];
+    for(const v of Object.values(S.visits))if(v.date===d&&(v.paid||0))items.push({n:v.patientName,a:v.paid,m:v.method,w:`جلسة ${v.typeName||""}`});
+    for(const p of Object.values(S.payments))if(p.date===d&&p.kind!=="discount"&&(p.amount||0))items.push({n:p.patientName||p.payerName,a:p.amount,m:p.method,w:p.kind==="payer"?"دفعة من جهة":p.packId?`على ${packTitle(packOf(p.patientId,p.packId)||{name:"باكدج"})}`:"دفعة"});
+    items.sort((a,b)=>b.a-a.a);body=items.length?`<div class="list">${items.map(x=>row(esc(x.n),`<span class="money">${money(x.a)}</span>`,esc(`${METHODS[x.m]||"كاش"} · ${x.w}`))).join("")}</div>`:`<div class="empty"><b>متحصّلش حاجة لسه</b></div>`}
+  else if(k==="owe"){title="عليهم فلوس من اللي جم";const ids=[...new Set([...appts.filter(a=>!["noshow","cancelled"].includes(a.status)).map(a=>a.patientId),...loose.map(v=>v.patientId)])];
+    const list=ids.map(id=>S.patients[id]).filter(p=>p&&(p.charged||0)-(p.paid||0)>0).sort((a,b)=>((b.charged-b.paid)-(a.charged-a.paid)));
+    body=list.length?`<div class="list">${list.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end"><span class="chip c-bad">عليه ${money(p.charged-p.paid)}</span></span><span class="m">${esc((p.packs||[]).filter(x=>packOwed(x)>0).map(x=>`${packTitle(x)}: ${money(packOwed(x))}`).join(" · ")||"حسابه كله")}</span><span></span></button>`).join("")}</div>`:`<div class="empty"><b>محدش عليه فلوس</b></div>`}
+  openSheet(`${title} · ${dayLabel(d)}`,body);
+}
 function sessionRow(a){
   const v=S.visits[a.id];const docs=v?visitDocs(v):apptDocs(a).map(staffName).join(" + ");
   const dup=false; // pending duplicates are hidden and handled in the owner's panel
@@ -1399,10 +1424,10 @@ function vSessions(){
   ${dupPanel()}
   ${missing.length?`<div class="note">فيه ${missing.length} جلسة خلصت ومستنية تأكيدك للدكتور والفلوس${missing.some(a=>a.date!==d)?"، منهم في أيام تانية":""}. دوس «أكّد» جنبها.</div>`:""}
   <div class="stats">
-    <div class="stat"><div class="k">جم النهارده</div><div class="v num">${came}</div></div>
-    <div class="stat"><div class="k">محضروش / كنسلوا</div><div class="v num">${appts.filter(a=>["noshow","cancelled"].includes(a.status)).length}</div></div>
-    <div class="stat"><div class="k">اتحصّل للمركز (كاش · InstaPay)</div><div class="v money">${money(cash+insta)}</div><div class="sub">${money(cash)} · ${money(insta)}</div></div>
-    <div class="stat"><div class="k">لسه على اللي جم (حسابهم كله)</div><div class="v money" style="color:${remain?"var(--bad)":"inherit"}">${money(remain)}</div></div>
+    <button class="stat tap" data-act="statList" data-k="came"><div class="k">جم النهارده ›</div><div class="v num">${came}</div></button>
+    <button class="stat tap" data-act="statList" data-k="no"><div class="k">محضروش / كنسلوا ›</div><div class="v num">${appts.filter(a=>["noshow","cancelled"].includes(a.status)).length}</div></button>
+    <button class="stat tap" data-act="statList" data-k="paid"><div class="k">اتحصّل للمركز (كاش · InstaPay) ›</div><div class="v money">${money(cash+insta)}</div><div class="sub">${money(cash)} · ${money(insta)}</div></button>
+    <button class="stat tap" data-act="statList" data-k="owe"><div class="k">لسه على اللي جم (حسابهم كله) ›</div><div class="v money" style="color:${remain?"var(--bad)":"inherit"}">${money(remain)}</div></button>
   </div>
   ${appts.length||loose.length?`<div class="list">${appts.map(sessionRow).join("")}${loose.map(v=>`<button class="row" data-act="editVisit" data-id="${v.id}"><span class="t">${esc(v.time||"")} · ${esc(v.patientName)} ${v.completion==="half"&&!v.doctor2Id?`<span class="chip c-warn">نص</span>`:""}</span><span class="end">${v.packId?`<span class="chip c-teal">من الباكدج</span>`:(v.net||0)-(v.paid||0)>0?`<span class="chip c-bad">عليه ${money((v.net||0)-(v.paid||0))}</span>`:`<span class="chip c-ok">مدفوعة</span>`}</span><span class="m">${esc(visitDocs(v))} · ${esc(v.typeName||"")}</span><span></span></button>`).join("")}</div>`
   :`<div class="empty"><b>مفيش جلسات اليوم ده</b>المواعيد اللي اتحجزت لليوم ده بتظهر هنا لوحدها، والحالة اللي جت من غير ميعاد ضيفها من «+ جلسة من غير ميعاد».</div>`}
@@ -2085,7 +2110,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -2198,6 +2223,7 @@ document.addEventListener("click",async e=>{
     case "delWarning":guard(t,()=>delWarning(id));break;
     case "saveLeave":guard(t,()=>saveLeave(id,t.dataset.m));break;
     case "okDup":guard(t,()=>okDup(id));break;
+    case "statList":statSheet(t.dataset.k);break;
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
     case "newPayerType":sheetPayerType(null);break;
