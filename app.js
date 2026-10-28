@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 51";
+const APP_VERSION="28 أكتوبر · 52";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -806,7 +806,10 @@ function staffByName(n){const q=normName(n).replace(/^د\.?\s*/,"");if(!q)return
 function parseImport(text){ // each line: day, name, in, out  (comma, tab, dash or several spaces between)
   return (text||"").split(/\r?\n/).map(l=>l.trim()).filter(Boolean).map(line=>{
     const parts=nd(line).split(/\s*[,،\t|]\s*|\s{2,}/).filter(Boolean);
-    const [d,n,i,o]=parts;const date=parseDate(d),s=staffByName(n),tin=parseTime(i),tout=parseTime(o);
+    const [d,n,i,o]=parts;const date=parseDate(d),s=staffByName(n);
+    if(/غياب|غاب|اجاز|إجاز|إذن|اذن/.test(i||"")){const leave=/خصم/.test(i)?"deduct":/إذن|اذن|اجاز|إجاز/.test(i)?"paid":"none"; // "غياب بخصم" / "إذن" / "غياب"
+      return{line,date,sid:s?.id,name:s?.name,tin:"",tout:"",leave,err:!date?"التاريخ مش مفهوم":!s?"الاسم مش موجود في الفريق":"",exists:false}}
+    const tin=parseTime(i),tout=parseTime(o);
     const err=!date?"التاريخ مش مفهوم":!s?"الاسم مش موجود في الفريق":tin===null||tout===null?"الساعة مش مفهومة":!tin&&!tout?"مفيش حضور ولا انصراف":tin&&tout&&mins(tout)<=mins(tin)?"الانصراف قبل الحضور":"";
     return{line,date,sid:s?.id,name:s?.name,tin,tout,err,exists:!!(date&&s&&S.att[`${date}_${s.id}`])}})}
 function importPanel(){
@@ -819,16 +822,19 @@ function importPanel(){
   <button class="btn primary" data-act="doImport">استيراد</button></div>`}
 function drawImportPreview(){
   const el=document.getElementById("imp_prev");if(!el)return;const rows=parseImport(val("imp_text"));if(!rows.length){el.innerHTML="";return}
-  const ok=rows.filter(r=>!r.err).length,bad=rows.length-ok,ex=rows.filter(r=>!r.err&&r.exists).length;
+  const ok=rows.filter(r=>!r.err).length,bad=rows.length-ok,ex=rows.filter(r=>!r.err&&r.exists).length; // ok counts attendance days and absences
   el.innerHTML=`<div class="note">${ok} يوم جاهز${bad?` · <b style="color:var(--bad)">${bad} سطر فيه مشكلة</b>`:""}${ex?` · ${ex} متسجل قبل كده`:""}</div>
-  <div class="tblwrap"><table><thead><tr><th>اليوم</th><th>الاسم</th><th>حضور</th><th>انصراف</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.date?esc(dmy(r.date)):"—"}</td><td>${esc(r.name||"—")}</td><td>${esc(r.tin||"—")}</td><td>${esc(r.tout||"—")}</td><td style="white-space:normal">${r.err?`<span class="chip c-bad">${esc(r.err)}</span><div class="sub">${esc(r.line)}</div>`:r.exists?`<span class="chip c-warn">متسجل</span>`:`<span class="chip c-ok">تمام</span>`}</td></tr>`).join("")}</tbody></table></div>`}
+  <div class="tblwrap"><table><thead><tr><th>اليوم</th><th>الاسم</th><th>حضور</th><th>انصراف</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.date?esc(dmy(r.date)):"—"}</td><td>${esc(r.name||"—")}</td><td>${r.leave?`<span class="chip c-warn">${r.leave==="deduct"?"غياب بخصم":r.leave==="paid"?"إذن من غير خصم":"غياب"}</span>`:esc(r.tin||"—")}</td><td>${r.leave?"":esc(r.tout||"—")}</td><td style="white-space:normal">${r.err?`<span class="chip c-bad">${esc(r.err)}</span><div class="sub">${esc(r.line)}</div>`:r.exists?`<span class="chip c-warn">متسجل</span>`:`<span class="chip c-ok">تمام</span>`}</td></tr>`).join("")}</tbody></table></div>`}
 async function doImport(){
   const rows=parseImport(val("imp_text")).filter(r=>!r.err),over=document.getElementById("imp_over").checked,err=document.getElementById("impErr");
-  const todo=rows.filter(r=>over||!r.exists);if(!todo.length){err.textContent="مفيش أيام جديدة تتسجل";return}
+  const leaves=rows.filter(r=>r.leave&&r.leave!=="none");
+  if(leaves.length){const keep=(S.leaves||[]).filter(l=>!leaves.some(r=>r.sid===l.sid&&r.date===l.date));
+    await S.db.doc("priv/leaves").set({list:[...keep,...leaves.map(r=>({sid:r.sid,date:r.date,type:r.leave,by:S.mySid,at:Date.now()}))]})}
+  const todo=rows.filter(r=>!r.leave&&(over||!r.exists));if(!todo.length&&!leaves.length){err.textContent="مفيش أيام جديدة تتسجل";return}
   for(let i=0;i<todo.length;i+=400){const b=S.db.batch();todo.slice(i,i+400).forEach(r=>b.set(S.db.doc(`att/${r.date}_${r.sid}`),{date:r.date,staffId:r.sid,in:r.tin||"",out:r.tout||"",note:"من قبل السيستم",by:S.mySid,imported:true}));await b.commit()}
   todo.forEach(r=>{S.old.att[`${r.date}_${r.sid}`]={id:`${r.date}_${r.sid}`,date:r.date,staffId:r.sid,in:r.tin||"",out:r.tout||""}});merge();
-  audit("att","استيراد حضور قبل السيستم",{info:`${todo.length} يوم · ${[...new Set(todo.map(r=>r.name))].join("، ")}`});
-  document.getElementById("imp_text").value="";drawImportPreview();err.textContent="";toast(`اتسجل ${todo.length} يوم حضور`);
+  audit("att","استيراد حضور قبل السيستم",{info:`${todo.length} يوم${leaves.length?` و${leaves.length} غياب`:""} · ${[...new Set([...todo,...leaves].map(r=>r.name))].join("، ")}`});
+  document.getElementById("imp_text").value="";drawImportPreview();err.textContent="";toast(`اتسجل ${todo.length} يوم حضور${leaves.length?` و${leaves.length} غياب`:""}`);
 }
 /* ---------- views: reports ---------- */
 function expenseTips(m,rv,ex,pr,flags){
