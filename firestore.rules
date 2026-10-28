@@ -66,7 +66,6 @@ service cloud.firestore {
     // ---- owner only: salaries, commissions ----
     match /priv/{doc=**}    { allow read, write: if isOwner(); }
 
-    // ---- sessions the doctors log (no prices in here) ----
     // ---- audit log: everyone's changes are written here; only the owner reads it; nobody edits or deletes it ----
     match /audit/{id} {
       allow read: if isOwner();
@@ -74,6 +73,7 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ---- sessions the doctors log (no prices in here) ----
     match /log/{id} {
       allow read: if isAdmin() || (isStaff() && resource.data.doctorSid == mySid());
       allow create: if isAdmin()
