@@ -14,6 +14,18 @@ service cloud.firestore {
     function isStaff() { return active(); }
     function mySid() { return me().staffId; }
 
+    // ---- month lock: pub/lock {through:'YYYY-MM'} — nobody but the owner writes anything dated in a locked month ----
+    function lockPath() { return /databases/$(database)/documents/pub/lock; }
+    function isOpen(d) { return !exists(lockPath()) || !('through' in get(lockPath()).data) || string(d) > get(lockPath()).data.through + '-31'; }
+    function openNew() { return isOwner() || isOpen(request.resource.data.get('date', '9999')); }
+    function openOld() { return isOwner() || isOpen(resource.data.get('date', '9999')); }
+    function openWrite() {
+      return isOwner()
+        || (request.method == 'create' && openNew())
+        || (request.method == 'update' && openOld() && openNew())
+        || (request.method == 'delete' && openOld());
+    }
+
     // ---- first-time setup: the very first account becomes the owner ----
     match /meta/setup {
       allow get: if true;
@@ -59,9 +71,9 @@ service cloud.firestore {
     match /cfg/{doc}        { allow read, write: if isAdmin(); }
     match /patients/{id}    { allow read, write: if isAdmin(); }
     match /photos/{id}      { allow read, write: if isAdmin(); }
-    match /visits/{id}      { allow read, write: if isAdmin(); }
-    match /payments/{id}    { allow read, write: if isAdmin(); }
-    match /exp/{id}         { allow read, write: if isAdmin(); }
+    match /visits/{id}      { allow read: if isAdmin(); allow write: if isAdmin() && openWrite(); }
+    match /payments/{id}    { allow read: if isAdmin(); allow write: if isAdmin() && openWrite(); }
+    match /exp/{id}         { allow read: if isAdmin(); allow write: if isAdmin() && openWrite(); }
 
     // ---- owner only: salaries, commissions ----
     match /priv/{doc=**}    { allow read, write: if isOwner(); }
@@ -79,11 +91,11 @@ service cloud.firestore {
       allow create: if isAdmin()
         || (isStaff() && request.resource.data.doctorSid == mySid()
             && request.resource.data.status == 'pending'
-            && !('review' in request.resource.data));
+            && !('review' in request.resource.data) && openNew());
       allow update: if isAdmin()
         || (isStaff() && resource.data.doctorSid == mySid() && resource.data.status == 'pending'
             && request.resource.data.doctorSid == mySid() && request.resource.data.status == 'pending'
-            && !('review' in request.resource.data));
+            && !('review' in request.resource.data) && openOld() && openNew());
       allow delete: if isAdmin()
         || (isStaff() && resource.data.doctorSid == mySid() && resource.data.status == 'pending');
     }
@@ -99,8 +111,8 @@ service cloud.firestore {
     }
     match /appts/{id} {
       allow read: if isAdmin() || (isStaff() && mySid() in resource.data.doctors);
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin() || apptDoctorUpdate();
+      allow create, delete: if isAdmin() && openWrite();
+      allow update: if (isAdmin() || apptDoctorUpdate()) && openWrite();
     }
 
     // ---- attendance: everyone checks themselves in/out (server clock); only the owner sees or edits others ----
@@ -113,18 +125,18 @@ service cloud.firestore {
     function inBackfill(d) { return backfillActive() && d >= backfill().from && d <= backfill().to; }
     match /att/{id} {
       allow read: if isOwner() || backfillActive() || (isStaff() && resource.data.staffId == mySid());
-      allow create: if isOwner() || inBackfill(request.resource.data.date)
+      allow create: if isOwner() || (inBackfill(request.resource.data.date) && openNew())
         || (isStaff() && request.resource.data.staffId == mySid()
             && id == request.resource.data.date + '_' + mySid()
             && request.resource.data.inAt == request.time
             && request.resource.data.out == ''
             && request.resource.data.keys().hasOnly(['date', 'staffId', 'inAt', 'in', 'out', 'note', 'by', 'inLoc']));
-      allow update: if isOwner() || (inBackfill(resource.data.date) && inBackfill(request.resource.data.date))
+      allow update: if isOwner() || (inBackfill(resource.data.date) && inBackfill(request.resource.data.date) && openOld() && openNew())
         || (isStaff() && resource.data.staffId == mySid()
             && !('outAt' in resource.data)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt', 'outLoc'])
             && request.resource.data.outAt == request.time);
-      allow delete: if isOwner() || inBackfill(resource.data.date);
+      allow delete: if isOwner() || (inBackfill(resource.data.date) && openOld());
     }
   }
 }
