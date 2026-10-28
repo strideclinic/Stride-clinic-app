@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="28 أكتوبر · 50";
+const APP_VERSION="28 أكتوبر · 51";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1225,6 +1225,12 @@ function remindBtn(a){
   if(a.date<today()||!["booked"].includes(a.status))return "";const num=waNumber(S.patients[a.patientId]?.phone)||waNumber(S.patients[a.patientId]?.phone2);
   if(!num)return `<span class="chip c-mute">مفيش موبايل للتذكير</span>`;
   return `<a class="btn sm ${a.remindedAt?"":"teal"}" href="https://wa.me/${num}?text=${encodeURIComponent(remindText(a))}" target="_blank" rel="noopener" data-act="remind" data-id="${a.id}">${a.remindedAt?"اتفكّر ✓":"تذكير واتساب"}</a>`}
+function cancelWho(a){if(a.status==="noshow")return "محضرش من غير ما يبلغ";const r=a.cancelReason||"";
+  return /المريض/.test(r)?"المريض لغى":/المركز/.test(r)?"المركز لغى":/اتأجل/.test(r)?"اتأجل لميعاد تاني":r||"اتلغى"}
+function cancelledList(list,view){ // cancelled / no-show at the end, so the day's full schedule stays visible
+  const off=list.filter(a=>["cancelled","noshow"].includes(a.status));if(!off.length)return "";
+  return `<h3 style="font-size:14px;margin:14px 0 6px">اتلغوا أو محضروش (${off.length})</h3><div class="list">${off.map(a=>`<div class="row stack" style="cursor:default;opacity:.85"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} <span class="chip ${a.status==="noshow"?"c-warn":"c-bad"}">${esc(cancelWho(a))}</span></span>
+    <span class="end bar">${view==="admin"?`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`:""}</span><span class="m">${esc([kindOf(a),apptDocs(a).length>1||view==="admin"?apptDocs(a).map(staffName).join(" + "):""].filter(Boolean).join(" · "))}</span><span></span></div>`).join("")}</div>`}
 function apptRow(a,view,showDoc){
   const doctorBtns=a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"";
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
@@ -1237,7 +1243,7 @@ function apptRow(a,view,showDoc){
 function vAppts(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
   const list=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(list),0);
-  const active=list.filter(a=>a.status!=="cancelled");
+  const active=list.filter(a=>!["cancelled","noshow"].includes(a.status));
   const byDoc={};active.forEach(a=>{const k=apptDocs(a)[0]||"—";(byDoc[k]=byDoc[k]||[]).push(a)});
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn primary" data-act="newAppt">+ حجز</button></div>
   ${(()=>{const due=active.filter(a=>a.status==="booked"&&a.date>=today());if(!due.length)return "";const done=due.filter(a=>a.remindedAt).length;
@@ -1246,13 +1252,16 @@ function vAppts(){
   <p class="sub" style="margin:0">هنا الحجز بس. اللي حصل فعلاً (جه، كنسل، دفع، دخل إمتى) بيتسجل في «جلسات اليوم».</p>
   <div class="stats"><div class="stat"><div class="k">محجوز اليوم ده</div><div class="v num">${active.length}</div></div>${Object.entries(byDoc).map(([sid,arr])=>`<div class="stat"><div class="k">${esc(staffName(sid))}</div><div class="v num">${arr.length}</div></div>`).join("")}</div>
   ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} حجز</span></h2><div class="list">${arr.map(a=>apptRow(a,"admin",apptDocs(a).length>1)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش حجوزات اليوم ده</b>اضغط «+ حجز» واختار المريض والدكتور والساعة.</div>`}
-  ${list.length>active.length?`<p class="sub">${list.length-active.length} حجز اتلغى.</p>`:""}`;
+  ${cancelledList(list,"admin")}`;
 }
 function vMyAppts(){
-  const d=S.ui.date;const list=Object.values(S.appts).filter(a=>a.date===d&&a.status!=="cancelled"&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const d=S.ui.date;const all=Object.values(S.appts).filter(a=>a.date===d&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const list=all.filter(a=>!["cancelled","noshow"].includes(a.status)),off=all.length-list.length;
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span></div>
   <p class="sub" style="margin:0">دوس «بدأت» أول ما المريض يدخل، و«خلصت» في آخر الجلسة. لو حد تاني من الدكاترة كمّل الجلسة، هو اللي يدوس «خلصت» من عنده.</p>
-  ${list.length?`<div class="list">${list.map(a=>apptRow(a,"doctor",apptDocs(a).length>1)).join("")}</div>`:`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}`;
+  ${all.length?`<div class="note">في جدولك اليوم ده <b>${all.length}</b> · اتعمل أو جاي <b>${list.length}</b>${off?` · اتلغى أو محضرش <b>${off}</b>`:""}</div>`:""}
+  ${list.length?`<div class="list">${list.map(a=>apptRow(a,"doctor",apptDocs(a).length>1)).join("")}</div>`:all.length?"":`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}
+  ${cancelledList(all,"doctor")}`;
 }
 function sheetAppt(id){
   const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session"};if(!a)return;apptWarned=false;apptDupWarned=false;
