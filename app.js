@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="29 أكتوبر · 63";
+const APP_VERSION="29 أكتوبر · 64";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -506,7 +506,7 @@ function extMonthShare(m){let t=0;for(const x of exts(true))t+=extRows(x.id,d=>d
 function manualTypeName(e){return e.typeId==="exam"?"كشف":typeName(e.typeId)}
 function sheetExtManual(sid,id){
   const x=extById(sid);const e=id?extManual(sid).find(y=>y.id===id):{month:today().slice(0,7),self:true,settled:false,count:1};if(!x||!e)return;
-  openSheet(`${x.name} · جلسات قبل السيستم`,`<p class="sub" style="margin:0">للجلسات اللي اتعملت قبل ما تتسجل على السيستم. حقها بيتحسب بنسبتها. اللي اتحاسبت عليه بيدخل في إيراد الشهر، واللي لسه بيفضل على جنب لحد ما تتحاسب.</p>
+  openSheet(`${x.name} · جلسة بره السيستم`,`<p class="sub" style="margin:0">للجلسات اللي اتعملت قبل ما تتسجل على السيستم. حقها بيتحسب بنسبتها. اللي اتحاسبت عليه بيدخل في إيراد الشهر، واللي لسه بيفضل على جنب لحد ما تتحاسب.</p>
   <div class="grid2"><label class="f">الشهر<input type="month" id="xm_month" value="${e.month}"></label><label class="f">المريض<input id="xm_pat" value="${esc(e.patient||"")}"></label>
   <label class="f">نوع الجلسة<select id="xm_type"><option value="exam" ${e.typeId==="exam"?"selected":""}>كشف</option>${S.types.map(t=>`<option value="${t.id}" ${t.id===e.typeId?"selected":""}>${esc(t.name)}</option>`).join("")}</select></label>
   <label class="f">مين جاب الحالة<select id="xm_self"><option value="1" ${e.self?"selected":""}>${esc(x.name)}</option><option value="0" ${!e.self?"selected":""}>المركز</option></select></label>
@@ -523,7 +523,7 @@ async function saveExtManual(sid,id){
   if(!e.patient)return setErr("اكتب اسم المريض");if(e.count<1)return setErr("اكتب عدد الجلسات");if(!e.price)return setErr("اكتب سعر الجلسة");
   const list=id?(S.ext?.manual||[]).map(y=>y.id===id?e:y):[...(S.ext?.manual||[]),e];
   await S.db.doc("cfg/ext").set({manual:list},{merge:true});const c=manualCalc(e);
-  audit("money",id?"عدّل جلسات قبل السيستم لدكتور من بره":"جلسات قبل السيستم لدكتور من بره",{target:staffName(sid),info:`${e.patient} · ${manualTypeName(e)} · ${e.count} × ${money(e.price)} · حقها ${money(c.share)}${e.settled?" · اتحاسبت":""}`});closeSheet();toast("اتحفظ");
+  audit("money",id?"عدّل جلسات بره السيستم لدكتور من بره":"جلسات بره السيستم لدكتور من بره",{target:staffName(sid),info:`${e.patient} · ${manualTypeName(e)} · ${e.count} × ${money(e.price)} · حقها ${money(c.share)}${e.settled?" · اتحاسبت":""}`});closeSheet();toast("اتحفظ");
 }
 async function delExtManual(sid,id){await S.db.doc("cfg/ext").set({manual:(S.ext?.manual||[]).filter(y=>y.id!==id)},{merge:true});closeSheet();toast("اتحذف")}
 async function settleExtManual(sid){const list=(S.ext?.manual||[]).map(e=>e.sid===sid&&!e.settled?{...e,settled:true,paidDate:today()}:e);const due=extManual(sid).filter(e=>!e.settled).reduce((s,e)=>s+manualCalc(e).share,0);
@@ -536,7 +536,7 @@ function parseManual(sid,text){ // "patient, type, count, price[, اتحاسبت
     const err=!pat?"مفيش اسم":!typeId?"نوع الجلسة مش مفهوم":count<1?"العدد مش مفهوم":!price?"السعر مش مفهوم":"";
     return{line,err,e:{sid,patient:pat,typeId,count,price,self:!/المركز/.test(tail),settled,paidDate,month:(paidDate||today()).slice(0,7)}}})}
 function sheetExtPaste(sid){const x=extById(sid);if(!x)return;
-  openSheet(`${x.name} · لصق جلسات قبل السيستم`,`<p class="sub" style="margin:0">الزق النص اللي Claude بعتهولك. كل سطر: المريض، النوع، العدد، السعر، وبعدين «اتحاسبت 15/10» لو اتحاسبت.</p>
+  openSheet(`${x.name} · لصق جلسات بره السيستم`,`<p class="sub" style="margin:0">الزق النص اللي Claude بعتهولك. كل سطر: المريض، النوع، العدد، السعر، وبعدين «اتحاسبت 15/10» لو اتحاسبت.</p>
   <label class="f">الشهر<input type="month" id="xp_month" value="${today().slice(0,7)}"></label>
   <textarea id="xp_text" style="min-height:120px" placeholder="كريمة, ليمفيديما, 5, 800, اتحاسبت 15/10"></textarea><div id="xp_prev"></div><div class="err" id="formErr"></div>
   <button class="btn primary" data-act="saveExtPaste" data-id="${sid}">ضيف</button>`,
@@ -545,34 +545,52 @@ function sheetExtPaste(sid){const x=extById(sid);if(!x)return;
 async function saveExtPaste(sid){const rows=parseManual(sid,val("xp_text"));if(!rows.length)return setErr("الزق النص الأول");if(rows.some(r=>r.err))return setErr("فيه سطر فيه مشكلة، صلحه الأول");
   const month=val("xp_month")||today().slice(0,7);const add=rows.map(r=>({...r.e,month,id:randId(),by:S.mySid,at:Date.now()}));
   await S.db.doc("cfg/ext").set({manual:[...(S.ext?.manual||[]),...add]},{merge:true});
-  audit("money","جلسات قبل السيستم لدكتور من بره",{target:staffName(sid),info:`${add.length} سطر · ${add.map(e=>`${e.patient} ${e.count}×${e.price}${e.settled?" (اتحاسبت)":""}`).join("، ")}`});closeSheet();toast(`اتضاف ${add.length} سطر`)}
-function manualHtml(x){
-  const es=(S.ext?.manual||[]).filter(e=>e.sid===x.id).sort((a,b)=>b.month.localeCompare(a.month));
-  const due=es.filter(e=>!e.settled).reduce((s,e)=>s+manualCalc(e).share,0);
-  return `<div class="sec-title" style="margin-top:8px"><h3 style="font-size:14px;margin:0">قبل السيستم</h3><span class="bar">${S.role==="owner"?`<button class="btn sm" data-act="extManual" data-id="${x.id}">+ جلسات</button><button class="btn sm" data-act="extPaste" data-id="${x.id}">لصق</button>`:""}${due>0&&S.role==="owner"?`<button class="btn sm teal" data-act="settleExtManual" data-id="${x.id}" data-confirm>اتصرفلها ${money(due)}</button>`:""}</span></div>
-  ${es.length?`<div class="list">${es.map(e=>{const c=manualCalc(e);return `<${S.role==="owner"?"button":"div"} class="row" ${S.role==="owner"?`data-act="extManual" data-id="${x.id}" data-k="${e.id}"`:`style="cursor:default"`}><span class="t">${esc(e.patient)} · ${esc(manualTypeName(e))} ${e.settled?`<span class="chip c-ok">اتحاسبت${e.paidDate?` ${esc(dmy(e.paidDate))}`:""}</span>`:`<span class="chip c-warn">لسه</span>`}</span><span class="end money">${money(c.share)}</span><span class="m">${esc(monthLabel(e.month))} · ${e.count} × ${money(e.price)} = ${money(c.value)} · ${c.pct==null?"مفيش نسبة":c.pct+"%"} · ${e.self?"هي جابتها":"المركز جابها"}</span><span></span></${S.role==="owner"?"button":"div"}>`}).join("")}</div>`:""}`}
+  audit("money","جلسات بره السيستم لدكتور من بره",{target:staffName(sid),info:`${add.length} سطر · ${add.map(e=>`${e.patient} ${e.count}×${e.price}${e.settled?" (اتحاسبت)":""}`).join("، ")}`});closeSheet();toast(`اتضاف ${add.length} سطر`)}
+/* one list per outside doctor: sessions on the system and the ones entered from before it, each marked where it came from and who brought the case */
+function extItems(x,q,isCur){
+  const ins=extRows(x.id,d=>d>=q.from&&d<=q.to).map(r=>({src:"in",date:r.v.date,pat:r.v.patientName,type:r.v.typeName||typeName(r.v.typeId),self:r.self,n:1,price:r.value,value:r.value,pct:r.pct,share:r.share}));
+  const inQ=d=>d&&d>=q.from&&d<=q.to;
+  const man=(S.ext?.manual||[]).filter(e=>e.sid===x.id&&((!e.settled&&isCur)||(e.settled&&inQ(e.paidDate||(e.month+"-01"))))).map(e=>{const c=manualCalc(e);return{src:"out",e,date:e.paidDate||"",month:e.month,pat:e.patient,type:manualTypeName(e),self:e.self,n:num(e.count),price:num(e.price),value:c.value,pct:c.pct,share:c.share,settled:e.settled}});
+  const items=[...ins,...man];const dueIn=ins.reduce((t,r)=>t+r.share,0),paidIn=extPaid(x.id,q.from).reduce((t,p)=>t+(p.amount||0),0);
+  const manLeft=man.filter(r=>!r.settled).reduce((t,r)=>t+r.share,0);
+  return{items,n:items.reduce((t,r)=>t+r.n,0),value:items.reduce((t,r)=>t+r.value,0),share:items.reduce((t,r)=>t+r.share,0),paid:paidIn+man.filter(r=>r.settled).reduce((t,r)=>t+r.share,0),leftIn:Math.max(0,dueIn-paidIn),left:Math.max(0,dueIn-paidIn)+manLeft,miss:items.some(r=>r.pct==null)}}
+function extItemRow(r,x){const own=S.role==="owner"&&r.src==="out";
+  return `<${own?"button":"div"} class="row stack" ${own?`data-act="extManual" data-id="${x.id}" data-k="${r.e.id}"`:`style="cursor:default"`}><span class="t">${esc(r.pat)} · ${esc(r.type)}</span><span class="end money"><span class="sub">حقها</span> ${money(r.share)}</span>
+  <span class="m">${r.src==="in"?`<span class="chip c-ok">جوه السيستم</span>`:`<span class="chip c-warn">بره السيستم</span>`} <span class="chip ${r.self?"c-acc":"c-teal"}">${r.self?`${esc(x.name)} جابتها`:"المركز جابها"}</span>${r.src==="out"&&!r.settled?` <span class="chip c-bad">لسه متحاسبتش</span>`:""}<br>${r.date?esc(dmy(r.date)):esc(monthLabel(r.month))} · ${r.n>1?`${r.n} × ${money(r.price)} = `:""}${money(r.value)} · ${r.pct==null?`<b style="color:var(--bad)">مفيش نسبة</b>`:r.pct+"%"} · للمركز ${money(r.value-r.share)}</span><span></span></${own?"button":"div"}>`}
+function extPeriodsOf(x){const cur=extPeriod(x,today());const ps=[];let p=cur;
+  for(let i=0;i<6;i++){ps.push(p);p=extPeriod(x,dstr(dnum(p.from)-1));if(x.cycle!=="m"&&p.to<(x.anchor||""))break;if(x.cycle==="m"&&i>=2)break}
+  ps.forEach(q=>{ensureMonth(q.from.slice(0,7));ensureMonth(q.to.slice(0,7))});return ps}
 function vExt(){
-  const list=exts();if(!list.length)return `<div class="empty"><b>مفيش دكاترة من بره</b>ضيفهم من الإعدادات.</div>`;
-  return `<p class="sub" style="margin:0">النسبة على الجلسات اللي اتعملت بس (الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته). «مين جاب الحالة» بيتحدد من ملف المريض.</p>`+list.map(x=>{
-    const cur=extPeriod(x,today());const periods=[];let p=cur;
-    for(let i=0;i<6;i++){periods.push(p);p=extPeriod(x,dstr(dnum(p.from)-1));if(x.cycle!=="m"&&p.to<(x.anchor||""))break;if(x.cycle==="m"&&i>=2)break}
-    periods.forEach(q=>{ensureMonth(q.from.slice(0,7));ensureMonth(q.to.slice(0,7))});
-    const rowsHtml=periods.map(q=>{const rows=extRows(x.id,d=>d>=q.from&&d<=q.to);const due=rows.reduce((s,r)=>s+r.share,0);const paid=extPaid(x.id,q.from).reduce((s,r)=>s+(r.amount||0),0);const left=due-paid;const miss=rows.some(r=>r.pct==null);
-      if(!rows.length&&!paid&&q.from!==cur.from)return "";
-      return `<div class="row stack" style="cursor:default"><span class="t">${esc(fmtRange(q))}${q.from===cur.from?` <span class="chip c-acc">الفترة الحالية</span>`:""} ${paid&&left<=0?`<span class="chip c-ok">اتصرفلها</span>`:left>0&&paid?`<span class="chip c-warn">فاضل ${money(left)}</span>`:""} ${miss?`<span class="chip c-bad">فيه جلسة من غير نسبة</span>`:""}</span>
-      <span class="end bar"><button class="btn sm" data-act="extPeriod" data-id="${x.id}" data-from="${q.from}">التفاصيل</button>${left>0?`<button class="btn sm teal" data-act="extPay" data-id="${x.id}" data-from="${q.from}" data-confirm>اتصرفلها ${money(left)}</button>`:""}</span>
-      <span class="m">${rows.length} جلسة · حقها ${money(due)}${paid?` · اتصرف ${money(paid)}`:""}</span><span></span></div>`}).join("");
-    return `<div class="panel"><div class="sec-title"><h2>${esc(x.name)}</h2><span class="sub">بتتحاسب ${cycleLabel(x)}</span></div><div class="list">${rowsHtml}</div>${manualHtml(x)}</div>`}).join("");
+  const list=exts();if(!list.length)return `<div class="empty"><b>مفيش دكاترة من بره</b>ضيفهم من الإعدادات.</div>`;const own=S.role==="owner";
+  return `<p class="sub" style="margin:0">كل الجلسات في قايمة واحدة: <span class="chip c-ok">جوه السيستم</span> اتسجلت على الأبلكيشن، و<span class="chip c-warn">بره السيستم</span> اتكتبت بالإيد. النسبة على حسب مين جاب الحالة (من ملف المريض). الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته.</p>`+list.map(x=>{
+    const ps=extPeriodsOf(x),cur=ps[0];const D=ps.map((q,i)=>({q,...extItems(x,q,i===0)}));const C=D[0];
+    const leftAll=D.reduce((t,d)=>t+d.leftIn,0)+(S.ext?.manual||[]).filter(e=>e.sid===x.id&&!e.settled).reduce((t,e)=>t+manualCalc(e).share,0);
+    const old=D.slice(1).filter(d=>d.items.length||d.paid);
+    return `<div class="panel"><div class="sec-title"><h2>${esc(x.name)}</h2><span class="sub">بتتحاسب ${cycleLabel(x)}</span></div>
+    <p class="sub" style="margin:0">الفترة الحالية ${esc(fmtRange(cur))} · ${C.n} جلسة · حقها ${money(C.share)}</p>
+    <div class="stats"><div class="stat"><div class="k">دخل الفترة</div><div class="v money">${money(C.value)}</div></div><div class="stat"><div class="k">حقها</div><div class="v money">${money(C.share)}</div></div>
+    <div class="stat"><div class="k">للمركز</div><div class="v money" style="color:var(--ok)">${money(C.value-C.share)}</div></div><div class="stat"><div class="k">فاضلها (كله)</div><div class="v money" style="color:${leftAll>0?"var(--bad)":"inherit"}">${money(leftAll)}</div></div></div>
+    ${C.miss?`<div class="note">فيه جلسة نوعها ملوش نسبة لـ ${esc(x.name)}. ظبطها من الإعدادات ← الدكاترة من بره.</div>`:""}
+    <div class="bar">${leftAll>0?`<button class="btn teal grow" data-act="extPayAll" data-id="${x.id}" data-confirm>اتصرفلها كل اللي فاضل ${money(leftAll)}</button>`:`<span class="chip c-ok">اتصرفلها كل حقها ✓</span>`}${own?`<button class="btn sm" data-act="extManual" data-id="${x.id}">+ جلسة بره السيستم</button><button class="btn sm" data-act="extPaste" data-id="${x.id}">لصق</button>`:""}</div>
+    ${C.items.length?`<div class="list">${C.items.map(r=>extItemRow(r,x)).join("")}</div>`:`<div class="empty"><b>مفيش جلسات في الفترة دي لسه</b></div>`}
+    ${old.length?`<h3 style="font-size:14px;margin:6px 0 0">الفترات اللي فاتت</h3><div class="list">${old.map(d=>`<details class="row stack" style="cursor:default;display:block"><summary style="cursor:pointer;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b>${esc(fmtRange(d.q))}</b> <span class="sub">${d.n} جلسة · حقها ${money(d.share)} · للمركز ${money(d.value-d.share)}</span> ${d.left>0?`<span class="chip c-warn">فاضل ${money(d.left)}</span>`:d.share?`<span class="chip c-ok">اتصرفلها</span>`:""}</summary>
+      <div class="list" style="margin-top:8px">${d.items.map(r=>extItemRow(r,x)).join("")}</div><div class="bar" style="margin-top:6px"><button class="btn sm" data-act="extPeriod" data-id="${x.id}" data-from="${d.q.from}">الدفعات</button>${d.leftIn>0?`<button class="btn sm teal" data-act="extPay" data-id="${x.id}" data-from="${d.q.from}" data-confirm>اتصرفلها ${money(d.leftIn)}</button>`:""}</div></details>`).join("")}</div>`:""}
+    </div>`}).join("");
 }
 function fmtRange(q){const f=d=>new Date(d+"T12:00").toLocaleDateString("ar-EG-u-nu-latn",{day:"numeric",month:"short"});return `${f(q.from)} ← ${f(q.to)}`}
 function sheetExtPeriod(sid,from){
-  const x=extById(sid);if(!x)return;const q=extPeriod(x,from);const rows=extRows(sid,d=>d>=q.from&&d<=q.to);const pays=extPaid(sid,q.from);
-  openSheet(`${x.name} · ${fmtRange(q)}`,`
-  ${rows.length?`<div class="tblwrap"><table><thead><tr><th>اليوم</th><th>المريض</th><th>النوع</th><th>جابها</th><th>قيمة الجلسة</th><th>النسبة</th><th>حقها</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.v.date)}</td><td>${esc(r.v.patientName)}</td><td>${esc(r.v.typeName||"")}</td><td>${r.self?esc(x.name):"المركز"}</td><td>${money(r.value)}</td><td>${r.pct==null?`<span class="chip c-bad">مش متسجلة</span>`:r.pct+"%"}</td><td><b>${money(r.share)}</b></td></tr>`).join("")}</tbody>
-  <tfoot><tr><td colspan="4">الإجمالي</td><td>${money(rows.reduce((s,r)=>s+r.value,0))}</td><td></td><td>${money(rows.reduce((s,r)=>s+r.share,0))}</td></tr></tfoot></table></div>`:`<div class="empty"><b>مفيش جلسات في الفترة دي</b></div>`}
-  ${rows.some(r=>r.pct==null)?`<div class="note">فيه جلسات نوعها ملوش نسبة متسجلة لـ ${esc(x.name)}. ظبطها من الإعدادات ← الدكاترة من بره.</div>`:""}
-  ${pays.length?`<div class="list">${pays.map(p=>`<div class="row" style="cursor:default"><span class="t">اتصرف ${money(p.amount)}</span><span class="end">${S.role==="owner"?`<button class="btn sm danger" data-act="extUnpay" data-id="${p.id}" data-confirm>إلغاء</button>`:""}</span><span class="m">${esc(p.date)} · ${esc(staffName(p.by))}</span><span></span></div>`).join("")}</div>`:""}`);
+  const x=extById(sid);if(!x)return;const q=extPeriod(x,from);const D=extItems(x,q,q.from===extPeriod(x,today()).from);const pays=extPaid(sid,q.from);
+  openSheet(`${x.name} · ${fmtRange(q)}`,`<div class="note">${D.n} جلسة · دخل ${money(D.value)} · حقها <b>${money(D.share)}</b> · للمركز <b>${money(D.value-D.share)}</b>${D.left>0?` · فاضلها <b style="color:var(--bad)">${money(D.left)}</b>`:""}</div>
+  ${D.items.length?`<div class="list">${D.items.map(r=>extItemRow(r,x)).join("")}</div>`:`<div class="empty"><b>مفيش جلسات في الفترة دي</b></div>`}
+  ${pays.length?`<h3 style="font-size:14px;margin:0">اللي اتصرف</h3><div class="list">${pays.map(p=>`<div class="row" style="cursor:default"><span class="t">اتصرف ${money(p.amount)}</span><span class="end">${S.role==="owner"?`<button class="btn sm danger" data-act="extUnpay" data-id="${p.id}" data-confirm>إلغاء</button>`:""}</span><span class="m">${esc(dmy(p.date))} · ${esc(staffName(p.by))}</span><span></span></div>`).join("")}</div>`:""}`);
 }
+async function extPayAll(sid){ // settles every period still open plus the off-system sessions not settled yet
+  const x=extById(sid);if(!x)return;const pays=[...(S.ext?.pays||[])];let tot=0;
+  for(const q of extPeriodsOf(x)){const rows=extRows(sid,d=>d>=q.from&&d<=q.to);const left=rows.reduce((t,r)=>t+r.share,0)-extPaid(sid,q.from).reduce((t,p)=>t+(p.amount||0),0);
+    if(left>0){pays.push({id:randId(),sid,from:q.from,to:q.to,amount:left,sessions:rows.length,date:today(),by:S.mySid,at:Date.now()});tot+=left}}
+  const man=(S.ext?.manual||[]);const manDue=man.filter(e=>e.sid===sid&&!e.settled).reduce((t,e)=>t+manualCalc(e).share,0);tot+=manDue;if(tot<=0)return;
+  await S.db.doc("cfg/ext").set({pays,manual:man.map(e=>e.sid===sid&&!e.settled?{...e,settled:true,paidDate:today()}:e)},{merge:true});
+  audit("money","صرف لدكتور من بره",{target:x.name,info:`${money(tot)}${manDue?` (منهم ${money(manDue)} جلسات بره السيستم)`:""}`});toast(`اتسجل إن ${x.name} خدت ${money(tot)}`)}
 async function extPay(sid,from){
   const x=extById(sid);const q=extPeriod(x,from);const rows=extRows(sid,d=>d>=q.from&&d<=q.to);
   const due=rows.reduce((s,r)=>s+r.share,0),left=due-extPaid(sid,q.from).reduce((s,r)=>s+(r.amount||0),0);if(left<=0)return;
@@ -947,23 +965,26 @@ function monthStat(k,m){
     ${tot("صافي الشهر",Math.round(net),net<0?"var(--bad)":"var(--ok)")}
     <p class="sub" style="margin:0">${rv.unpaid?`ولسه على الحالات كلهم ${money(rv.unpaid)} مدفعوهمش، ودول مش داخلين في الحساب ده لحد ما يتدفعوا.`:""}</p>`);
 }
-function extPendingPanel(){ // sessions not settled yet with outside doctors: kept apart from the clinic's revenue
-  const es=(S.ext?.manual||[]).filter(e=>!e.settled);if(!es.length)return "";const T={v:0,s:0};
-  const rows=es.map(e=>{const c=manualCalc(e);T.v+=c.value;T.s+=c.share;return `<tr><td>${esc(staffName(e.sid))}</td><td>${esc(e.patient)}</td><td>${esc(manualTypeName(e))}</td><td class="num">${e.count} × ${money(e.price)}</td><td>${money(c.value)}</td><td>${money(c.share)}</td><td><b>${money(c.value-c.share)}</b></td></tr>`}).join("");
-  return `<div class="panel" style="border-color:var(--warn)"><h2>لسه متصفاش مع الدكاترة من بره</h2><p class="sub" style="margin:0">الجلسات دي بره إيراد العيادة لحد ما تتحاسب معاهم. أول ما تدوس «اتصرفلها» في تاب الدكاترة من بره، بتدخل في إيراد شهرها.</p>
-  <div class="tblwrap"><table><thead><tr><th>الدكتورة</th><th>المريض</th><th>النوع</th><th>العدد</th><th>الإجمالي</th><th>حقها</th><th>هيدخل للمركز</th></tr></thead><tbody>${rows}</tbody>
-  <tfoot><tr><td colspan="4">الإجمالي</td><td>${money(T.v)}</td><td>${money(T.s)}</td><td>${money(T.v-T.s)}</td></tr></tfoot></table></div></div>`}
+function extPendingPanel(){ // off-system sessions not settled yet with outside doctors: kept apart from the clinic's revenue
+  const es=(S.ext?.manual||[]).filter(e=>!e.settled);if(!es.length)return "";let T=0,V=0;
+  const rows=es.map(e=>{const c=manualCalc(e);T+=c.share;V+=c.value;return `<div class="row stack" style="cursor:default"><span class="t">${esc(staffName(e.sid))} · ${esc(e.patient)} · ${esc(manualTypeName(e))}</span><span class="end money"><span class="sub">للمركز</span> ${money(c.value-c.share)}</span><span class="m">${e.count} × ${money(e.price)} = ${money(c.value)} · حقها ${money(c.share)} · ${e.self?"هي جابتها":"المركز جابها"}</span><span></span></div>`}).join("");
+  return `<div class="panel" style="border-color:var(--warn)"><h2>لسه متصفاش مع الدكاترة من بره</h2><p class="sub" style="margin:0">جلسات بره السيستم دي بره إيراد العيادة لحد ما تتحاسب. أول ما تدوس «اتصرفلها» في تاب الدكاترة من بره، بتدخل في إيراد شهرها.</p>
+  <div class="list">${rows}</div><div class="note" style="display:flex;justify-content:space-between"><b>هيدخل للمركز لما تتحاسب</b><b>${money(V-T)}</b></div></div>`}
 function extProfitPanel(m){
-  const xs=exts(true);if(!xs.length)return "";const rows=[];
-  for(const x of xs){const by={};const add=(t,n,val,sh)=>{const r=by[t]||(by[t]={n:0,val:0,sh:0});r.n+=n;r.val+=val;r.sh+=sh};
-    for(const r of extRows(x.id,d=>d.startsWith(m)))add(r.v.typeName||typeName(r.v.typeId),1,r.value,r.share);
-    for(const e of extManual(x.id,m))if(e.settled){const c=manualCalc(e);add(manualTypeName(e),num(e.count),c.value,c.share)}
-    for(const [t,r] of Object.entries(by))rows.push({x,t,...r})}
-  if(!rows.length)return "";const T=rows.reduce((a,r)=>({n:a.n+r.n,val:a.val+r.val,sh:a.sh+r.sh}),{n:0,val:0,sh:0});
-  return `<div class="panel"><h2>الدكاترة من بره كسبوا المركز كام</h2><div class="tblwrap"><table><thead><tr><th>الدكتورة</th><th>النوع</th><th>جلسات</th><th>دخل</th><th>حقها</th><th>صافي المركز</th></tr></thead><tbody>
-  ${rows.map(r=>`<tr><td>${esc(r.x.name)}</td><td>${esc(r.t)}</td><td class="num">${r.n}</td><td>${money(r.val)}</td><td>${money(r.sh)}</td><td><b>${money(r.val-r.sh)}</b></td></tr>`).join("")}
-  </tbody><tfoot><tr><td colspan="2">الإجمالي</td><td class="num">${T.n}</td><td>${money(T.val)}</td><td>${money(T.sh)}</td><td>${money(T.val-T.sh)}</td></tr></tfoot></table></div>
-  <p class="sub" style="margin:0">قيمة الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته. فيها جلسات السيستم، واللي اتسجلت «قبل السيستم» واتحاسبت عليها.</p></div>`}
+  const xs=exts(true);if(!xs.length)return "";const cards=[];let G={n:0,v:0,s:0};
+  for(const x of xs){const g={self:{n:0,v:0,s:0},clinic:{n:0,v:0,s:0}},ty={};const add=(self,type,n,v,sh)=>{const b=g[self?"self":"clinic"];b.n+=n;b.v+=v;b.s+=sh;ty[type]=(ty[type]||0)+n};
+    for(const r of extRows(x.id,d=>d.startsWith(m)))add(r.self,r.v.typeName||typeName(r.v.typeId),1,r.value,r.share);
+    for(const e of extManual(x.id,m))if(e.settled){const c=manualCalc(e);add(e.self,manualTypeName(e),num(e.count),c.value,c.share)}
+    const t={n:g.self.n+g.clinic.n,v:g.self.v+g.clinic.v,s:g.self.s+g.clinic.s};if(!t.n)continue;G={n:G.n+t.n,v:G.v+t.v,s:G.s+t.s};
+    const line=(lbl,b)=>b.n?`<div class="row" style="cursor:default"><span class="t">${lbl}</span><span class="end money" style="color:var(--ok)"><span class="sub">للمركز</span> ${money(b.v-b.s)}</span><span class="m">${b.n} جلسة · دخل ${money(b.v)} · حقها ${money(b.s)}</span><span></span></div>`:"";
+    cards.push(`<div class="ext-card" style="display:grid;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px"><div class="sec-title"><h3 style="margin:0;font-size:16px">${esc(x.name)}</h3><b class="money" style="color:var(--ok)">${money(t.v-t.s)} للمركز</b></div>
+      <div class="list">${line(`${esc(x.name)} جابتها`,g.self)}${line("المركز جابها",g.clinic)}</div>
+      <p class="sub" style="margin:0">${t.n} جلسة (${Object.entries(ty).map(([k,n])=>`${esc(k)} ${n}`).join(" · ")}) · دخل ${money(t.v)} · حقها ${money(t.s)}</p></div>`)}
+  if(!cards.length)return "";
+  return `<div class="panel"><h2>الدكاترة من بره كسبوا المركز كام</h2>
+  <div class="stat" style="border-color:var(--ok)"><div class="k">إجمالي اللي كسبه المركز من الدكاترة من بره · ${esc(monthLabel(m))}</div><div class="v money" style="color:var(--ok)">${money(G.v-G.s)}</div><div class="sub">${G.n} جلسة · دخل ${money(G.v)} · حقهم ${money(G.s)}</div></div>
+  ${cards.join("")}
+  <p class="sub" style="margin:0">فيها جلسات السيستم، وجلسات بره السيستم اللي اتحاسبت. الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته.</p></div>`}
 function planPanel(m){ // which works better: packages or paying per session
   const DAY=864e5,stale=d=>!d||(Date.now()-new Date(d+"T12:00").getTime())>30*DAY;
   let pk={n:0,done:0,stop:0,on:0},ps={n:0,stop:0,on:0,sess:0};
@@ -2339,7 +2360,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","reviewCounts","rvFix","rvPack","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -2409,6 +2430,7 @@ document.addEventListener("click",async e=>{
     case "extPaste":sheetExtPaste(id);break;
     case "saveExtPaste":guard(t,()=>saveExtPaste(id));break;
     case "extPay":guard(t,()=>extPay(id,t.dataset.from));break;
+    case "extPayAll":guard(t,()=>extPayAll(id));break;
     case "extUnpay":guard(t,()=>extUnpay(id));break;
     case "newExt":sheetExt(null);break;
     case "editExt":sheetExt(id);break;
