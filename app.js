@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="29 أكتوبر · 65";
+const APP_VERSION="29 أكتوبر · 66";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -378,8 +378,13 @@ function payroll(month){
 }
 /* two vaults: money paid for an outside doctor's package / session sits in her vault (across months) until the period is settled;
    then her share goes to her and the clinic's part moves into the clinic. Refunds of her packages come out of her vault. */
-function packExtOf(pid,kid){return (S.patients[pid]?.packs||[]).find(k=>k.id===kid)?.ext||""}
-function visitVault(v){if(!v||v.payerId)return "";if(v.packId)return packExtOf(v.patientId,v.packId);return extById(v.doctorId)?v.doctorId:""}
+let PXI=null,PXIof=null;
+function packExtOf(pid,kid){ // set when sold; for older packages: whoever of the outside doctors worked on it, or lymphedema → an outside doctor
+  const k=(S.patients[pid]?.packs||[]).find(x=>x.id===kid);if(!k)return "";if(k.ext!==undefined)return k.ext&&extById(k.ext)?k.ext:"";
+  if(PXIof!==S.visits){PXI={};PXIof=S.visits;for(const v of Object.values(S.visits))if(v.packId){const d=creditsOf(v).map(c=>c[0]).find(x=>extById(x));if(d)PXI[v.packId]=d}}
+  return PXI[kid]||(/ليمف/.test(typeName(k.typeId)||k.typeName||"")?defPackExt(pid,k.typeId):"")}
+function visitVault(v){if(!v||v.payerId)return ""; // a session an outside doctor did is always paid out of her vault
+  const d=creditsOf(v).map(c=>c[0]).find(x=>extById(x));if(d)return d;return v.packId?packExtOf(v.patientId,v.packId):""}
 function payVault(p){if(!p||p.kind==="discount"||p.kind==="payer")return "";return p.packId?packExtOf(p.patientId,p.packId):(p.ext&&extById(p.ext)?p.ext:"")}
 function vaultIn(test){const o={cash:0,insta:0,t:0,by:{}};const add=(sid,meth,x)=>{if(!x||!sid)return;o[meth==="instapay"?"insta":"cash"]+=x;o.t+=x;o.by[sid]=(o.by[sid]||0)+x};
   for(const v of Object.values(S.visits))if(test(v.date||""))add(visitVault(v),v.method,v.paid||0);
@@ -396,11 +401,11 @@ function extCenter(m){ // what the clinic gets from outside doctors in month m
     for(const p of (S.ext?.pays||[]))if(p.sid===x.id&&(p.date||"").startsWith(m)&&!seen.has(p.from)){seen.add(p.from);const st=extState(x,p.from);
       if(st.settled&&st.at.startsWith(m)){const c=st.rows.filter(r=>visitVault(r.v)===x.id).reduce((t,r)=>t+r.value-r.share,0);moved+=c;by[x.id]=(by[x.id]||0)+c}}
     for(const e of extManual(x.id))if(e.settled&&(e.paidDate||e.month+"-01").startsWith(m)){const c=manualCalc(e);moved+=c.value-c.share;by[x.id]=(by[x.id]||0)+c.value-c.share}
-    for(const r of extRows(x.id,d=>d.startsWith(m)))if(visitVault(r.v)!==x.id)shareCenter+=r.share} // her session on the clinic's own money: the clinic pays her share
+  } // her share always comes out of her vault, never out of the clinic's month
   return{moved,shareCenter,by}}
 function vaultOf(x){ // what's sitting in an outside doctor's vault right now
   let inn=0,out=0;const packs=[];
-  for(const p of Object.values(S.patients))for(const k of p.packs||[])if(k.ext===x.id){inn+=k.paid||0;packs.push({p,k})}
+  for(const p of Object.values(S.patients))for(const k of p.packs||[])if(packExtOf(p.id,k.id)===x.id){inn+=k.paid||0;packs.push({p,k})}
   for(const v of Object.values(S.visits))if(!v.packId&&visitVault(v)===x.id)inn+=v.paid||0;
   for(const p of Object.values(S.payments))if(!p.packId&&payVault(p)===x.id)inn+=p.amount||0;
   for(const r of extRows(x.id,()=>true))if(visitVault(r.v)===x.id&&extState(x,r.v.date).settled)out+=r.value;
@@ -872,7 +877,7 @@ async function saveRefund(pid,kid){
   const rate=num(val("rf_rate")),used=Math.round(num(val("rf_used")));if(!rate)return setErr("اكتب سعر الجلسة");if(used<0||used>k.sessions)return setErr("عدد الجلسات مش مظبوط");
   const cost=Math.round(rate*used),paid=k.paid||0,back=Math.round(paid-cost),date=val("rf_date")||today();
   const b=S.db.batch();
-  if(back>0)b.set(S.db.collection("exp").doc(),{category:"استرداد مبلغ",amount:back,date,note:`${p.name} · ${packTitle(k)}: ${used} جلسة × ${rate} · ${METHODS[val("rf_method")]||""}`,patientId:pid,packId:kid,refund:true,ext:k.ext||null,createdAt:Date.now(),by:S.mySid}); // the money handed back: the clinic's expense, or out of the outside doctor's vault
+  if(back>0)b.set(S.db.collection("exp").doc(),{category:"استرداد مبلغ",amount:back,date,note:`${p.name} · ${packTitle(k)}: ${used} جلسة × ${rate} · ${METHODS[val("rf_method")]||""}`,patientId:pid,packId:kid,refund:true,ext:packExtOf(pid,kid)||null,createdAt:Date.now(),by:S.mySid}); // the money handed back: the clinic's expense, or out of the outside doctor's vault
   const packs=p.packs.map(x=>x.id===kid?{...x,sessions:used,used,price:cost,paid:paid-Math.max(0,back),refund:{at:Date.now(),date,by:S.mySid,origSessions:k.sessions,origPrice:k.price,rate,cost,back}}:x);
   b.update(S.db.doc("patients/"+pid),{packs,charged:inc(cost-(k.price||0)),paid:inc(-Math.max(0,back))});
   await b.commit();audit("money","استرجاع وقفل باكدج",{target:p.name,info:`${packTitle(k)} · خلص ${used} من ${k.sessions} · ${back>0?`رجعله ${money(back)}`:back<0?`عليه ${money(-back)}`:"خالص"}`});toast(back>0?`اتسجل: يرجعله ${money(back)}`:back<0?`الباكدج اتقفل، وعليه ${money(-back)}`:"الباكدج اتقفل");setTimeout(()=>sheetPatient(pid),250);
@@ -1010,7 +1015,8 @@ function monthStat(k,m){
     ${extT?`<div class="row" style="cursor:default"><span class="t">حق دكاترة من بره على جلسات فلوسها في المركز</span><span class="end money" style="color:var(--bad)">− ${money(extT)}</span></div>`:""}
     <div class="row" style="cursor:default"><span class="t">مصروفات تانية</span><span class="end money" style="color:var(--bad)">− ${money(ex.t)}</span></div></div>
     ${tot("صافي الشهر",Math.round(net),net<0?"var(--bad)":"var(--ok)")}
-    <p class="sub" style="margin:0">${exts(true).length?`خزنة الدكاترة اللي بره (${money(exts(true).reduce((t,x)=>t+vaultOf(x).bal,0))}) على جنب ومش داخلة هنا. `:""}${rv.unpaid?`ولسه على الحالات كلهم ${money(rv.unpaid)} مدفعوهمش، ودول مش داخلين في الحساب ده لحد ما يتدفعوا.`:""}</p>`);
+    ${exts(true).length?(()=>{const vb=exts(true).reduce((t,x)=>t+vaultOf(x).bal,0);return `<div class="list"><div class="row" style="cursor:default"><span class="t">خزنة الدكاترة اللي بره (على جنب)</span><span class="end money" style="color:var(--warn)">+ ${money(vb)}</span></div></div>${tot("معاك كله (الصافي + خزنة الدكاترة اللي بره)",Math.round(net+vb))}`})():""}
+    <p class="sub" style="margin:0">${exts(true).length?`حق الدكاترة اللي بره بيطلع من خزنتهم، مش من صافي المركز. `:""}${rv.unpaid?`ولسه على الحالات كلهم ${money(rv.unpaid)} مدفعوهمش، ودول مش داخلين في الحساب ده لحد ما يتدفعوا.`:""}</p>`);
 }
 function extPendingPanel(){ // off-system sessions not settled yet with outside doctors: kept apart from the clinic's revenue
   const es=(S.ext?.manual||[]).filter(e=>!e.settled);if(!es.length)return "";let T=0,V=0;
