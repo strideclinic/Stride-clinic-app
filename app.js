@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="29 أكتوبر · 61";
+const APP_VERSION="29 أكتوبر · 62";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1314,10 +1314,12 @@ function sessionInfo(pid,kind,excludeId,date,time,typeId){ // "جلسة 4 من 1
   const rate=typeId?S.patients[pid]?.rates?.[typeId]:null;
   return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} ${rate!=null?"بالجلسة":"منفردة"}`:""}`,packId:null};
 }
+function docLabel(l){return String(l||"جلسة").split(" · ")[0]} // "جلسة 4 من 10 · باكدج أ" → "جلسة 4 من 10"
 function withNo(label,n){return n?String(label||"").replace(/^جلسة (رقم )?\d+/,m=>m.replace(/\d+/,n)):label} // a session number set by hand
 function kindOf(a){ // the session's number is worked out live from the patient's current packages until the session is recorded
   if(a.kind==="exam")return "كشف";
-  if(!isAdmin()||!S.patients[a.patientId]||S.visits[a.id]||a.confirmed||["cancelled","noshow"].includes(a.status))return a.kindLabel||"جلسة";
+  if(!isAdmin())return docLabel(a.kindLabel); // doctors see the session number only, never the package
+  if(!S.patients[a.patientId]||S.visits[a.id]||a.confirmed||["cancelled","noshow"].includes(a.status))return a.kindLabel||"جلسة";
   return withNo(sessionInfo(a.patientId,a.kind,a.id,a.date,a.time||"",a.typeId).label,a.sessNo)}
 const labelSyncing=new Set();
 function syncLabels(list){ // write the live session number back to the booking, so the doctor's screen shows it too
@@ -1350,7 +1352,7 @@ function apptRow(a,view,showDoc){
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(kindOf(a))}</span> ${packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(view==="doctor"?docLabel(kindOf(a)):kindOf(a))}</span> ${view==="doctor"?"":packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
@@ -1483,7 +1485,7 @@ async function deskStartGo(id,sid){
 async function apptFinishByDesk(id){ptChanged(S.appts[id],"done");await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done"});toast("اتسجل إنها خلصت")}
 function apptEnd(id){ // doctor finishing: optional comment + photos, then stamp the end time
   const a=S.appts[id];if(!a)return;entryAppt=a;
-  openSheet("خلصت الجلسة",`<div class="note">${esc(a.patientName)} · ${esc(a.kindLabel||"")}${a.start?` · بدأت ${esc(a.start)}${a.startBy&&a.startBy!==S.mySid?` مع ${esc(staffName(a.startBy))}`:""}`:""}</div>
+  openSheet("خلصت الجلسة",`<div class="note">${esc(a.patientName)} · ${esc(kindOf(a))}${a.start?` · بدأت ${esc(a.start)}${a.startBy&&a.startBy!==S.mySid?` مع ${esc(staffName(a.startBy))}`:""}`:""}</div>
   <label class="f">كومنت (اختياري)<textarea id="e_note" placeholder="مثلاً الحالة اتحسنت، أو كملت الجلسة بدل د. سلمى"></textarea></label>
   <div class="sec-title"><span class="sub">صور (لحد ${MEDIA_MAX})</span><label class="btn sm">+ صورة<input type="file" id="e_file" accept="image/*" multiple hidden></label></div>
   <div class="photos" id="e_media"></div><div class="err" id="formErr"></div>
