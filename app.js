@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 74";
+const APP_VERSION="30 أكتوبر · 75";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -589,15 +589,36 @@ async function saveExtPaste(sid){const rows=parseManual(sid,val("xp_text"));if(!
   audit("money","جلسات بره السيستم لدكتور من بره",{target:staffName(sid),info:`${add.length} سطر · ${add.map(e=>`${e.patient} ${e.count}×${e.price}${e.settled?" (اتحاسبت)":""}`).join("، ")}`});closeSheet();toast(`اتضاف ${add.length} سطر`)}
 /* one list per outside doctor: sessions on the system and the ones entered from before it, each marked where it came from and who brought the case */
 function extItems(x,q,isCur){
-  const ins=extRows(x.id,d=>d>=q.from&&d<=q.to).map(r=>({src:"in",date:r.v.date,pat:r.v.patientName,type:r.v.typeName||typeName(r.v.typeId),self:r.self,n:1,price:r.value,value:r.value,pct:r.pct,share:r.share}));
+  const ins=extRows(x.id,d=>d>=q.from&&d<=q.to).map(r=>({src:"in",tid:r.v.typeId,date:r.v.date,pat:r.v.patientName,type:r.v.typeName||typeName(r.v.typeId),self:r.self,n:1,price:r.value,value:r.value,pct:r.pct,share:r.share}));
   const inQ=d=>d&&d>=q.from&&d<=q.to;
-  const man=(S.ext?.manual||[]).filter(e=>e.sid===x.id&&inQ(manualDate(e))).map(e=>{const c=manualCalc(e);return{src:"out",e,date:manualDate(e),month:e.month,pat:e.patient,type:manualTypeName(e),self:e.self,n:num(e.count),price:num(e.price),value:c.value,pct:c.pct,share:c.share,settled:e.settled}});
+  const man=(S.ext?.manual||[]).filter(e=>e.sid===x.id&&inQ(manualDate(e))).map(e=>{const c=manualCalc(e);return{src:"out",tid:e.typeId,e,date:manualDate(e),month:e.month,pat:e.patient,type:manualTypeName(e),self:e.self,n:num(e.count),price:num(e.price),value:c.value,pct:c.pct,share:c.share,settled:e.settled}});
   const items=[...ins,...man];const dueIn=ins.reduce((t,r)=>t+r.share,0),paidIn=extPaid(x.id,q.from).reduce((t,p)=>t+(p.amount||0),0);
   const manLeft=man.filter(r=>!r.settled).reduce((t,r)=>t+r.share,0);
   return{items,n:items.reduce((t,r)=>t+r.n,0),value:items.reduce((t,r)=>t+r.value,0),share:items.reduce((t,r)=>t+r.share,0),paid:paidIn+man.filter(r=>r.settled).reduce((t,r)=>t+r.share,0),leftIn:Math.max(0,dueIn-paidIn),left:Math.max(0,dueIn-paidIn)+manLeft,miss:items.some(r=>r.pct==null)}}
 function extItemRow(r,x){const own=S.role==="owner"&&r.src==="out";
   return `<${own?"button":"div"} class="row stack" ${own?`data-act="extManual" data-id="${x.id}" data-k="${r.e.id}"`:`style="cursor:default"`}><span class="t">${esc(r.pat)} · ${esc(r.type)}</span><span class="end money"><span class="sub">حقها</span> ${money(r.share)}</span>
   <span class="m">${r.src==="in"?`<span class="chip c-ok">جوه السيستم</span>`:`<span class="chip c-warn">بره السيستم</span>`} <span class="chip ${r.self?"c-acc":"c-teal"}">${r.self?`${esc(x.name)} جابتها`:"المركز جابها"}</span>${r.src==="out"&&!r.settled?` <span class="chip c-bad">لسه متحاسبتش</span>`:""}<br>${r.date?esc(dmy(r.date)):esc(monthLabel(r.month))} · ${r.n>1?`${r.n} × ${money(r.price)} = `:""}${money(r.value)} · ${r.pct==null?`<b style="color:var(--bad)">مفيش نسبة</b>`:r.pct+"%"} · للمركز ${money(r.value-r.share)}</span><span></span></${own?"button":"div"}>`}
+function extFamily(tid){const n=tid==="exam"?"كشف":tid==="*"?"":typeName(tid)||"";return /ليمف/.test(n)?"ليمفيديما":/علاج\s*طبيعي/.test(n)?"علاج طبيعي":n||"أخرى"}
+function extTypeSplit(items){const g={};for(const r of items){const k=extFamily(r.tid);const a=g[k]||(g[k]={n:0,v:0,s:0,p:new Set()});a.n+=r.n;a.v+=r.value;a.s+=r.share;if(r.pct!=null)a.p.add(r.pct)}
+  const ks=Object.keys(g);if(ks.length<2)return "";
+  return `<div class="list">${ks.map(k=>{const a=g[k];return `<div class="row" style="cursor:default"><span class="t"><b>${esc(k)}</b> · ${a.n} جلسة${a.p.size?` · ${[...a.p].join("/")}%`:""}</span><span class="end money"><span class="sub">حقها</span> ${money(a.s)}</span><span class="m">دخل ${money(a.v)} · للمركز ${money(a.v-a.s)}</span><span></span></div>`}).join("")}</div>`}
+/* two entries for the same outside doctor (e.g. one per session type) → one doctor; every reference moves over */
+function extDupPair(){const key=n=>normName(n).replace(/^د\.?\s*/,"").split(" ")[0];const xs=exts(true);
+  for(const a of xs)for(const b of xs)if(a!==b&&key(a.name)&&key(a.name)===key(b.name)){const keep=[a,b].sort((p,q)=>(p.name||"").length-(q.name||"").length)[0];return{keep,drop:keep===a?b:a}}return null}
+async function extMerge(){const P=extDupPair();if(!P)return;const {keep,drop}=P,db=S.db,K=keep.id,D=drop.id;const ops=[];
+  const add=(path,u)=>ops.push([path,u]);
+  for(const [f,col] of [["doctorId","visits"],["doctor2Id","visits"],["doctorSid","appts"],["startBy","appts"],["endBy","appts"]]){let ds=[];try{ds=(await db.collection(col).where(f,"==",D).get()).docs}catch(e){}ds.forEach(d=>add(`${col}/${d.id}`,{[f]:K}))}
+  let ad=[];try{ad=(await db.collection("appts").where("doctors","array-contains",D).get()).docs}catch(e){}ad.forEach(d=>add("appts/"+d.id,{doctors:(d.data().doctors||[]).map(x=>x===D?K:x)}));
+  let py=[];try{py=(await db.collection("payments").where("ext","==",D).get()).docs}catch(e){}py.forEach(d=>add("payments/"+d.id,{ext:K}));
+  for(const p of Object.values(S.patients)){const u={};if(p.broughtBy===D)u.broughtBy=K;if((p.packs||[]).some(k=>k.ext===D))u.packs=p.packs.map(k=>k.ext===D?{...k,ext:K}:k);if(Object.keys(u).length)add("patients/"+p.id,u)}
+  const merged=[...ops.reduce((m,[p,u])=>m.set(p,{...(m.get(p)||{}),...u}),new Map())];
+  for(let i=0;i<merged.length;i+=400){const b=db.batch();merged.slice(i,i+400).forEach(([p,u])=>b.update(db.doc(p),u));await b.commit()}
+  const has=(r,q)=>r.some(x=>x.typeId===q.typeId&&x.by===q.by);const dropFam=extFamily((drop.rates||[]).find(r=>r.typeId!=="*")?.typeId||"");
+  const rates=[...(keep.rates||[])];for(const q of drop.rates||[])if(!has(rates,q))rates.push(q);
+  const pt=physioId();const fix=e=>e.sid!==D?e:{...e,sid:K,typeId:e.typeId==="*"&&dropFam==="علاج طبيعي"&&pt?pt:e.typeId};
+  const name=(keep.name||"").replace(/\s+(علاج|ليمف).*$/,"");
+  await db.doc("cfg/ext").set({list:(S.ext?.list||[]).filter(x=>x.id!==D).map(x=>x.id===K?{...x,name,rates}:x),manual:(S.ext?.manual||[]).map(fix),pays:(S.ext?.pays||[]).map(p=>p.sid===D?{...p,sid:K}:p)},{merge:true});
+  audit("settings","دمج دكتور من بره",{info:`${drop.name} ← ${name}`});toast(`بقوا دكتورة واحدة: ${name}`)}
 function extPeriodsOf(x){const cur=extPeriod(x,today());const ps=[];let p=cur;
   for(let i=0;i<6;i++){ps.push(p);p=extPeriod(x,dstr(dnum(p.from)-1));if(x.cycle!=="m"&&p.to<(x.anchor||""))break;if(x.cycle==="m"&&i>=2)break}
   ps.forEach(q=>{ensureMonth(q.from.slice(0,7));ensureMonth(q.to.slice(0,7))});return ps}
@@ -636,15 +657,16 @@ async function mennaClose(){const C=mennaClosePlan();if(!C)return;const db=S.db,
   toast(`حساب ${x.name} اتقفل`)}
 function hadeerPlan(){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
-  const calc=x=>{const rows=extRows(x.id,d=>d>="2026-10-01"&&d<="2026-10-29");const packs=[];
-    for(const p of Object.values(S.patients))for(const k of p.packs||[])if(packExtOf(p.id,k.id)===x.id&&(k.preUsed||0)>0&&(k.date||"")>="2026-10-01")packs.push({p,k,v:Math.round((k.price||0)/(k.sessions||1)*k.preUsed)});
+  const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only
+  const calc=x=>{const rows=extRows(x.id,d=>d>="2026-10-01"&&d<="2026-10-29").filter(r=>pt(r.v.typeId));const packs=[];
+    for(const p of Object.values(S.patients))for(const k of p.packs||[])if(packExtOf(p.id,k.id)===x.id&&pt(k.typeId)&&(k.preUsed||0)>0&&(k.date||"")>="2026-10-01")packs.push({p,k,v:Math.round((k.price||0)/(k.sessions||1)*k.preUsed)});
     return{x,rows,packs,sysV:rows.reduce((t,r)=>t+r.value,0),sysS:Math.round(rows.reduce((t,r)=>t+(r.pct==null?r.value*0.65:r.share),0)),preV:packs.reduce((t,a)=>t+a.v,0)}};
   const cands=exts(true).filter(e=>/هدير/.test(e.name||"")).map(calc).sort((a,b)=>(b.sysV+b.preV)-(a.sysV+a.preV));const H=cands[0];if(!H)return null;
   if(extManual(H.x.id).some(e=>e.total===1&&e.month==="2026-10"))return null;
   H.add=3800-H.sysV-H.preV;return H}
 async function hadeerSave(){const H=hadeerPlan();if(!H||H.add<0)return;const x=H.x;
   const list=(S.ext?.list||[]).map(e=>e.id!==x.id||(e.rates||[]).some(q=>q.typeId==="*"&&q.by==="self")?e:{...e,rates:[...(e.rates||[]),{typeId:"*",by:"self",pct:65}]});
-  const base={sid:x.id,typeId:"*",count:1,self:true,settled:false,date:"2026-10-29",month:"2026-10",total:1,by:S.mySid,at:Date.now()};
+  const base={sid:x.id,typeId:physioId()||"*",count:1,self:true,settled:false,date:"2026-10-29",month:"2026-10",total:1,by:S.mySid,at:Date.now()};
   const lines=[];if(H.preV>0)lines.push({...base,id:randId(),patient:`جلسات قبل السيستم من الباكدجات (${H.packs.map(a=>`${a.p.name} ${a.k.preUsed}`).join("، ")})`,price:H.preV,fromPack:true});
   if(H.add>0)lines.push({...base,id:randId(),patient:"قبل السيستم برّه الباكدجات (زي الكشف)",price:H.add});
   if(!lines.length)lines.push({...base,id:randId(),patient:"مفيش حاجة قبل السيستم",price:0});
@@ -690,7 +712,8 @@ async function mennaFix(){const F=mennaFixPlan();if(!F)return;
 function vExt(){
   const list=exts();if(!list.length)return `<div class="empty"><b>مفيش دكاترة من بره</b>ضيفهم من الإعدادات.</div>`;const own=S.role==="owner";extEnsure();
   const ut=own?untaggedPacks():[];
-  return mennaFixHtml()+hadeerHtml()+(ut.length?`<div class="panel" style="border-color:var(--warn)"><h2>باكدجات محتاجة تحدد مع مين</h2><p class="sub" style="margin:0">الباكدجات دي شكلها للدكاترة اللي بره. حدد كل واحد مع مين، عشان فلوسه تتحط في الخزنة الصح.</p>
+  const dp=own?extDupPair():null;
+  return (dp?`<div class="panel" style="border-color:var(--warn)"><h2>«${esc(dp.drop.name)}» و«${esc(dp.keep.name)}» دكتورة واحدة</h2><p class="sub" style="margin:0">هيبقوا اسم واحد بخزنة واحدة وحساب واحد. كل الجلسات والحجوزات والباكدجات وحساب أكتوبر بيتنقلوا، وكل جلسة بتفضل بنسبتها: ${[...(dp.keep.rates||[]),...(dp.drop.rates||[])].filter(r=>r.typeId!=="*").map(r=>`${esc(extFamily(r.typeId))} ${r.pct}%`).filter((v,i,a)=>a.indexOf(v)===i).join(" · ")}.</p><button class="btn primary" data-act="extMerge" data-confirm>ادمجهم</button></div>`:"")+mennaFixHtml()+hadeerHtml()+(ut.length?`<div class="panel" style="border-color:var(--warn)"><h2>باكدجات محتاجة تحدد مع مين</h2><p class="sub" style="margin:0">الباكدجات دي شكلها للدكاترة اللي بره. حدد كل واحد مع مين، عشان فلوسه تتحط في الخزنة الصح.</p>
     <div class="list">${ut.map(u=>`<div class="row stack" style="cursor:default"><span class="t">${esc(u.p.name)} · ${esc(packTitle(u.k))}</span><span class="end"></span><span class="m">دفع ${money(u.k.paid||0)} · خلص ${u.k.used||0} من ${u.k.sessions}</span><span></span>
       <span class="bar" style="grid-column:1/-1">${exts(true).map(x=>`<button class="btn sm ${u.guess===x.id?"teal":""}" data-act="tagPack" data-id="${u.p.id}" data-k="${u.k.id}" data-x="${x.id}">مع ${esc(x.name)}</button>`).join("")}<button class="btn sm" data-act="tagPack" data-id="${u.p.id}" data-k="${u.k.id}" data-x="">المركز</button></span></div>`).join("")}</div></div>`:"")
   +`<p class="sub" style="margin:0">كل الجلسات في قايمة واحدة: <span class="chip c-ok">جوه السيستم</span> اتسجلت على الأبلكيشن، و<span class="chip c-warn">بره السيستم</span> اتكتبت بالإيد. النسبة على حسب مين جاب الحالة (من ملف المريض). الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته.</p>`+list.map(x=>{
@@ -702,6 +725,7 @@ function vExt(){
     <div class="stats"><div class="stat"><div class="k">دخل الفترة</div><div class="v money">${money(C.value)}</div></div><div class="stat"><div class="k">حقها</div><div class="v money">${money(C.share)}</div></div>
     <div class="stat"><div class="k">للمركز</div><div class="v money" style="color:var(--ok)">${money(C.value-C.share)}</div></div><div class="stat"><div class="k">فاضلها (كله)</div><div class="v money" style="color:${leftAll>0?"var(--bad)":"inherit"}">${money(leftAll)}</div></div>
     ${S.role==="owner"?`<div class="stat" style="grid-column:1/-1;border-color:var(--warn)"><div class="k">في خزنتها دلوقتي (على جنب)</div><div class="v money" style="color:var(--warn)">${money(vaultOf(x).bal)}</div><div class="sub">فلوس مرضاها اللي لسه متحاسبتش. أول ما تدوس «اتصرفلها»، حقها يطلعلها ونصيب المركز يدخل خزنة المركز.</div></div>`:""}</div>
+    ${extTypeSplit(C.items)}
     ${C.miss?`<div class="note">فيه جلسة نوعها ملوش نسبة لـ ${esc(x.name)}. ظبطها من الإعدادات ← الدكاترة من بره.</div>`:""}
     <div class="bar">${leftAll>0?`<button class="btn teal grow" data-act="extPayAll" data-id="${x.id}" data-confirm>اتصرفلها كل اللي فاضل ${money(leftAll)}</button>`:`<span class="chip c-ok">اتصرفلها كل حقها ✓</span>`}${own?`<button class="btn sm" data-act="extManual" data-id="${x.id}">+ جلسة بره السيستم</button><button class="btn sm" data-act="extPaste" data-id="${x.id}">لصق</button>`:""}</div>
     ${C.items.length?`<div class="list">${C.items.map(r=>extItemRow(r,x)).join("")}</div>`:`<div class="empty"><b>مفيش جلسات في الفترة دي لسه</b></div>`}
@@ -2542,7 +2566,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2673,6 +2697,7 @@ document.addEventListener("click",async e=>{
     case "mennaAdd":guard(t,()=>mennaAdd(id));break;
     case "mennaClose":guard(t,mennaClose);break;
     case "hadeerSave":guard(t,hadeerSave);break;
+    case "extMerge":guard(t,extMerge);break;
     case "rvPack":guard(t,()=>reviewPack(id,t.dataset.k,+t.dataset.n));break;
     case "deskStartGo":guard(t,()=>deskStartGo(id,t.dataset.k));break;
     case "deskEnd":guard(t,async()=>{const a=S.appts[id];if(!a||lockBlock(a.date))return;ptChanged(a,"done");await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:a.startBy||S.mySid,status:"done"});toast("اتسجل إنه خرج")});break;
