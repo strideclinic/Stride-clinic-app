@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 76";
+const APP_VERSION="30 أكتوبر · 77";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -137,7 +137,7 @@ function setupRoleSubs(){
     r.push(sub(c("appts").where("doctors","array-contains",S.mySid),setLive("appts")));
     r.push(sub(c("att").where("staffId","==",S.mySid),setLive("att")));
   }
-  if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]))}
+  if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]))}
 }
 let prunedA=false;
 function pruneAppts(){ // finished appointments older than 4 months: the visit itself is the lasting record
@@ -373,7 +373,8 @@ function payroll(month){
     const otPay=ot*c.otMult*minRate;
     const cm=c.commission[s.id];let comm=0,full=0,half=0,base2=0;
     if(cm)for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))for(const [sid,comp] of creditsOf(v))if(sid===s.id){const pct=comp==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):v.payerId?(v.net||0):(v.paid||0);comm+=base*pct/100;base2+=base;comp==="half"?half++:full++}
-    return{s,sal,ot,otPay,days,short,cm,comm,full,half,commBase:base2,total:sal-deduction+otPay+comm,wd,sched:sched?sched.length:null,absent,absentDates,extra,deductDays,paidLeave,deduction,dayRate};
+    let pre=0;if(cm)for(const e of S.precomm||[])if(e.sid===s.id&&(e.date||"").startsWith(month)){const pct=e.half?num(cm.half):num(cm.full);comm+=num(e.price)*pct/100;base2+=num(e.price);e.half?half++:full++;pre++} // sessions from before the system
+    return{s,sal,ot,otPay,days,short,cm,comm,full,half,pre,commBase:base2,total:sal-deduction+otPay+comm,wd,sched:sched?sched.length:null,absent,absentDates,extra,deductDays,paidLeave,deduction,dayRate};
   });
 }
 /* two vaults: money paid for an outside doctor's package / session sits in her vault (across months) until the period is settled;
@@ -655,6 +656,40 @@ async function mennaClose(){const C=mennaClosePlan();if(!C)return;const db=S.db,
   await db.doc("cfg/ext").set({manual,pays,list},{merge:true});
   audit("money","قفل حساب دكتور من بره",{target:x.name,info:`اتمسح ${C.pats.map(p=>p.name).join(" و")} · 1←14: 4,000 (حقها 2,600 / المركز 1,400) · 15←28: 3,800 (حقها 2,470 / المركز 1,330)`,del:true});
   toast(`حساب ${x.name} اتقفل`)}
+/* a commission doctor's sessions from before the system: pasted from the paper, priced from each patient's file (or by hand) */
+let PC=null;
+function preParse(text){const out=[];let date="";
+  for(const raw of (text||"").split(/\r?\n/)){let l=nd(raw).trim();if(!l)continue;
+    const dm=l.match(/^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})/);if(dm){date=parseDate(dm[1]+"/"+dm[2]);l=l.slice(dm[0].length).replace(/^[\s,،:\-]+/,"")}
+    for(const part of l.split(/\s*[,،؛;]\s*/)){const half=/(^|\s)نص\s*$/.test(part);const name=part.replace(/\s*نص\s*$/,"").replace(/^[\d\-.)\s]+/,"").trim();if(name)out.push({date,name,half})}}
+  return out}
+function prePrice(p,date){const ks=(p?.packs||[]).filter(k=>extFamily(k.typeId)==="علاج طبيعي"||!k.typeId).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const k=ks.find(k=>(k.preUsed||0)>0)||ks[0];if(k)return{price:Math.round((k.price||0)/(k.sessions||1)),src:packTitle(k)};
+  const r=p?.rates?.[physioId()];if(r!=null)return{price:r,src:"بالجلسة"};return null}
+function preMatches(name){const n=normName(name);const all=Object.values(S.patients);const exact=all.filter(p=>normName(p.name)===n);if(exact.length)return exact;
+  return all.filter(p=>normName(p.name).startsWith(n+" ")||normName(p.name)===n)}
+function sheetPreComm(sid){const st=S.staff[sid];if(!st)return;const mine=(S.precomm||[]).filter(e=>e.sid===sid);
+  PC={sid,rows:mine.length?mine.map(e=>({...e})):[]};
+  openSheet(`${st.name} · جلسات قبل السيستم`,`<p class="sub" style="margin:0">الزق جلسات الورقة: سطر لكل يوم يبدأ بالتاريخ، والأسامي بفاصلة، واكتب «نص» جنب اللي اشتغله نص. السعر بيتجاب من ملف المريض، واللي مش معروف اكتبه بإيدك.</p>
+  <textarea id="pc_text" style="min-height:110px" placeholder="3/10: أنس، محمد أحمد، عمر نص، محمود شكري"></textarea><button class="btn sm" data-act="pcRead">اقرا</button>
+  <div id="pc_rows"></div><div class="err" id="formErr"></div><button class="btn primary" data-act="pcSave" data-id="${sid}">حفظ</button>`,()=>drawPC())}
+function pcGroups(){const g={};for(const r of PC.rows){const k=normName(r.name);(g[k]=g[k]||{name:r.name,rows:[]}).rows.push(r)}return Object.values(g)}
+function drawPC(){const el=document.getElementById("pc_rows");if(!el)return;const cm=cfg().commission?.[PC.sid]||{};let tot=0,n=0;
+  el.innerHTML=PC.rows.length?`<div class="list">${pcGroups().map((g,i)=>{const ms=preMatches(g.name),r0=g.rows[0];const pid=r0.pid||(ms.length===1?ms[0].id:"");const auto=pid?prePrice(S.patients[pid]):null;
+    const price=r0.price!=null&&r0.price!==""?r0.price:(auto?.price??"");const f=g.rows.filter(r=>!r.half).length,h=g.rows.length-f;const c=num(price)*(f*num(cm.full)+h*num(cm.half))/100;tot+=c;n+=f+h/2;
+    return `<div class="row stack" style="cursor:default"><span class="t">${esc(g.name)} · ${f?`${f} كاملة`:""}${f&&h?" و":""}${h?`${h} نص`:""}</span><span class="end money">${money(Math.round(c))}</span>
+    <span class="m">${g.rows.map(r=>esc(dmy(r.date))+(r.half?" (نص)":"")).join("، ")}</span><span></span>
+    <span class="bar" style="grid-column:1/-1"><select data-pcpid="${i}" style="flex:1 1 160px"><option value="">${ms.length?"اختار الملف":"مفيش ملف بالاسم ده"}</option>${(ms.length?ms:[]).map(p=>`<option value="${p.id}" ${p.id===pid?"selected":""}>${esc(p.name)}</option>`).join("")}</select>
+    <label class="f" style="flex:0 1 130px">سعر الجلسة<input data-pcprice="${i}" inputmode="decimal" value="${price}"></label>${auto?`<span class="sub">من ${esc(auto.src)}</span>`:price===""?`<span class="chip c-bad">قولي كان بيدفع كام</span>`:""}</span></div>`}).join("")}</div>
+    <div class="note" style="display:flex;justify-content:space-between"><b>${n} حالة · النسبة</b><b>${money(Math.round(tot))}</b></div>`:"";
+  el.querySelectorAll("[data-pcpid]").forEach(x=>x.addEventListener("change",()=>{const g=pcGroups()[+x.dataset.pcpid];g.rows.forEach(r=>{r.pid=x.value;r.price=null});drawPC()}));
+  el.querySelectorAll("[data-pcprice]").forEach(x=>x.addEventListener("change",()=>{const g=pcGroups()[+x.dataset.pcprice];g.rows.forEach(r=>r.price=x.value===""?null:num(x.value));drawPC()}))}
+async function pcSave(sid){const gs=pcGroups();const list=[];
+  for(const g of gs){const ms=preMatches(g.name),r0=g.rows[0],pid=r0.pid||(ms.length===1?ms[0].id:""),auto=pid?prePrice(S.patients[pid]):null,price=r0.price!=null&&r0.price!==""?num(r0.price):auto?.price;
+    if(price==null||price==="")return setErr(`اكتب سعر جلسة ${g.name}`);for(const r of g.rows)list.push({id:r.id||randId(),sid,date:r.date,name:r.name,half:!!r.half,pid:pid||null,price:num(price)})}
+  if(list.some(e=>!e.date))return setErr("فيه سطر من غير تاريخ");
+  await S.db.doc("priv/precomm").set({list:[...(S.precomm||[]).filter(e=>e.sid!==sid),...list]});
+  audit("money","جلسات قبل السيستم لنسبة دكتور",{target:staffName(sid),info:`${list.length} جلسة · ${list.filter(e=>e.half).length} نص`});closeSheet();toast("اتحفظ")}
 function hadeerPlan(){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
   const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only
@@ -1238,7 +1273,7 @@ function vReports(){
   <div class="panel"><h2>المرتبات</h2>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
   ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.extra?`<div class="sub">${x.extra} يوم زيادة/تعويض</div>`:""}
-    ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}</div>`:"—"}</td><td><b>${money(x.total)}</b>${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
+    ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
   <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. الأوفر تايم بيتحسب على الشهر: بعد ما يكمّل ساعات كل أيامه في الشهر، يعني اليوم اللي بيعوّض بيه غياب مش أوفر تايم. أيام الإذن بتقلل الساعات المطلوبة. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
@@ -2563,7 +2598,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2694,6 +2729,9 @@ document.addEventListener("click",async e=>{
     case "mennaAdd":guard(t,()=>mennaAdd(id));break;
     case "mennaClose":guard(t,mennaClose);break;
     case "hadeerSave":guard(t,hadeerSave);break;
+    case "preComm":sheetPreComm(id);break;
+    case "pcRead":{const add=preParse(val("pc_text"));if(!add.length){setErr("الزق جلسات الورقة الأول");break}PC.rows.push(...add);document.getElementById("pc_text").value="";setErr("");drawPC();break}
+    case "pcSave":guard(t,()=>pcSave(id));break;
     case "extMerge":guard(t,extMerge);break;
     case "rvPack":guard(t,()=>reviewPack(id,t.dataset.k,+t.dataset.n));break;
     case "deskStartGo":guard(t,()=>deskStartGo(id,t.dataset.k));break;
