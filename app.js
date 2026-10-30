@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 68";
+const APP_VERSION="30 أكتوبر · 69";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -606,15 +606,19 @@ function untaggedPacks(){const out=[];for(const p of Object.values(S.patients))f
 function mennaFixPlan(){ // temporary: put Dr. Menna's October back to what the paper says
   if(S.role!=="owner"||today()>"2026-11-15")return null;const x=exts(true).find(e=>/من[ةه]/.test(e.name||""));if(!x)return null;
   const bogus=[];for(const p of Object.values(S.patients))for(const k of p.packs||[])if(k.old&&!(k.used||0)&&!(k.preUsed||0)&&!k.refund&&packExtOf(p.id,k.id)===x.id)bogus.push({p,k});
-  const dupes=Object.values(S.visits).filter(v=>(v.date||"")>="2026-10-15"&&v.date<="2026-10-28"&&/ليمف/.test(v.typeName||"")&&!extById(v.doctorId)&&!v.packId&&S.patients[v.patientId]?.broughtBy===x.id);
-  const lp=lymphPlan();if(!bogus.length&&!lp&&!dupes.length)return null;return{x,bogus,dupes,lp}}
+  const dupes=Object.values(S.visits).filter(v=>(v.date||"")>="2026-10-15"&&v.date<="2026-10-28"&&/ليمف/.test(v.typeName||"")&&!v.packId&&(S.patients[v.patientId]?.broughtBy===x.id||v.doctorId===x.id)).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const lp=lymphPlan(),q=extPeriod(x,"2026-10-20"),open=extItems(x,q,false).left>0;if(!bogus.length&&!lp&&!open)return null;return{x,bogus,dupes,lp,open,q}}
 function mennaFixHtml(){const F=mennaFixPlan();if(!F)return "";
-  return `<div class="panel" style="border-color:var(--warn)"><h2>تصليح حساب ${esc(F.x.name)} (مرة واحدة)</h2><div class="list">
+  return `<div class="panel" style="border-color:var(--warn)"><h2>تصليح حساب ${esc(F.x.name)} (مرة واحدة)</h2><div class="list" ${F.bogus.length||F.lp?"":"hidden"}>
   ${F.bogus.map(({p,k})=>`<div class="row" style="cursor:default"><span class="t">هيتلغي «${esc(packTitle(k))}» من ملف ${esc(p.name)}</span><span class="end money">${money(k.paid||0)}</span><span class="m">باكدج ${k.sessions} جلسات اتعمل بالغلط بـ ${money(k.price)}، ودفعته هتتمسح</span><span></span></div>`).join("")}
   ${F.lp?`<div class="row" style="cursor:default"><span class="t">الليمفيديما: «جلسة ليمفيديما» 800 و«كشف ليمفيديما» 600</span><span class="end"></span><span class="m">${F.lp.toSess.length?`${F.lp.toSess.length} جلسة 800 كانت محسوبة كشف هترجع جلسة · `:""}${F.lp.manual.length?`كشف ${F.lp.manual.map(e=>esc(e.patient)).join("، ")} هيبقى «كشف ليمفيديما»`:""}</span><span></span></div>`:""}
   </div>${F.bogus.length||F.lp?`<button class="btn primary" data-act="mennaFix" data-confirm>صلّح</button>`:""}
-  ${F.dupes.length?`<h3 style="font-size:14px;margin:4px 0 0">جلسات متسجلة باسم حد تاني في نفس الفترة</h3><p class="sub" style="margin:0">لو الجلسة دي واحدة من اللي في الورقة، امسحها عشان متتحسبش مرتين.</p><div class="list">${F.dupes.map(v=>`<div class="row" style="cursor:default"><span class="t">${esc(v.patientName)} · ${esc(v.typeName||"")} · ${esc(dmy(v.date))}</span><span class="end"><button class="btn sm danger" data-act="delVisit" data-id="${v.id}" data-confirm>امسحها</button></span><span class="m">باسم ${esc(staffName(v.doctorId))} · ${money(v.net||0)} · دفع ${money(v.paid||0)}</span><span></span></div>`).join("")}</div>`:""}
-  <p class="sub" style="margin:0">بعد التصليح، افتح فترة <b>15 ← 28 أكتوبر</b> تحت في «الفترات اللي فاتت» ودوس <b>«اتصرفلها حق الفترة دي 2,470 ج»</b> (3,800 × 65%).</p></div>`}
+  ${F.dupes.length?`<h3 style="font-size:14px;margin:4px 0 0">جلسات الليمفيديما اللي على السيستم من 15 لـ 28</h3><p class="sub" style="margin:0">اللي اتعملت فعلاً خليها باسم ${esc(F.x.name)}، والمكررة امسحها.</p><div class="list">${F.dupes.map(v=>`<div class="row stack" style="cursor:default"><span class="t">${esc(v.patientName)} · ${esc(dmy(v.date))}</span><span class="end"></span><span class="m">باسم ${esc(staffName(v.doctorId))} · ${money(v.net||0)} · دفع ${money(v.paid||0)} ${v.doctorId===F.x.id?`<span class="chip c-ok">باسم ${esc(F.x.name)} ✓</span>`:""}</span><span></span>
+    <span class="bar" style="grid-column:1/-1">${v.doctorId!==F.x.id?`<button class="btn sm teal" data-act="mennaMove" data-id="${v.id}" data-confirm>خليها باسم ${esc(F.x.name)}</button>`:""}<button class="btn sm danger" data-act="delVisit" data-id="${v.id}" data-confirm>امسحها (مكررة)</button></span></div>`).join("")}</div>`:""}
+  ${(()=>{const it=extItems(F.x,F.q,false);return `<div class="note">فترة 15 ← 28 دلوقتي: <b>${money(it.value)}</b> · حقها <b>${money(it.share)}</b> · للمركز <b>${money(it.value-it.share)}</b>${it.value===3800?" ✓":" (المفروض 3,800)"}</div>${it.value===3800&&!F.bogus.length&&!F.lp&&it.left>0?`<button class="btn teal" data-act="extPay" data-id="${F.x.id}" data-from="${F.q.from}" data-confirm>اتصرفلها ${money(it.left)} وقفّل الحساب</button>`:""}`})()}</div>`}
+async function mennaMove(id){const F=mennaFixPlan(),v=S.visits[id];if(!F||!v)return;
+  const b=S.db.batch();b.update(S.db.doc("visits/"+id),{doctorId:F.x.id,doctor2Id:null,completion:"full"});const a=S.appts[v.apptId||id];if(a)b.update(S.db.doc("appts/"+a.id),{doctors:[F.x.id],doctorSid:F.x.id,startBy:F.x.id});
+  await b.commit();audit("session","غيّر دكتور الجلسة",{target:v.patientName,date:v.date,before:staffName(v.doctorId),after:F.x.name});toast(`بقت باسم ${F.x.name}`)}
 async function mennaFix(){const F=mennaFixPlan();if(!F)return;
   for(const {p,k} of F.bogus){let ps=[];try{ps=(await getFast(S.db.collection("payments").where("packId","==",k.id))).docs.map(rowOf)}catch(e){}
     const b=S.db.batch();let off=k.prePaid||0;for(const x of ps){b.delete(S.db.doc("payments/"+x.id));off+=x.amount||0;forget("payments",x.id)}
@@ -2476,7 +2480,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2603,6 +2607,7 @@ document.addEventListener("click",async e=>{
     case "rvFix":guard(t,reviewFix);break;
     case "lymphFix":guard(t,lymphFix);break;
     case "mennaFix":guard(t,mennaFix);break;
+    case "mennaMove":guard(t,()=>mennaMove(id));break;
     case "rvPack":guard(t,()=>reviewPack(id,t.dataset.k,+t.dataset.n));break;
     case "deskStartGo":guard(t,()=>deskStartGo(id,t.dataset.k));break;
     case "deskEnd":guard(t,async()=>{const a=S.appts[id];if(!a||lockBlock(a.date))return;ptChanged(a,"done");await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:a.startBy||S.mySid,status:"done"});toast("اتسجل إنه خرج")});break;
