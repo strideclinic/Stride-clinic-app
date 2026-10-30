@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 80";
+const APP_VERSION="30 أكتوبر · 82";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -137,7 +137,7 @@ function setupRoleSubs(){
     r.push(sub(c("appts").where("doctors","array-contains",S.mySid),setLive("appts")));
     r.push(sub(c("att").where("staffId","==",S.mySid),setLive("att")));
   }
-  if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]))}
+  if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]))}
 }
 let prunedA=false;
 function pruneAppts(){ // finished appointments older than 4 months: the visit itself is the lasting record
@@ -317,7 +317,7 @@ function leaveLine(sid,y,name){const used=yearLeave(sid,y),al=cfg().leaveAllow[s
   const left=al-used;return `إجازات ${esc(name)} في ${y}: خد <b>${used}</b> من <b>${al}</b> يوم · ${left>0?`فاضل <b>${left}</b>`:left===0?`<b style="color:var(--bad)">خلّص رصيده</b>`:`<b style="color:var(--bad)">زاد ${-left} يوم عن رصيده</b>`}`}
 function sheetAbsence(sid,m){leaveWarned=false;
   const x=payroll(m).find(r=>r.s.id===sid);if(!x)return;const lv=(S.leaves||[]).filter(l=>l.sid===sid&&l.date.startsWith(m));
-  const dates=[...new Set([...x.absentDates,...lv.map(l=>l.date)])].sort();const T={"":"غياب من غير إذن",paid:"إذن من غير خصم (إجازة)",deduct:"إذن بخصم اليوم"};
+  const dates=[...new Set([...x.absentDates,...lv.map(l=>l.date)])].sort();const T={"":"غياب من غير إذن",paid:"إذن من غير خصم (إجازة)",deduct:"إذن بخصم اليوم",free:"اتشال (من غير خصم ولا إجازة)"};
   openSheet(`غياب ${x.s.name} · ${monthLabel(m)}`,`<p class="sub" style="margin:0">اختار لكل يوم غياب: من غير إذن، أو إذن من غير خصم (بيتعد في إجازات السنة)، أو إذن بخصم اليوم (${money(x.dayRate)} لليوم). أيام الإذن مش مطلوب يعوّضها، فساعات شهره المطلوبة بتقل.</p>
   <div class="note">${leaveLine(sid,m.slice(0,4),x.s.name)}</div>
   ${dates.length?`<div class="list">${dates.map(d=>{const cur=lv.find(l=>l.date===d)?.type||"";return `<div class="row" style="cursor:default;grid-template-columns:minmax(0,1fr) auto"><span class="t">${esc(dayLabel(d))}</span><span class="end"><select data-leave="${d}" style="width:auto">${Object.entries(T).map(([k,l])=>`<option value="${k}" ${k===cur?"selected":""}>${l}</option>`).join("")}</select></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام غياب الشهر ده</b></div>`}
@@ -426,7 +426,8 @@ function revenue(month){
   const manual=extManual(null).filter(e=>e.settled&&(e.paidDate||e.month+"-01").startsWith(month)).reduce((t,e)=>{const c=manualCalc(e);return t+c.value-c.share},0); // clinic's part of off-system sessions, once settled
   return{cash:mo.cash-vin.cash,insta:mo.insta-vin.insta,collected:mo.clinic-vin.t+E.moved,fromExt:E.moved,extShareCenter:E.shareCenter,vaultIn:vin.t,charged:charged+manual,sessions,unpaid,manual};
 }
-function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)&&!(x.ext&&extById(x.ext))){ /* a refund from an outside doctor's vault isn't the clinic's expense */o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}return{o,t}}
+function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)&&!(x.ext&&extById(x.ext))){ /* a refund from an outside doctor's vault isn't the clinic's expense */o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}
+  const rent=Object.entries(o).filter(([k])=>/إيجار|ايجار/.test(k)).reduce((a,[,v])=>a+v,0);return{o,t,rent,other:t-rent}} // rent is shown on its own
 function dayNav(act,pickId,d){return `<button class="btn sm" data-act="${act}" data-n="-1">اليوم اللي قبله</button><input type="date" id="${pickId}" value="${d}" style="max-width:170px" aria-label="اليوم"><button class="btn sm" data-act="${act}" data-n="1">اللي بعده</button>`}
 function monthLoading(m){return isAdmin()&&m<winMonth()&&S.loadedMonths[m]!==true}
 /* ---------- views: visits ---------- */
@@ -503,7 +504,8 @@ function vAtt(){
     const p=PR.find(x=>x.s.id===s.id);const ot=p?p.ot:plus,sh=p?p.short:minus;
     return `<tr><td>${esc(s.name)}</td><td class="num">${days}</td><td>${hm(plus)}<div class="sub">ناقص ${hm(minus)}</div></td><td><b>${hm(ot)}</b>${p?.req!=null?`<div class="sub">اشتغل ${hm(p.got)} من ${hm(p.req)} مطلوبين${!ot&&sh?` · ناقصه ${hm(sh)}`:""}</div>`:""}</td></tr>`}).join("");
   const fixR=S.role==="owner"&&today()<="2026-11-15"?Object.values(S.att).filter(r=>S.staff[r.staffId]?.role==="secretary"&&(r.date||"").startsWith("2026-10")&&r.out&&mins(r.out)!=null&&mins(r.out)>=12*60&&mins(r.out)<21*60).sort((a,b)=>a.date.localeCompare(b.date)):[];
-  const fixHtml=fixR.length?`<div class="panel" style="border-color:var(--warn)"><h2>انصراف ${esc(staffName(fixR[0].staffId))} بدري في أكتوبر</h2><div class="list">${fixR.map(r=>`<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(r.date))}</span><span class="end"><button class="btn sm teal" data-act="attTo10" data-id="${r.date}_${r.staffId}" data-confirm>خليها مشيت 10:00</button></span><span class="m">حضور ${esc(r.in||"—")} · انصراف ${esc(r.out)}</span><span></span></div>`).join("")}</div></div>`:"";
+  const dl=S.role==="owner"&&today()<="2026-11-15"?(S.leaves||[]).filter(l=>l.type==="deduct"&&l.date==="2026-10-12"&&S.staff[l.sid]?.role==="secretary"):[];
+  const fixHtml=(dl.length?`<div class="panel" style="border-color:var(--warn)"><h2>خصم ${esc(staffName(dl[0].sid))} يوم 12/10</h2><p class="sub" style="margin:0">هيتشال خالص: من غير خصم، ومش هيتعد من إجازاتها، ومش مطلوب تعوّض ساعاته.</p><button class="btn teal" data-act="dropDeduct" data-id="${dl[0].sid}" data-confirm>شيل الخصم</button></div>`:"")+(fixR.length?`<div class="panel" style="border-color:var(--warn)"><h2>انصراف ${esc(staffName(fixR[0].staffId))} بدري في أكتوبر</h2><div class="list">${fixR.map(r=>`<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(r.date))}</span><span class="end"><button class="btn sm teal" data-act="attTo10" data-id="${r.date}_${r.staffId}" data-confirm>خليها مشيت 10:00</button></span><span class="m">حضور ${esc(r.in||"—")} · انصراف ${esc(r.out)}</span><span></span></div>`).join("")}</div></div>`:"");
   return `${tempNote}${fixHtml}<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
   ${st.length?`<div class="list">${rows}</div>`:`<div class="empty"><b>مفيش فريق متسجل</b>ضيف الدكاترة والسكرتارية من الإعدادات.</div>`}
   <div class="panel"><h2>ملخص ${esc(monthLabel(m))}</h2><p class="sub" style="margin:0">اليوم الأساسي ${cfg().hoursBase} ساعات. الأوفر تايم بيتحسب على الشهر: الأول يكمّل ساعات أيام جدوله لحد النهارده (اليوم اللي خرج فيه بدري بيتعوّض من الزيادة)، واللي يفضل بعد كده هو الأوفر تايم، بدقيقة ونص في المرتب. ده نفس الرقم اللي في المرتبات.</p>
@@ -699,6 +701,29 @@ async function pcSave(sid){const gs=pcGroups();const list=[];
   if(list.some(e=>!e.date))return setErr("فيه سطر من غير تاريخ");
   await S.db.doc("priv/precomm").set({list:[...(S.precomm||[]).filter(e=>e.sid!==sid),...list]});
   audit("money","جلسات قبل السيستم لنسبة دكتور",{target:staffName(sid),info:`${list.length} جلسة · ${list.filter(e=>e.half).length} نص`});closeSheet();toast("اتحفظ")}
+/* installments for equipment: shown on their own, apart from the month's net */
+function monthDiff(a,b){const [y1,m1]=a.split("-").map(Number),[y2,m2]=b.split("-").map(Number);return (y2-y1)*12+(m2-m1)}
+function instOf(m){return (S.inst||[]).map(p=>{const i=monthDiff(p.first,m)+1;return{p,i,due:i>=1&&i<=p.months,paid:!!p.paid?.[m],left:p.months-Object.keys(p.paid||{}).length}}).filter(x=>x.due)}
+function instPanel(m){const list=S.inst||[];const cur=instOf(m);const dueT=cur.reduce((t,x)=>t+num(x.p.monthly),0),paidT=cur.filter(x=>x.paid).reduce((t,x)=>t+num(x.p.monthly),0);
+  return `<div class="panel"><div class="sec-title"><h2>الأقساط (لوحدها)</h2><button class="btn sm" data-act="newInst">+ قسط</button></div>
+  ${list.length?`<div class="list">${list.map(p=>{const i=monthDiff(p.first,m)+1,due=i>=1&&i<=p.months,paid=!!p.paid?.[m],nPaid=Object.keys(p.paid||{}).length,leftN=p.months-nPaid;
+    return `<div class="row stack" style="cursor:default"><span class="t">${esc(p.name)} ${due?(paid?`<span class="chip c-ok">قسط ${i} من ${p.months} اتدفع ✓</span>`:`<span class="chip c-warn">قسط ${i} من ${p.months} لسه</span>`):nPaid>=p.months?`<span class="chip c-ok">خلص</span>`:""}</span><span class="end money">${money(p.monthly)}</span>
+    <span class="m">الإجمالي ${money(p.total)} · اتدفع ${nPaid} قسط (${money(nPaid*p.monthly)}) · فاضل ${leftN} قسط (${money(leftN*p.monthly)})${leftN>0?` · آخر قسط ${esc(monthLabel(nextMonthN(p.first,p.months-1)))}`:""}</span><span></span>
+    <span class="bar" style="grid-column:1/-1">${due&&!paid?`<button class="btn sm teal" data-act="payInst" data-id="${p.id}" data-m="${m}" data-confirm>اتدفع قسط ${esc(monthLabel(m))}</button>`:""}${due&&paid?`<button class="btn sm" data-act="unpayInst" data-id="${p.id}" data-m="${m}" data-confirm>لغي الدفع</button>`:""}<button class="btn sm danger" data-act="delInst" data-id="${p.id}" data-confirm>امسح</button></span></div>`}).join("")}</div>
+  <div class="note" style="display:flex;justify-content:space-between"><b>أقساط ${esc(monthLabel(m))}</b><b>${money(dueT)}${paidT<dueT?` (اتدفع ${money(paidT)})`:" ✓"}</b></div>`:`<div class="empty"><b>مفيش أقساط</b>زي أجهزة اشتريتوها بالتقسيط.</div>`}</div>`}
+function nextMonthN(m,n){let x=m;for(let i=0;i<n;i++)x=nextMonth(x);return x}
+function sheetInst(){openSheet("قسط جديد",`<label class="f">على إيه<input id="in_name" placeholder="أجهزة العيادة"></label>
+  <div class="grid2"><label class="f">الإجمالي<input id="in_total" inputmode="decimal" placeholder="150000"></label><label class="f">عدد الشهور<input id="in_months" inputmode="numeric" placeholder="8"></label>
+  <label class="f">اتدفع كام قسط قبل الشهر ده<input id="in_before" inputmode="numeric" placeholder="0"></label></div><div class="note" id="in_sum">اكتب الإجمالي وعدد الشهور.</div><div class="err" id="formErr"></div>
+  <button class="btn primary" data-act="saveInst">حفظ</button>`,()=>{const f=()=>{const t=num(val("in_total")),n=Math.round(num(val("in_months"))),b=Math.round(num(val("in_before")));
+    document.getElementById("in_sum").innerHTML=t&&n?`القسط <b>${money(Math.round(t/n))}</b> في الشهر · الشهر ده القسط رقم <b>${b+1}</b> من ${n} · فاضل ${Math.max(0,n-b)} قسط (${money(Math.round(t/n)*Math.max(0,n-b))}) لحد ${monthLabel(nextMonthN(today().slice(0,7),Math.max(0,n-b-1)))}`:"اكتب الإجمالي وعدد الشهور."};["in_total","in_months","in_before"].forEach(i=>document.getElementById(i).addEventListener("input",f))})}
+async function saveInst(){const name=val("in_name").trim()||"أقساط",total=num(val("in_total")),months=Math.round(num(val("in_months"))),before=Math.round(num(val("in_before")));
+  if(!total||months<1)return setErr("اكتب الإجمالي وعدد الشهور");if(before>=months)return setErr("الأقساط اللي اتدفعت أكتر من عددها");
+  const cur=today().slice(0,7);let first=cur;for(let i=0;i<before;i++)first=prevMonth(first);const paid={};let x=first;for(let i=0;i<before;i++){paid[x]="قبل السيستم";x=nextMonth(x)}
+  await S.db.doc("priv/installments").set({list:[...(S.inst||[]),{id:randId(),name,total,months,monthly:Math.round(total/months),first,paid,at:Date.now()}]});
+  audit("money","قسط جديد",{info:`${name} · ${money(total)} على ${months} شهور · اتدفع ${before}`});closeSheet();toast("اتسجل")}
+async function setInst(id,m,on){const list=(S.inst||[]).map(p=>{if(p.id!==id)return p;const paid={...(p.paid||{})};if(on)paid[m]=today();else delete paid[m];return{...p,paid}});await S.db.doc("priv/installments").set({list});
+  const p=(S.inst||[]).find(x=>x.id===id);audit("money",on?"دفع قسط":"لغى دفع قسط",{info:`${p?.name||""} · ${monthLabel(m)} · ${money(p?.monthly||0)}`});toast(on?"اتسجل":"اتلغى")}
 function hadeerPlan(){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
   const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only
@@ -1169,13 +1194,15 @@ function monthStat(k,m){
   if(k==="ext"){const rows=exts(true).map(x=>{const a=extRows(x.id,d=>d.startsWith(m)),me=extManual(x.id,m).filter(e=>e.settled);const sh=a.reduce((s,r)=>s+r.share,0)+me.reduce((s,e)=>s+manualCalc(e).share,0);
       const val=a.reduce((s,r)=>s+r.value,0)+me.reduce((s,e)=>s+manualCalc(e).value,0);return [esc(x.name),sh,`دخل ${money(val)} · للمركز ${money(val-sh)}`]});
     return openSheet(`حق الدكاترة من بره · ${monthLabel(m)}`,L(rows,tot("الإجمالي",extT))+`<p class="sub" style="margin:0">اللي اتصرف واللي فاضل في تاب «الدكاترة من بره».</p>`)}
-  if(k==="exp")return openSheet(`المصروفات · ${monthLabel(m)}`,L(Object.entries(ex.o).sort((a,b)=>b[1]-a[1]).map(([c,v])=>[esc(c),v,ex.t?`${Math.round(v/ex.t*100)}% من المصروفات`:""]),tot("الإجمالي",ex.t)));
+  if(k==="exp")return openSheet(`المصروفات · ${monthLabel(m)}`,L(Object.entries(ex.o).filter(([c])=>!/إيجار|ايجار/.test(c)).sort((a,b)=>b[1]-a[1]).map(([c,v])=>[esc(c),v,ex.other?`${Math.round(v/ex.other*100)}% من المصروفات`:""]),tot("الإجمالي (من غير الإيجار)",ex.other)));
   if(k==="net")return openSheet(`صافي الشهر · ${monthLabel(m)}`,`<div class="list">
     <div class="row" style="cursor:default"><span class="t">خزنة المركز: دخل الشهر${rv.fromExt?` (منه ${money(rv.fromExt)} نصيب المركز من الدكاترة اللي بره)`:""}</span><span class="end money" style="color:var(--ok)">+ ${money(rv.collected)}</span></div>
     <div class="row" style="cursor:default"><span class="t">المرتبات والأوفر تايم والنسب</span><span class="end money" style="color:var(--bad)">− ${money(Math.round(salT))}</span></div>
     ${extT?`<div class="row" style="cursor:default"><span class="t">حق دكاترة من بره على جلسات فلوسها في المركز</span><span class="end money" style="color:var(--bad)">− ${money(extT)}</span></div>`:""}
-    <div class="row" style="cursor:default"><span class="t">مصروفات تانية</span><span class="end money" style="color:var(--bad)">− ${money(ex.t)}</span></div></div>
+    <div class="row" style="cursor:default"><span class="t">مصروفات تانية</span><span class="end money" style="color:var(--bad)">− ${money(ex.other)}</span></div>
+    <div class="row" style="cursor:default"><span class="t">الإيجار</span><span class="end money" style="color:var(--bad)">− ${money(ex.rent)}</span></div></div>
     ${tot("صافي الشهر",Math.round(net),net<0?"var(--bad)":"var(--ok)")}
+    ${instOf(m).length?(()=>{const it=instOf(m).reduce((t,x)=>t+num(x.p.monthly),0);return `<div class="list"><div class="row" style="cursor:default"><span class="t">قسط الأجهزة الشهر ده (لوحده)</span><span class="end money" style="color:var(--bad)">− ${money(it)}</span></div></div>${tot("بعد القسط",Math.round(net-it))}`})():""}
     ${exts(true).length?(()=>{const vb=exts(true).reduce((t,x)=>t+vaultOf(x).bal,0);return `<div class="list"><div class="row" style="cursor:default"><span class="t">خزنة الدكاترة اللي بره (على جنب)</span><span class="end money" style="color:var(--warn)">+ ${money(vb)}</span></div></div>${tot("معاك كله (الصافي + خزنة الدكاترة اللي بره)",Math.round(net+vb))}`})():""}
     <p class="sub" style="margin:0">${exts(true).length?`حق الدكاترة اللي بره بيطلع من خزنتهم، مش من صافي المركز. `:""}${rv.unpaid?`ولسه على الحالات كلهم ${money(rv.unpaid)} مدفعوهمش، ودول مش داخلين في الحساب ده لحد ما يتدفعوا.`:""}</p>`);
 }
@@ -1273,8 +1300,9 @@ function vReports(){
     <button class="stat tap" data-act="mStat" data-k="sal" data-m="${m}"><div class="k">مرتبات وأوفر تايم ونسب ›</div><div class="v money">${money(salTotal)}</div></button>
     ${payers().length?`<button class="stat tap" data-act="mStat" data-k="payers" data-m="${m}"><div class="k">على الجهات (لسه مدفعتش) ›</div><div class="v money">${money(payers().reduce((s,P)=>s+Math.max(0,payerOwed(P.id)),0))}</div></button>`:""}
     ${exts(true).length?`<button class="stat tap" data-act="mStat" data-k="vault" data-m="${m}"><div class="k">خزنة الدكاترة اللي بره (على جنب) ›</div><div class="v money" style="color:var(--warn)">${money(exts(true).reduce((t,x)=>t+vaultOf(x).bal,0))}</div><div class="sub">مش داخلة في المركز لحد ما يتحاسبوا</div></button>`:""}
-    <button class="stat tap" data-act="mStat" data-k="exp" data-m="${m}"><div class="k">مصروفات تانية ›</div><div class="v money">${money(ex.t)}</div></button>
-    <button class="stat tap" data-act="mStat" data-k="net" data-m="${m}"><div class="k">صافي الشهر ›</div><div class="v money" style="color:${net<0?"var(--bad)":"var(--ok)"}">${money(net)}</div></button>
+    <button class="stat tap" data-act="mStat" data-k="exp" data-m="${m}"><div class="k">مصروفات تانية ›</div><div class="v money">${money(ex.other)}</div></button>
+    <div class="stat"><div class="k">الإيجار</div><div class="v money">${money(ex.rent)}</div></div>
+    <button class="stat tap" data-act="mStat" data-k="net" data-m="${m}"><div class="k">صافي الشهر ›</div><div class="v money" style="color:${net<0?"var(--bad)":"var(--ok)"}">${money(net)}</div>${instOf(m).length?`<div class="sub">بعد قسط الشهر (${money(instOf(m).reduce((t,x)=>t+num(x.p.monthly),0))}): ${money(net-instOf(m).reduce((t,x)=>t+num(x.p.monthly),0))}</div>`:""}</button>
   </div>
   <div class="verdict ${vcls}"><b style="font-family:var(--f-display)">${vt}</b><span>${vs}</span></div>
   ${extProfitPanel(m)}${extPendingPanel()}${planPanel(m)}
@@ -1285,7 +1313,7 @@ function vReports(){
     ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}${x.req!=null?`<div class="sub">اشتغل ${hm(x.got)} من ${hm(x.req)} مطلوبين${!x.ot&&x.short?` · ناقصه ${hm(x.short)}`:""}</div>`:""}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${x.bonus?`<div class="sub" style="color:var(--ok)">منه بونص الالتزام ${money(x.bonus)}${x.bonusSoFar?" (لو كمّل الشهر كده)":""}</div>`:x.bAmt?`<div class="sub">مفيش بونص الالتزام (${[x.absent?"غاب":"",x.paidLeave||x.deductDays?"خد إذن":"",x.short>0?"ساعاته ناقصة":""].filter(Boolean).join("، ")||"مفيش حضور"})</div>`:""}${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
   <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. الأوفر تايم بيتحسب على الشهر: بعد ما يكمّل ساعات كل أيامه في الشهر، يعني اليوم اللي بيعوّض بيه غياب مش أوفر تايم. أيام الإذن بتقلل الساعات المطلوبة. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
-  ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
+  ${instPanel(m)}${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
 }
 /* ---------- views: settings ---------- */
 function vSettings(){
@@ -2607,7 +2635,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2738,6 +2766,12 @@ document.addEventListener("click",async e=>{
     case "mennaAdd":guard(t,()=>mennaAdd(id));break;
     case "mennaClose":guard(t,mennaClose);break;
     case "hadeerSave":guard(t,hadeerSave);break;
+    case "dropDeduct":guard(t,async()=>{const list=(S.leaves||[]).map(l=>l.sid===id&&l.date==="2026-10-12"&&l.type==="deduct"?{...l,type:"free",by:S.mySid,at:Date.now()}:l);await db.doc("priv/leaves").set({list});audit("att","شال خصم يوم",{target:staffName(id),date:"2026-10-12"});toast("الخصم اتشال")});break;
+    case "newInst":sheetInst();break;
+    case "saveInst":guard(t,saveInst);break;
+    case "payInst":guard(t,()=>setInst(id,t.dataset.m,true));break;
+    case "unpayInst":guard(t,()=>setInst(id,t.dataset.m,false));break;
+    case "delInst":guard(t,async()=>{await S.db.doc("priv/installments").set({list:(S.inst||[]).filter(p=>p.id!==id)});audit("money","مسح قسط",{del:true});toast("اتمسح")});break;
     case "attTo10":guard(t,async()=>{const r=S.att[id];if(!r)return;await db.doc("att/"+id).set({date:r.date,staffId:r.staffId,in:r.in||"",out:"22:00",note:(r.note?r.note+" · ":"")+"الانصراف اتعدّل لـ 10:00",by:S.mySid});audit("att","عدّل حضور",{target:staffName(r.staffId),date:r.date,before:`انصراف ${r.out}`,after:"انصراف 22:00"});toast("اتعدّل")});break;
     case "preComm":sheetPreComm(id);break;
     case "pcRead":{const add=preParse(val("pc_text"));if(!add.length){setErr("الزق جلسات الورقة الأول");break}PC.rows.push(...add);document.getElementById("pc_text").value="";setErr("");drawPC();break}
