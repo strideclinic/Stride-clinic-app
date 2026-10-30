@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 78";
+const APP_VERSION="30 أكتوبر · 79";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -362,10 +362,10 @@ function payroll(month){
     for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;came.add(r.date);mins[r.date]=(mins[r.date]||0)+w;
       if(sched&&!wd.includes(wday(r.date)))extra++;
       if(!sched){if(w>base)ot+=w-base;else short+=base-w}}
-    const lv=leavesOf(s.id,month);let deductDays=0,paidLeave=0;
+    const lv=leavesOf(s.id,month);let deductDays=0,paidLeave=0,req=null,got=null;
     const first=Object.values(S.att).filter(r=>r.staffId===s.id).map(r=>r.date).sort()[0]; // absences count only once attendance started being recorded
     if(sched){ // overtime only after the month's hours so far are done: a make-up day covers a missed day first; days still to come or before records started aren't required yet
-      const req=sched.filter(d=>!lv[d]&&d<=today()&&(!first||d>=first)).length*base,got=Object.values(mins).reduce((a,b)=>a+b,0);
+      req=sched.filter(d=>!lv[d]&&d<=today()&&(!first||d>=first)).length*base;got=Object.values(mins).reduce((a,b)=>a+b,0);
       if(got>req)ot=got-req;else short=req-got;
       for(const [d,t] of Object.entries(lv))if(wd.includes(wday(d))){t==="deduct"?deductDays++:paidLeave++}}
     const absentDates=sched&&first?sched.filter(d=>d>=first&&d<=today()&&!came.has(d)&&!lv[d]):[];const absent=absentDates.length;
@@ -374,7 +374,7 @@ function payroll(month){
     const cm=c.commission[s.id];let comm=0,full=0,half=0,base2=0;
     if(cm)for(const v of Object.values(S.visits))if((v.date||"").startsWith(month))for(const [sid,comp] of creditsOf(v))if(sid===s.id){const pct=comp==="half"?num(cm.half):num(cm.full);const base=v.packId?(v.packValue||0):v.payerId?(v.net||0):(v.paid||0);comm+=base*pct/100;base2+=base;comp==="half"?half++:full++}
     let pre=0;if(cm)for(const e of S.precomm||[])if(e.sid===s.id&&(e.date||"").startsWith(month)){const pct=e.half?num(cm.half):num(cm.full);comm+=num(e.price)*pct/100;base2+=num(e.price);e.half?half++:full++;pre++} // sessions from before the system
-    return{s,sal,ot,otPay,days,short,cm,comm,full,half,pre,commBase:base2,total:sal-deduction+otPay+comm,wd,sched:sched?sched.length:null,absent,absentDates,extra,deductDays,paidLeave,deduction,dayRate};
+    return{s,sal,ot,otPay,days,short,req,got,cm,comm,full,half,pre,commBase:base2,total:sal-deduction+otPay+comm,wd,sched:sched?sched.length:null,absent,absentDates,extra,deductDays,paidLeave,deduction,dayRate};
   });
 }
 /* two vaults: money paid for an outside doctor's package / session sits in her vault (across months) until the period is settled;
@@ -495,11 +495,14 @@ function vAtt(){
     return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span></span>
     <span class="end">${attChip(r,w,ot,base)}</span>
     <span class="m">${r?`حضور ${esc(r.in||"—")}${countedNote(r)} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
-  const sum=st.map(s=>{let days=0,ot=0,short=0;for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(m)){const w=attMinutes(r);if(w==null)continue;days++;w>base?ot+=w-base:short+=base-w}return `<tr><td>${esc(s.name)}</td><td class="num">${days}</td><td>${hm(ot)}</td><td>${hm(short)}</td></tr>`}).join("");
+  const PR=payroll(m); // same numbers as the payroll: overtime is counted on the month, a short day is made up first
+  const sum=st.map(s=>{let days=0,plus=0,minus=0;for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(m)){const w=attMinutes(r);if(w==null)continue;days++;w>base?plus+=w-base:minus+=base-w}
+    const p=PR.find(x=>x.s.id===s.id);const ot=p?p.ot:plus,sh=p?p.short:minus;
+    return `<tr><td>${esc(s.name)}</td><td class="num">${days}</td><td>${hm(plus)}<div class="sub">ناقص ${hm(minus)}</div></td><td><b>${hm(ot)}</b>${p?.req!=null?`<div class="sub">اشتغل ${hm(p.got)} من ${hm(p.req)} مطلوبين${!ot&&sh?` · ناقصه ${hm(sh)}`:""}</div>`:""}</td></tr>`}).join("");
   return `${tempNote}<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
   ${st.length?`<div class="list">${rows}</div>`:`<div class="empty"><b>مفيش فريق متسجل</b>ضيف الدكاترة والسكرتارية من الإعدادات.</div>`}
-  <div class="panel"><h2>ملخص ${esc(monthLabel(m))}</h2><p class="sub" style="margin:0">اليوم الأساسي ${cfg().hoursBase} ساعات؛ أي دقيقة زيادة بتتحسب بدقيقة ونص في المرتب.</p>
-  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>أيام متسجلة</th><th>أوفر تايم</th><th>ساعات ناقصة</th></tr></thead><tbody>${sum}</tbody></table></div></div>`;
+  <div class="panel"><h2>ملخص ${esc(monthLabel(m))}</h2><p class="sub" style="margin:0">اليوم الأساسي ${cfg().hoursBase} ساعات. الأوفر تايم بيتحسب على الشهر: الأول يكمّل ساعات أيام جدوله لحد النهارده (اليوم اللي خرج فيه بدري بيتعوّض من الزيادة)، واللي يفضل بعد كده هو الأوفر تايم، بدقيقة ونص في المرتب. ده نفس الرقم اللي في المرتبات.</p>
+  <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>أيام متسجلة</th><th>زيادة الأيام</th><th>أوفر تايم الشهر</th></tr></thead><tbody>${sum}</tbody></table></div></div>`;
 }
 function locNote(r){const parts=[];if(r.inLoc)parts.push(`حضور على بعد ${r.inLoc.d}م`);if(r.outLoc)parts.push(`انصراف على بعد ${r.outLoc.d}م`);return parts.length?` · ${parts.join("، ")}`:""}
 function attChip(r,w,ot,base){if(!r)return `<span class="chip c-mute">غايب / مش متسجل</span>`;if(ot)return `<span class="chip c-acc">أوفر تايم ${hm(ot)}</span>`;if(w!=null&&w<base)return `<span class="chip c-warn">ناقص ${hm(base-w)}</span>`;return `<span class="chip c-ok">${w!=null?"تمام":"لسه مقفلش"}</span>`}
@@ -1274,7 +1277,7 @@ function vReports(){
   <div class="panel"><h2>المرتبات</h2>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
   ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.extra?`<div class="sub">${x.extra} يوم زيادة/تعويض</div>`:""}
-    ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
+    ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}${x.req!=null?`<div class="sub">اشتغل ${hm(x.got)} من ${hm(x.req)} مطلوبين${!x.ot&&x.short?` · ناقصه ${hm(x.short)}`:""}</div>`:""}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
   <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. الأوفر تايم بيتحسب على الشهر: بعد ما يكمّل ساعات كل أيامه في الشهر، يعني اليوم اللي بيعوّض بيه غياب مش أوفر تايم. أيام الإذن بتقلل الساعات المطلوبة. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
