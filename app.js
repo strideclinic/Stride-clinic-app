@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 75";
+const APP_VERSION="30 أكتوبر · 76";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1140,21 +1140,18 @@ function extPendingPanel(){ // off-system sessions not settled yet with outside 
   const rows=es.map(e=>{const c=manualCalc(e);T+=c.share;V+=c.value;return `<div class="row stack" style="cursor:default"><span class="t">${esc(staffName(e.sid))} · ${esc(e.patient)} · ${esc(manualTypeName(e))}</span><span class="end money"><span class="sub">للمركز</span> ${money(c.value-c.share)}</span><span class="m">${e.count} × ${money(e.price)} = ${money(c.value)} · حقها ${money(c.share)} · ${e.self?"هي جابتها":"المركز جابها"}</span><span></span></div>`}).join("");
   return `<div class="panel" style="border-color:var(--warn)"><h2>لسه متصفاش مع الدكاترة من بره</h2><p class="sub" style="margin:0">جلسات بره السيستم دي بره إيراد العيادة لحد ما تتحاسب. أول ما تدوس «اتصرفلها» في تاب الدكاترة من بره، بتدخل في إيراد شهرها.</p>
   <div class="list">${rows}</div><div class="note" style="display:flex;justify-content:space-between"><b>هيدخل للمركز لما تتحاسب</b><b>${money(V-T)}</b></div></div>`}
-function extProfitPanel(m){
-  const xs=exts(true);if(!xs.length)return "";const cards=[];let G={n:0,v:0,s:0};
-  for(const x of xs){const g={self:{n:0,v:0,s:0},clinic:{n:0,v:0,s:0}},ty={};const add=(self,type,n,v,sh)=>{const b=g[self?"self":"clinic"];b.n+=n;b.v+=v;b.s+=sh;ty[type]=(ty[type]||0)+n};
-    for(const r of extRows(x.id,d=>d.startsWith(m)))add(r.self,r.v.typeName||typeName(r.v.typeId),1,r.value,r.share);
-    for(const e of extManual(x.id,m))if(e.settled){const c=manualCalc(e);add(e.self,manualTypeName(e),num(e.count),c.value,c.share)}
-    const t={n:g.self.n+g.clinic.n,v:g.self.v+g.clinic.v,s:g.self.s+g.clinic.s};if(!t.n)continue;G={n:G.n+t.n,v:G.v+t.v,s:G.s+t.s};
-    const line=(lbl,b)=>b.n?`<div class="row" style="cursor:default"><span class="t">${lbl}</span><span class="end money" style="color:var(--ok)"><span class="sub">للمركز</span> ${money(b.v-b.s)}</span><span class="m">${b.n} جلسة · دخل ${money(b.v)} · حقها ${money(b.s)}</span><span></span></div>`:"";
-    cards.push(`<div class="ext-card" style="display:grid;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px"><div class="sec-title"><h3 style="margin:0;font-size:16px">${esc(x.name)}</h3><b class="money" style="color:var(--ok)">${money(t.v-t.s)} للمركز</b></div>
-      <div class="list">${line(`${esc(x.name)} جابتها`,g.self)}${line("المركز جابها",g.clinic)}</div>
-      <p class="sub" style="margin:0">${t.n} جلسة (${Object.entries(ty).map(([k,n])=>`${esc(k)} ${n}`).join(" · ")}) · دخل ${money(t.v)} · حقها ${money(t.s)}</p></div>`)}
+function extProfitPanel(m){ // per outside doctor, period by period: what came in, her share, the clinic's share, settled or not
+  const xs=exts(true);if(!xs.length)return "";const mEnd=dstr(dnum(nextMonth(m)+"-01")-1),cur=x=>extPeriod(x,today()).from;let G={v:0,s:0},cards=[];
+  for(const x of xs){const ps=[];let p=extPeriod(x,m+"-01");for(let i=0;i<8&&p.from<=mEnd;i++){ps.push(p);p=extPeriod(x,dstr(dnum(p.to)+1))}
+    const rows=ps.map(q=>{const it=extItems(x,q,q.from===cur(x)),its=it.items.filter(r=>!r.date||r.date.startsWith(m)||(r.month===m&&!r.date));const v=its.reduce((t,r)=>t+r.value,0),sh=its.reduce((t,r)=>t+r.share,0);return{q,v,sh,left:it.left}}).filter(r=>r.v);
+    if(!rows.length)continue;const T=rows.reduce((a,r)=>({v:a.v+r.v,s:a.s+r.sh}),{v:0,s:0});G={v:G.v+T.v,s:G.s+T.s};
+    cards.push(`<div class="ext-card" style="display:grid;gap:8px;border:1px solid var(--line);border-radius:14px;padding:12px"><div class="sec-title"><h3 style="margin:0;font-size:16px">${esc(x.name)}</h3><b class="money" style="color:var(--ok)">${money(T.v-T.s)} للمركز</b></div>
+      <div class="list">${rows.map(r=>`<div class="row" style="cursor:default"><span class="t">${esc(fmtRange(r.q))} ${r.left>0?`<span class="chip c-warn">لسه ${money(r.left)}</span>`:`<span class="chip c-ok">اتحاسبت ✓</span>`}</span><span class="end money" style="color:var(--ok)"><span class="sub">للمركز</span> ${money(r.v-r.sh)}</span><span class="m">الإجمالي ${money(r.v)} · ${r.left>0?"حقها":"خدت"} ${money(r.sh)}</span><span></span></div>`).join("")}</div>
+      ${rows.length>1?`<p class="sub" style="margin:0">الشهر كله: الإجمالي ${money(T.v)} · حقها ${money(T.s)} · للمركز ${money(T.v-T.s)}</p>`:""}</div>`)}
   if(!cards.length)return "";
   return `<div class="panel"><h2>الدكاترة من بره كسبوا المركز كام</h2>
-  <div class="stat" style="border-color:var(--ok)"><div class="k">إجمالي اللي كسبه المركز من الدكاترة من بره · ${esc(monthLabel(m))}</div><div class="v money" style="color:var(--ok)">${money(G.v-G.s)}</div><div class="sub">${G.n} جلسة اتعملت الشهر ده · دخل ${money(G.v)} · حقهم ${money(G.s)}</div><div class="sub">اللي دخل خزنة المركز فعلاً الشهر ده (اتحاسبوا): <b>${money(extCenter(m).moved)}</b></div></div>
-  ${cards.join("")}
-  <p class="sub" style="margin:0">فيها جلسات السيستم، وجلسات بره السيستم اللي اتحاسبت. الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته.</p></div>`}
+  <div class="stat" style="border-color:var(--ok)"><div class="k">إجمالي اللي كسبه المركز من الدكاترة من بره · ${esc(monthLabel(m))}</div><div class="v money" style="color:var(--ok)">${money(G.v-G.s)}</div><div class="sub">الإجمالي ${money(G.v)} · حقهم ${money(G.s)}</div><div class="sub">اللي دخل خزنة المركز فعلاً (اتحاسبوا): <b>${money(extCenter(m).moved)}</b></div></div>
+  ${cards.join("")}</div>`}
 function planPanel(m){ // which works better: packages or paying per session
   const DAY=864e5,stale=d=>!d||(Date.now()-new Date(d+"T12:00").getTime())>30*DAY;
   let pk={n:0,done:0,stop:0,on:0},ps={n:0,stop:0,on:0,sess:0};
