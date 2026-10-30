@@ -1,5 +1,5 @@
 // Stride Clinic service worker: app shell works offline; Firebase data has its own offline cache.
-const CACHE = "stride-v72";
+const CACHE = "stride-v74";
 const SHELL = ["./", "./index.html", "./app.js", "./config.js", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/logo.png", "./icons/watermark.png", "./icons/signature.png"];
 const RUNTIME_HOSTS = ["www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];
