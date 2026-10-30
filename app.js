@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 77";
+const APP_VERSION="30 أكتوبر · 78";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -363,11 +363,11 @@ function payroll(month){
       if(sched&&!wd.includes(wday(r.date)))extra++;
       if(!sched){if(w>base)ot+=w-base;else short+=base-w}}
     const lv=leavesOf(s.id,month);let deductDays=0,paidLeave=0;
-    if(sched){ // overtime only after the whole month's hours are done: a make-up day covers a missed day first
-      const req=sched.filter(d=>!lv[d]).length*base,got=Object.values(mins).reduce((a,b)=>a+b,0);
+    const first=Object.values(S.att).filter(r=>r.staffId===s.id).map(r=>r.date).sort()[0]; // absences count only once attendance started being recorded
+    if(sched){ // overtime only after the month's hours so far are done: a make-up day covers a missed day first; days still to come or before records started aren't required yet
+      const req=sched.filter(d=>!lv[d]&&d<=today()&&(!first||d>=first)).length*base,got=Object.values(mins).reduce((a,b)=>a+b,0);
       if(got>req)ot=got-req;else short=req-got;
       for(const [d,t] of Object.entries(lv))if(wd.includes(wday(d))){t==="deduct"?deductDays++:paidLeave++}}
-    const first=Object.values(S.att).filter(r=>r.staffId===s.id).map(r=>r.date).sort()[0]; // absences count only once attendance started being recorded
     const absentDates=sched&&first?sched.filter(d=>d>=first&&d<=today()&&!came.has(d)&&!lv[d]):[];const absent=absentDates.length;
     const dayRate=sched&&sched.length?sal/sched.length:0;const deduction=Math.round(deductDays*dayRate);
     const otPay=ot*c.otMult*minRate;
@@ -667,7 +667,8 @@ function prePrice(p,date){const ks=(p?.packs||[]).filter(k=>extFamily(k.typeId)=
   const k=ks.find(k=>(k.preUsed||0)>0)||ks[0];if(k)return{price:Math.round((k.price||0)/(k.sessions||1)),src:packTitle(k)};
   const r=p?.rates?.[physioId()];if(r!=null)return{price:r,src:"بالجلسة"};return null}
 function preMatches(name){const n=normName(name);const all=Object.values(S.patients);const exact=all.filter(p=>normName(p.name)===n);if(exact.length)return exact;
-  return all.filter(p=>normName(p.name).startsWith(n+" ")||normName(p.name)===n)}
+  const pre=all.filter(p=>normName(p.name).startsWith(n+" "));if(pre.length)return pre;
+  const tk=n.split(" ");return all.filter(p=>{const w=normName(p.name).split(" ");return tk.every(t=>w.includes(t))})} // "أنس أسامة" finds «أنس محمد أسامة»
 function sheetPreComm(sid){const st=S.staff[sid];if(!st)return;const mine=(S.precomm||[]).filter(e=>e.sid===sid);
   PC={sid,rows:mine.length?mine.map(e=>({...e})):[]};
   openSheet(`${st.name} · جلسات قبل السيستم`,`<p class="sub" style="margin:0">الزق جلسات الورقة: سطر لكل يوم يبدأ بالتاريخ، والأسامي بفاصلة، واكتب «نص» جنب اللي اشتغله نص. السعر بيتجاب من ملف المريض، واللي مش معروف اكتبه بإيدك.</p>
