@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 71";
+const APP_VERSION="30 أكتوبر · 72";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -524,7 +524,8 @@ function extRows(sid,test){ // every session the outside doctor worked, with its
   const x=extById(sid);if(!x)return[];const rows=[];
   for(const v of Object.values(S.visits)){if(!test(v.date||""))continue;
     for(const [d] of creditsOf(v))if(d===sid){const value=(v.packId?(v.packValue||0):(v.net||0))*(v.doctor2Id?0.5:1);
-      const self=S.patients[v.patientId]?.broughtBy===sid;const pct=extRate(x,v.typeId,self);
+      let self=S.patients[v.patientId]?.broughtBy===sid;if(!self&&extRate(x,v.typeId,false)==null&&extRate(x,v.typeId,true)!=null)self=true; // a type the clinic never brings her (e.g. physio for Dr. Hadeer) is always her own case
+      const pct=extRate(x,v.typeId,self);
       rows.push({v,value,pct,self,share:pct==null?0:Math.round(value*pct/100)})}}
   return rows.sort((a,b)=>((a.v.date||"")+(a.v.time||"")).localeCompare((b.v.date||"")+(b.v.time||"")));
 }
