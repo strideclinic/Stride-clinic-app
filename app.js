@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="30 أكتوبر · 82";
+const APP_VERSION="1 نوفمبر · 83";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -799,7 +799,7 @@ function vExt(){
     <div class="bar">${leftAll>0?`<button class="btn teal grow" data-act="extPayAll" data-id="${x.id}" data-confirm>اتصرفلها كل اللي فاضل ${money(leftAll)}</button>`:`<span class="chip c-ok">اتصرفلها كل حقها ✓</span>`}${own?`<button class="btn sm" data-act="extManual" data-id="${x.id}">+ جلسة بره السيستم</button><button class="btn sm" data-act="extPaste" data-id="${x.id}">لصق</button>`:""}</div>
     ${C.items.length?`<div class="list">${C.items.map(r=>extItemRow(r,x)).join("")}</div>`:`<div class="empty"><b>مفيش جلسات في الفترة دي لسه</b></div>`}
     ${old.length?`<h3 style="font-size:14px;margin:6px 0 0">الفترات اللي فاتت</h3><div class="list">${old.map(d=>`<details class="row stack" style="cursor:default;display:block"><summary style="cursor:pointer;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b>${esc(fmtRange(d.q))}</b> <span class="sub">${d.n} جلسة · حقها ${money(d.share)} · للمركز ${money(d.value-d.share)}</span> ${d.left>0?`<span class="chip c-warn">فاضل ${money(d.left)}</span>`:d.share?`<span class="chip c-ok">اتصرفلها</span>`:""}</summary>
-      <div class="list" style="margin-top:8px">${d.items.map(r=>extItemRow(r,x)).join("")}</div><div class="bar" style="margin-top:6px"><button class="btn sm" data-act="extPeriod" data-id="${x.id}" data-from="${d.q.from}">الدفعات</button>${d.left>0?`<button class="btn sm teal" data-act="extPay" data-id="${x.id}" data-from="${d.q.from}" data-confirm>اتصرفلها حق الفترة دي ${money(d.left)}</button>`:""}</div></details>`).join("")}</div>`:""}
+      <div class="list" style="margin-top:8px">${d.items.map(r=>extItemRow(r,x)).join("")}</div><div class="bar" style="margin-top:6px"><button class="btn sm" data-act="extPeriod" data-id="${x.id}" data-from="${d.q.from}">الدفعات</button>${S.role==="owner"&&d.paid>0?`<button class="btn sm danger" data-act="extUnpayPeriod" data-id="${x.id}" data-from="${d.q.from}" data-confirm>لغي الصرف (اتدفع بالغلط)</button>`:""}${d.left>0?`<button class="btn sm teal" data-act="extPay" data-id="${x.id}" data-from="${d.q.from}" data-confirm>اتصرفلها حق الفترة دي ${money(d.left)}</button>`:""}</div></details>`).join("")}</div>`:""}
     </div>`}).join("");
 }
 function fmtRange(q){const f=d=>new Date(d+"T12:00").toLocaleDateString("ar-EG-u-nu-latn",{day:"numeric",month:"short"});return `${f(q.from)} ← ${f(q.to)}`}
@@ -826,6 +826,11 @@ async function extPay(sid,from){ // settles one period: her sessions on the syst
   await S.db.doc("cfg/ext").set(upd,{merge:true});audit("money","صرف لدكتور من بره",{target:x.name,info:`${fmtRange(q)} · ${money(left+manDue)}`});toast(`اتسجل إن ${x.name} خدت ${money(left+manDue)}`);
 }
 
+async function extUnpayPeriod(sid,from){ // pressed «اتصرفلها» by mistake: the period goes back to not paid
+  const x=extById(sid);const q=extPeriod(x,from);const pays=(S.ext?.pays||[]).filter(p=>p.sid===sid&&p.from===q.from),back=pays.reduce((t,p)=>t+(p.amount||0),0);
+  let manBack=0;const manual=(S.ext?.manual||[]).map(e=>{if(e.sid!==sid||!e.settled)return e;const d=manualDate(e);if(d<q.from||d>q.to||!(e.paidDate>=q.from))return e;manBack+=manualCalc(e).share;const {paidDate,...rest}=e;return{...rest,settled:false,date:d}});
+  await S.db.doc("cfg/ext").set({pays:(S.ext?.pays||[]).filter(p=>!pays.includes(p)),manual},{merge:true});
+  audit("money","لغى صرف لدكتور من بره",{target:x.name,info:`${fmtRange(q)} · ${money(back+manBack)}`,del:true});toast(`اتلغى: ${x.name} لسه ليها ${money(back+manBack)} عن ${fmtRange(q)}`)}
 async function extUnpay(pid){await S.db.doc("cfg/ext").set({pays:(S.ext?.pays||[]).filter(p=>p.id!==pid)},{merge:true});closeSheet();toast("اتلغى")}
 function extRateRow(r){const t=S.types;return `<div class="grid2 extrate" style="align-items:end"><label class="f">نوع الجلسة<select class="er_type"><option value="*" ${r.typeId==="*"?"selected":""}>كل الأنواع (والكشف)</option>${t.map(y=>`<option value="${y.id}" ${y.id===r.typeId?"selected":""}>${esc(y.name)}</option>`).join("")}</select></label>
   <label class="f">لو الحالة جايبها<select class="er_by">${Object.entries(BY_LABEL).map(([k,l])=>`<option value="${k}" ${k===(r.by||"any")?"selected":""}>${l}</option>`).join("")}</select></label>
@@ -2635,7 +2640,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2708,6 +2713,7 @@ document.addEventListener("click",async e=>{
     case "saveExtPaste":guard(t,()=>saveExtPaste(id));break;
     case "extPay":guard(t,()=>extPay(id,t.dataset.from));break;
     case "extPayAll":guard(t,()=>extPayAll(id));break;
+    case "extUnpayPeriod":guard(t,()=>extUnpayPeriod(id,t.dataset.from));break;
     case "tagPack":guard(t,async()=>{const p=S.patients[id];if(!p)return;const k0=p.packs.find(k=>k.id===t.dataset.k);await S.db.doc("patients/"+id).update({packs:p.packs.map(k=>k.id===t.dataset.k?{...k,ext:t.dataset.x||""}:k)});audit("money","حدد الباكدج مع مين",{target:p.name,info:packTitle(k0||{name:""}),after:t.dataset.x?staffName(t.dataset.x):"المركز"});toast("اتحدد")});break;
     case "extUnpay":guard(t,()=>extUnpay(id));break;
     case "newExt":sheetExt(null);break;
