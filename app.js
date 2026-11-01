@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="1 نوفمبر · 86";
+const APP_VERSION="1 نوفمبر · 87";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -137,7 +137,7 @@ function setupRoleSubs(){
     r.push(sub(c("appts").where("doctors","array-contains",S.mySid),setLive("appts")));
     r.push(sub(c("att").where("staffId","==",S.mySid),setLive("att")));
   }
-  if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]))}
+  if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
 }
 let prunedA=false;
 function pruneAppts(){ // finished appointments older than 4 months: the visit itself is the lasting record
@@ -425,7 +425,8 @@ function revenue(month){
   const unpaid=Object.values(S.patients).reduce((s,p)=>s+Math.max(0,(p.charged||0)-(p.paid||0)),0);
   const vin=vaultIn(d=>d.startsWith(month)),E=extCenter(month);
   const manual=extManual(null).filter(e=>e.settled&&manualDate(e).startsWith(month)).reduce((t,e)=>{const c=manualCalc(e);return t+c.value-c.share},0); // clinic's part of off-system sessions, once settled
-  return{cash:mo.cash-vin.cash,insta:mo.insta-vin.insta,collected:mo.clinic-vin.t+E.moved,fromExt:E.moved,extShareCenter:E.shareCenter,vaultIn:vin.t,charged:charged+manual,sessions,unpaid,manual};
+  const raw=mo.clinic-vin.t+E.moved,tgt=S.adjust?.[month]?.target,adj=tgt!=null?Math.round(num(tgt)-raw):0; // the owner set the month's real total by hand
+  return{raw,adj,cash:mo.cash-vin.cash,insta:mo.insta-vin.insta,collected:raw+adj,fromExt:E.moved,extShareCenter:E.shareCenter,vaultIn:vin.t,charged:charged+manual,sessions,unpaid,manual};
 }
 function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)&&!(x.ext&&extById(x.ext))){ /* a refund from an outside doctor's vault isn't the clinic's expense */o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}
   const rent=Object.entries(o).filter(([k])=>/إيجار|ايجار/.test(k)).reduce((a,[,v])=>a+v,0);return{o,t,rent,other:t-rent}} // rent is shown on its own
@@ -739,7 +740,7 @@ function monthReportHtml(m){
   return `<div class="a5" dir="rtl"><img class="wm" src="icons/watermark.png" alt="">
   <table class="pg"><thead><tr><td><div class="pgtop"></div></td></tr></thead><tfoot><tr><td><div class="pgbot"></div></td></tr></tfoot><tbody><tr><td>
   <div class="rh">Stride Clinic</div><div class="rtitle">تقرير قفل شهر ${esc(monthLabel(m))}</div>
-  ${sec("خزنة المركز: دخل الشهر")}${T(["البند","المبلغ"],[`<tr><td>كاش</td><td>${n(rv.cash)}</td></tr>`,`<tr><td>InstaPay</td><td>${n(rv.insta)}</td></tr>`,rv.fromExt?`<tr><td>نصيب المركز من الدكاترة اللي بره</td><td>${n(rv.fromExt)}</td></tr>`:""],["الإجمالي",n(rv.collected)])}
+  ${sec("خزنة المركز: دخل الشهر")}${T(["البند","المبلغ"],[`<tr><td>كاش</td><td>${n(rv.cash)}</td></tr>`,`<tr><td>InstaPay</td><td>${n(rv.insta)}</td></tr>`,rv.fromExt?`<tr><td>نصيب المركز من الدكاترة اللي بره</td><td>${n(rv.fromExt)}</td></tr>`:""],["الإجمالي",n(rv.collected)])}${rv.adj?`<div class="rf" style="font-size:.85em">المحسوب ${n(rv.raw)} · تسوية ${rv.adj>0?"+":"−"}${n(Math.abs(rv.adj))}</div>`:""}
   ${sec("المرتبات")}${T(["الاسم","الأساسي","الإضافات","الإجمالي"],pr.filter(x=>x.total||x.sal).map(x=>{const parts=[x.otPay?`أوفر تايم ${n(x.otPay)}`:"",x.comm?`نسبة ${n(x.comm)}`:"",(x.bonus||0)+(x.extra2||0)?`بونص ${n((x.bonus||0)+(x.extra2||0))}`:"",x.deduction?`خصم −${n(x.deduction)}`:""].filter(Boolean);return `<tr><td>${esc(x.s.name)}</td><td>${n(x.sal)}</td><td style="font-size:.85em;line-height:1.5">${parts.join("<br>")||"—"}</td><td>${n(x.total)}</td></tr>`}),["الإجمالي","","",n(salT)])}
   ${extRowsM.length?sec("الدكاترة اللي بره")+T(["الدكتورة","الإجمالي","حقها","للمركز"],extRowsM.map(r=>`<tr><td>${esc(r.x.name)}<div style="font-size:.8em">${r.left>0?`لسه ليها ${n(r.left)}`:"اتحاسبت ✓"}</div></td><td>${n(r.v)}</td><td>${n(r.sh)}</td><td>${n(r.v-r.sh)}</td></tr>`)):""}
   ${sec("المصروفات")}${T(["البند","المبلغ"],[`<tr><td>الإيجار</td><td>${n(ex.rent)}</td></tr>`,...Object.entries(ex.o).filter(([c])=>!/إيجار|ايجار/.test(c)).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`<tr><td>${esc(c)}</td><td>${n(v)}</td></tr>`)],["الإجمالي",n(ex.t)])}
@@ -1231,6 +1232,8 @@ function monthStat(k,m){
     const sum=o=>Object.values(o).reduce((a,b)=>a+b,0),how=o=>Object.entries(o).map(([k,v])=>`${METHODS[k]||k} ${money(v)}`).join(" · ");
     return openSheet(`اتحصّل للمركز · ${monthLabel(m)}`,`<div class="stats"><div class="stat"><div class="k">كاش</div><div class="v money">${money(rv.cash)}</div></div><div class="stat"><div class="k">InstaPay</div><div class="v money">${money(rv.insta)}</div></div></div>
       <h3 style="font-size:14px;margin:6px 0 0">جه منين</h3>${L([["اتدفع في الجلسات نفسها",sum(src.v),how(src.v)],["على الباكدجات",sum(src.pk),how(src.pk)],["دفعات لوحدها (تسديد اللي عليهم)",sum(src.pay),how(src.pay)],["من الجهات (زي النادي)",sum(src.py),how(src.py)],["نصيب المركز من الدكاترة اللي بره (اتحاسبوا الشهر ده)",rv.fromExt,exts(true).map(x=>extCenter(m).by[x.id]?`${esc(x.name)} ${money(extCenter(m).by[x.id])}`:"").filter(Boolean).join(" · ")]],tot("خزنة المركز",rv.collected))}
+      ${rv.adj?`<div class="note">المحسوب ${money(rv.raw)}، و<b>اتظبط على ${money(rv.collected)}</b> (تسوية ${rv.adj>0?"+":"−"}${money(Math.abs(rv.adj))}).</div>`:""}
+      <div class="bar"><label class="f grow">الإجمالي الحقيقي للشهر<input id="adj_v" inputmode="decimal" value="${rv.adj?rv.collected:""}" placeholder="${Math.round(rv.raw)}"></label><button class="btn sm teal" data-act="setAdjust" data-m="${m}">اظبطه</button>${rv.adj?`<button class="btn sm" data-act="clearAdjust" data-m="${m}" data-confirm>شيل التسوية</button>`:""}</div>
       ${rv.vaultIn?`<div class="note">ودخل كمان <b>${money(rv.vaultIn)}</b> لخزنة الدكاترة اللي بره، ودول مش محسوبين هنا لحد ما يتحاسبوا.</div>`:""}
       <p class="sub" style="margin:0">المرتبات والمصروفات بيتخصموا في «صافي الشهر».</p>`)}
   if(k==="sal")return openSheet(`المرتبات · ${monthLabel(m)}`,L(pr.map(x=>[esc(x.s.name),Math.round(x.total),[`أساسي ${money(x.sal)}`,x.otPay?`أوفر تايم ${money(Math.round(x.otPay))}`:"",x.comm?`نسبة ${money(Math.round(x.comm))}`:"",x.deduction?`خصم ${money(Math.round(x.deduction))}`:""].filter(Boolean).join(" · ")]),tot("الإجمالي",Math.round(salT)))+`<p class="sub" style="margin:0">التفاصيل كاملة في جدول المرتبات تحت.</p>`);
@@ -2687,7 +2690,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2822,6 +2825,8 @@ document.addEventListener("click",async e=>{
     case "addBonus":sheetBonus(id,t.dataset.m);break;
     case "saveBonus":guard(t,()=>saveBonus(id,t.dataset.m));break;
     case "delBonus":guard(t,async()=>{const b=(S.bonuses||[]).find(x=>x.id===id);await S.db.doc("priv/bonuses").set({list:(S.bonuses||[]).filter(x=>x.id!==id)});audit("money","مسح بونص",{target:staffName(b?.sid),info:money(b?.amount||0),del:true});toast("اتمسح")});break;
+    case "setAdjust":guard(t,async()=>{const v=num(val("adj_v"));if(!v)return toast("اكتب الإجمالي");const m=t.dataset.m,raw=revenue(m).raw;await S.db.doc("priv/adjust").set({[m]:{target:v,raw:Math.round(raw),at:Date.now(),by:S.mySid}},{merge:true});audit("money","ظبط إجمالي الشهر",{info:`${monthLabel(m)}: المحسوب ${money(raw)} ← ${money(v)}`});closeSheet();toast(`إجمالي ${monthLabel(m)} بقى ${money(v)}`)});break;
+    case "clearAdjust":guard(t,async()=>{const m=t.dataset.m;await S.db.doc("priv/adjust").set({[m]:firebase.firestore.FieldValue.delete()},{merge:true});audit("money","شال تسوية الشهر",{info:monthLabel(m),del:true});closeSheet();toast("التسوية اتشالت")});break;
     case "monthReport":showPrint(monthReportHtml(t.dataset.m));break;
     case "octReset":guard(t,octReset);break;
     case "dropDeduct":guard(t,async()=>{const list=(S.leaves||[]).map(l=>l.sid===id&&l.date==="2026-10-12"&&l.type==="deduct"?{...l,type:"free",by:S.mySid,at:Date.now()}:l);await db.doc("priv/leaves").set({list});audit("att","شال خصم يوم",{target:staffName(id),date:"2026-10-12"});toast("الخصم اتشال")});break;
