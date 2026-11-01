@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="1 نوفمبر · 84";
+const APP_VERSION="1 نوفمبر · 85";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -402,9 +402,9 @@ function extState(x,date){ // the pay period holding date, and whether it's sett
 function extCenter(m){ // what the clinic gets from outside doctors in month m
   let moved=0,shareCenter=0;const by={};
   for(const x of exts(true)){const seen=new Set();
-    for(const p of (S.ext?.pays||[]))if(p.sid===x.id&&(p.date||"").startsWith(m)&&!seen.has(p.from)){seen.add(p.from);const st=extState(x,p.from);
-      if(st.settled&&st.at.startsWith(m)){const c=st.rows.filter(r=>visitVault(r.v)===x.id).reduce((t,r)=>t+r.value-r.share,0);moved+=c;by[x.id]=(by[x.id]||0)+c}}
-    for(const e of extManual(x.id))if(e.settled&&(e.paidDate||e.month+"-01").startsWith(m)){const c=manualCalc(e);moved+=c.value-c.share;by[x.id]=(by[x.id]||0)+c.value-c.share}
+    for(const p of (S.ext?.pays||[]))if(p.sid===x.id&&!seen.has(p.from)){seen.add(p.from);const st=extState(x,p.from);
+      if(st.settled){ /* once the period is settled, each session's clinic part counts in the month it was done, even if she's paid later */const c=st.rows.filter(r=>visitVault(r.v)===x.id&&(r.v.date||"").startsWith(m)).reduce((t,r)=>t+r.value-r.share,0);moved+=c;by[x.id]=(by[x.id]||0)+c}}
+    for(const e of extManual(x.id))if(e.settled&&manualDate(e).startsWith(m)){const c=manualCalc(e);moved+=c.value-c.share;by[x.id]=(by[x.id]||0)+c.value-c.share}
   } // her share always comes out of her vault, never out of the clinic's month
   return{moved,shareCenter,by}}
 function vaultOf(x){ // what's sitting in an outside doctor's vault right now
@@ -423,7 +423,7 @@ function revenue(month){
   const mo=dayMoney(d=>d.startsWith(month));
   const unpaid=Object.values(S.patients).reduce((s,p)=>s+Math.max(0,(p.charged||0)-(p.paid||0)),0);
   const vin=vaultIn(d=>d.startsWith(month)),E=extCenter(month);
-  const manual=extManual(null).filter(e=>e.settled&&(e.paidDate||e.month+"-01").startsWith(month)).reduce((t,e)=>{const c=manualCalc(e);return t+c.value-c.share},0); // clinic's part of off-system sessions, once settled
+  const manual=extManual(null).filter(e=>e.settled&&manualDate(e).startsWith(month)).reduce((t,e)=>{const c=manualCalc(e);return t+c.value-c.share},0); // clinic's part of off-system sessions, once settled
   return{cash:mo.cash-vin.cash,insta:mo.insta-vin.insta,collected:mo.clinic-vin.t+E.moved,fromExt:E.moved,extShareCenter:E.shareCenter,vaultIn:vin.t,charged:charged+manual,sessions,unpaid,manual};
 }
 function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)&&!(x.ext&&extById(x.ext))){ /* a refund from an outside doctor's vault isn't the clinic's expense */o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}
