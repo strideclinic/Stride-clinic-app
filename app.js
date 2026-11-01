@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="1 نوفمبر · 89";
+const APP_VERSION="1 نوفمبر · 90";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -137,6 +137,8 @@ function setupRoleSubs(){
     r.push(sub(c("appts").where("doctors","array-contains",S.mySid),setLive("appts")));
     r.push(sub(c("att").where("staffId","==",S.mySid),setLive("att")));
   }
+  if(S.role!=="owner")r.push(sub(c("pay").where("sid","==",S.mySid),o=>S.mypay=o)); // my own salary, published once the month is over
+  else r.push(sub(c("pay").where("month","==",prevMonth(today().slice(0,7))),o=>S.payPub=o));
   if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
 }
 let prunedA=false;
@@ -172,15 +174,15 @@ function syncBackfillSub(){
 function defaultTab(){return {owner:"sessions",secretary:"sessions",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
-  if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),...(S.staff[S.mySid]?.me?[]:[["myatt","حضوري"]])]}
+  if(S.role==="doctor"){const old=myEntriesList().length;return [["myappts","جلساتي",Object.values(S.appts).filter(a=>a.date===today()&&["booked","arrived","started"].includes(a.status)&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).length],...(old?[["mine","تسجيلاتي القديمة",myFresh()]]:[]),...(S.staff[S.mySid]?.me?[]:[["myatt","حضوري"],["mypay","مرتبي"]])]}
   const pend=pendingEntries().length;
   const base=[["sessions","جلسات اليوم",Object.values(S.appts).filter(needsRecord).length],["appts","الحجز"],...(pend?[["review","تسجيلات الدكاترة",pend]]:[]),["patients","المرضى والكشف"],...(exts().length?[["ext","الدكاترة من بره"]]:[])];
   if(S.role==="owner")return [...base,["att","الحضور"],["reports","الحسابات والمرتبات"],["audit","سجل التعديلات"],["settings","الإعدادات"]];
-  return [...base,["myatt","حضوري"],...(backfillOn()?[["att","حضور الفريق (مؤقت)"]]:[]),["reports","دخل وخرج اليوم"],["settings","الإعدادات"]];
+  return [...base,["myatt","حضوري"],["mypay","مرتبي"],...(backfillOn()?[["att","حضور الفريق (مؤقت)"]]:[]),["reports","دخل وخرج اليوم"],["settings","الإعدادات"]];
 }
 function render(){
   const who=document.getElementById("who"),tabs=document.getElementById("tabs"),main=document.getElementById("main");
-  if(!S.auth)return;
+  if(!S.auth)return;if(S.role==="owner")setTimeout(autoPublishPay,4000);
   if(!S.uid){who.textContent="المعادي";tabs.hidden=true;main.innerHTML=S.setupDone===false?vSetup():S.setupDone==null?`<div class="empty"><b>بيحمّل…</b></div>`:vLogin();return}
   if(S.role==="none"){who.textContent="";tabs.hidden=true;main.innerHTML=`<div class="empty"><b>الحساب ده مش مفعّل</b>ممكن يكون اتوقف أو اتعمله باسورد جديد. كلم د. محي.<div style="margin-top:12px"><button class="btn" data-act="logout">خروج</button></div></div>`;return}
   if(!S.role){main.innerHTML=`<div class="empty"><b>بيحمّل…</b></div>`;return}
@@ -188,7 +190,7 @@ function render(){
   const tl=tabsFor();
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
-  const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,ext:vExt,audit:vAudit,settings:vSettings,mine:vMine,myatt:vMyAtt}[S.tab];
+  const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,ext:vExt,audit:vAudit,settings:vSettings,mine:vMine,myatt:vMyAtt,mypay:vMyPay}[S.tab];
   main.innerHTML=fn?fn():"";
   if(S.tab==="patients")renderPatientList();
 }
@@ -772,6 +774,17 @@ async function specPdf(sp){ // jsPDF shapes the Arabic and orders right-to-left 
     if(s.note){d.setFont("ar","normal");d.setFontSize(10);fit(6);d.text(s.note,R,y+4,{align:"right"});y+=6}y+=4}
   fit(30);d.setFont("ar","normal");d.setFontSize(10);d.text(sp.foot,R,y+4,{align:"right"});y+=6;if(sg){const w=40,h=w*sg.h/sg.w;d.addImage(sg.d,"PNG",L,y,w,h)}
   return d}
+/* «مرتبي»: each person sees only their final salary for months that are over, and whether a bonus is in it */
+function vMyPay(){const list=Object.values(S.mypay||{}).sort((a,b)=>(b.month||"").localeCompare(a.month||""));
+  return list.length?`<div class="list">${list.map(p=>`<div class="row" style="cursor:default"><span class="t"><b>${esc(monthLabel(p.month))}</b></span><span class="end money" style="font-size:20px">${money(p.total)}</span><span class="m">${p.bonus?`<span class="chip c-ok">✓ متزود عليه بونص</span>`:""}</span><span></span></div>`).join("")}</div>`
+    :`<div class="empty"><b>لسه مفيش مرتبات</b>مرتب كل شهر بيظهر هنا أول ما الشهر يخلص.</div>`}
+let payPubAt=0,payPubBusy=false;
+async function autoPublishPay(){ // the owner's app publishes last month's salaries by itself once the month is over, and keeps them right if something changes later
+  if(S.role!=="owner"||payPubBusy||!S.config||S.payPub===undefined||Date.now()-payPubAt<20000)return;const pm=prevMonth(today().slice(0,7));
+  if(monthLoading(pm)){ensureMonth(pm);return}if(!Object.keys(S.staff||{}).length)return;payPubAt=Date.now();payPubBusy=true;
+  try{const b=S.db.batch();let n=0;for(const x of payroll(pm)){if(x.s.me||!(x.total>0))continue;const id=`${pm}_${x.s.id}`,d={sid:x.s.id,month:pm,total:Math.round(x.total),bonus:!!((x.bonus||0)+(x.extra2||0))},o=S.payPub?.[id];
+      if(!o||o.total!==d.total||!!o.bonus!==d.bonus){b.set(S.db.doc("pay/"+id),{...d,at:Date.now()});n++}}
+    if(n)await b.commit()}catch(e){console.warn("pay",e)}finally{payPubBusy=false}}
 function hadeerPlan(force){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
   const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only

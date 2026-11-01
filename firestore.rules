@@ -78,6 +78,12 @@ service cloud.firestore {
     // ---- owner only: salaries, commissions ----
     match /priv/{doc=**}    { allow read, write: if isOwner(); }
 
+    // ---- salaries published at month end: each person reads only their own final number ----
+    match /pay/{id} {
+      allow read: if isOwner() || (isStaff() && resource.data.sid == mySid());
+      allow write: if isOwner();
+    }
+
     // ---- audit log: everyone's changes are written here; only the owner reads it; nobody edits or deletes it ----
     match /audit/{id} {
       allow read: if isOwner();
