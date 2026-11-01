@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="1 نوفمبر · 87";
+const APP_VERSION="1 نوفمبر · 89";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -731,24 +731,47 @@ function sheetBonus(sid,m){openSheet(`بونص ${staffName(sid)} · ${monthLabel
 async function saveBonus(sid,m){const amount=num(val("bo_amt"));if(!amount)return setErr("اكتب المبلغ");const reason=val("bo_reason").trim();
   await S.db.doc("priv/bonuses").set({list:[...(S.bonuses||[]),{id:randId(),sid,month:m,amount,reason,by:S.mySid,at:Date.now()}]});audit("money","بونص",{target:staffName(sid),info:`${money(amount)} · ${monthLabel(m)}${reason?" · "+reason:""}`});closeSheet();toast("البونص اتزود")}
 /* month-close report: one printable page with everything that closes the month */
-function monthReportHtml(m){
-  const rv=revenue(m),ex=expByCat(m),pr=payroll(m),salT=pr.reduce((t,x)=>t+x.total,0),extT=rv.extShareCenter,net=Math.round(rv.collected-salT-ex.t-extT),inst=instOf(m),instT=inst.reduce((t,x)=>t+num(x.p.monthly),0);
-  const vb=exts(true).reduce((t,x)=>t+vaultOf(x).bal,0),payersOwed=payers().reduce((t,P)=>t+Math.max(0,payerOwed(P.id)),0);
-  const T=(head,rows,foot)=>`<table class="rt"><thead><tr>${head.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}${foot?`<tr class="tot">${foot.map(f=>`<td>${f}</td>`).join("")}</tr>`:""}</tbody></table>`;
-  const n=v=>Math.round(v).toLocaleString("en-US");const sec=t=>`<div class="rf" style="margin-top:8px"><b>${t}</b></div>`;
+function monthReportSpec(m){ // the month-close report as data: drawn on screen and written to a real PDF from the same thing
+  const rv=revenue(m),ex=expByCat(m),pr=payroll(m),salT=pr.reduce((t,x)=>t+x.total,0),extT=rv.extShareCenter,net=Math.round(rv.collected-salT-ex.t-extT),instT=instOf(m).reduce((t,x)=>t+num(x.p.monthly),0);
+  const vb=exts(true).reduce((t,x)=>t+vaultOf(x).bal,0),payersOwed=payers().reduce((t,P)=>t+Math.max(0,payerOwed(P.id)),0),n=v=>Math.round(v).toLocaleString("en-US");
   const extRowsM=exts(true).map(x=>{let v=0,sh=0,left=0;let p=extPeriod(x,m+"-01");const mEnd=dstr(dnum(nextMonth(m)+"-01")-1);for(let i=0;i<8&&p.from<=mEnd;i++){const it=extItems(x,p,false);for(const r of it.items)if(!r.date||r.date.startsWith(m)){v+=r.value;sh+=r.share}left+=it.left;p=extPeriod(x,dstr(dnum(p.to)+1))}return{x,v,sh,left}}).filter(r=>r.v);
+  const secs=[];
+  secs.push({title:"خزنة المركز: دخل الشهر",w:[3,2],head:["البند","المبلغ"],rows:[["كاش",n(rv.cash)],["InstaPay",n(rv.insta)],...(rv.fromExt?[["نصيب المركز من الدكاترة اللي بره",n(rv.fromExt)]]:[])],foot:["الإجمالي",n(rv.collected)],note:rv.adj?`المحسوب ${n(rv.raw)} · تسوية ${rv.adj>0?"+":"-"}${n(Math.abs(rv.adj))}`:""});
+  secs.push({title:"المرتبات",w:[2.2,1.4,2.6,1.4],head:["الاسم","الأساسي","الإضافات","الإجمالي"],rows:pr.filter(x=>x.total||x.sal).map(x=>[x.s.name,n(x.sal),[x.otPay?`أوفر تايم ${n(x.otPay)}`:"",x.comm?`نسبة ${n(x.comm)}`:"",(x.bonus||0)+(x.extra2||0)?`بونص ${n((x.bonus||0)+(x.extra2||0))}`:"",x.deduction?`خصم ${n(x.deduction)}`:""].filter(Boolean).join("\n")||"-",n(x.total)]),foot:["الإجمالي","","",n(salT)]});
+  if(extRowsM.length)secs.push({title:"الدكاترة اللي بره",w:[2.4,1.4,1.4,1.4],head:["الدكتورة","الإجمالي","حقها","للمركز"],rows:extRowsM.map(r=>[`${r.x.name}\n${r.left>0?`لسه ليها ${n(r.left)}`:"اتحاسبت"}`,n(r.v),n(r.sh),n(r.v-r.sh)])});
+  secs.push({title:"المصروفات",w:[3,2],head:["البند","المبلغ"],rows:[["الإيجار",n(ex.rent)],...Object.entries(ex.o).filter(([c])=>!/إيجار|ايجار/.test(c)).sort((a,b)=>b[1]-a[1]).map(([c,v])=>[c,n(v)])],foot:["الإجمالي",n(ex.t)]});
+  secs.push({title:"الصافي",w:[3,2],head:["","المبلغ"],rows:[["دخل الشهر",n(rv.collected)],["- المرتبات",n(salT)],...(extT?[["- حق دكاترة من بره من فلوس المركز",n(extT)]]:[]),["- المصروفات والإيجار",n(ex.t)],{bold:1,cells:["صافي الشهر",n(net)]},...(instT?[["- أقساط الشهر (لوحدها)",n(instT)],{bold:1,cells:["بعد الأقساط",n(net-instT)]}]:[])]});
+  secs.push({title:"على جنب",w:[3,2],head:["","المبلغ"],rows:[["خزنة الدكاترة اللي بره (مستنية حساب)",n(vb)],["على المرضى (لسه مدفعوش)",n(rv.unpaid)],...(payers().length?[["على الجهات (زي النادي)",n(payersOwed)]]:[])]});
+  return{title:`تقرير قفل شهر ${monthLabel(m)}`,file:`تقرير ${monthLabel(m)}`,secs,foot:`اتعمل يوم ${dmy(today())}${isLocked(m+"-01")?" · الشهر مقفول":""}`}}
+function specHtml(sp){const T=s=>`<div class="rf" style="margin-top:8px"><b>${esc(s.title)}</b></div><table class="rt"><thead><tr>${s.head.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${s.rows.map(r=>{const c=Array.isArray(r)?r:r.cells;return `<tr${r.bold?' class="tot"':""}>${c.map(x=>`<td${String(x).includes("\n")?' style="font-size:.85em;line-height:1.5"':""}>${esc(x).replace(/\n/g,"<br>")}</td>`).join("")}</tr>`}).join("")}${s.foot?`<tr class="tot">${s.foot.map(f=>`<td>${esc(f)}</td>`).join("")}</tr>`:""}</tbody></table>${s.note?`<div class="rf" style="font-size:.85em">${esc(s.note)}</div>`:""}`;
   return `<div class="a5" dir="rtl"><img class="wm" src="icons/watermark.png" alt="">
   <table class="pg"><thead><tr><td><div class="pgtop"></div></td></tr></thead><tfoot><tr><td><div class="pgbot"></div></td></tr></tfoot><tbody><tr><td>
-  <div class="rh">Stride Clinic</div><div class="rtitle">تقرير قفل شهر ${esc(monthLabel(m))}</div>
-  ${sec("خزنة المركز: دخل الشهر")}${T(["البند","المبلغ"],[`<tr><td>كاش</td><td>${n(rv.cash)}</td></tr>`,`<tr><td>InstaPay</td><td>${n(rv.insta)}</td></tr>`,rv.fromExt?`<tr><td>نصيب المركز من الدكاترة اللي بره</td><td>${n(rv.fromExt)}</td></tr>`:""],["الإجمالي",n(rv.collected)])}${rv.adj?`<div class="rf" style="font-size:.85em">المحسوب ${n(rv.raw)} · تسوية ${rv.adj>0?"+":"−"}${n(Math.abs(rv.adj))}</div>`:""}
-  ${sec("المرتبات")}${T(["الاسم","الأساسي","الإضافات","الإجمالي"],pr.filter(x=>x.total||x.sal).map(x=>{const parts=[x.otPay?`أوفر تايم ${n(x.otPay)}`:"",x.comm?`نسبة ${n(x.comm)}`:"",(x.bonus||0)+(x.extra2||0)?`بونص ${n((x.bonus||0)+(x.extra2||0))}`:"",x.deduction?`خصم −${n(x.deduction)}`:""].filter(Boolean);return `<tr><td>${esc(x.s.name)}</td><td>${n(x.sal)}</td><td style="font-size:.85em;line-height:1.5">${parts.join("<br>")||"—"}</td><td>${n(x.total)}</td></tr>`}),["الإجمالي","","",n(salT)])}
-  ${extRowsM.length?sec("الدكاترة اللي بره")+T(["الدكتورة","الإجمالي","حقها","للمركز"],extRowsM.map(r=>`<tr><td>${esc(r.x.name)}<div style="font-size:.8em">${r.left>0?`لسه ليها ${n(r.left)}`:"اتحاسبت ✓"}</div></td><td>${n(r.v)}</td><td>${n(r.sh)}</td><td>${n(r.v-r.sh)}</td></tr>`)):""}
-  ${sec("المصروفات")}${T(["البند","المبلغ"],[`<tr><td>الإيجار</td><td>${n(ex.rent)}</td></tr>`,...Object.entries(ex.o).filter(([c])=>!/إيجار|ايجار/.test(c)).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`<tr><td>${esc(c)}</td><td>${n(v)}</td></tr>`)],["الإجمالي",n(ex.t)])}
-  ${sec("الصافي")}${T(["","المبلغ"],[`<tr><td>دخل الشهر</td><td>${n(rv.collected)}</td></tr>`,`<tr><td>− المرتبات</td><td>${n(salT)}</td></tr>`,extT?`<tr><td>− حق دكاترة من بره من فلوس المركز</td><td>${n(extT)}</td></tr>`:"",`<tr><td>− المصروفات والإيجار</td><td>${n(ex.t)}</td></tr>`,`<tr class="tot"><td>صافي الشهر</td><td>${n(net)}</td></tr>`,instT?`<tr><td>− أقساط الشهر (لوحدها)</td><td>${n(instT)}</td></tr><tr class="tot"><td>بعد الأقساط</td><td>${n(net-instT)}</td></tr>`:""])}
-  ${sec("على جنب")}${T(["","المبلغ"],[`<tr><td>خزنة الدكاترة اللي بره (مستنية حساب)</td><td>${n(vb)}</td></tr>`,`<tr><td>على المرضى (لسه مدفعوش)</td><td>${n(rv.unpaid)}</td></tr>`,payers().length?`<tr><td>على الجهات (زي النادي)</td><td>${n(payersOwed)}</td></tr>`:""])}
-  <div class="rf" style="margin-top:6px">اتعمل يوم ${dmy(today())}${isLocked(m+"-01")?" · الشهر مقفول 🔒":""}</div>
-  <div class="rsign"><img src="icons/signature.png" alt="${CLINIC.sign}"></div></td></tr></tbody></table>
+  <div class="rh">Stride Clinic</div><div class="rtitle">${esc(sp.title)}</div>${sp.secs.map(T).join("")}
+  <div class="rf" style="margin-top:6px">${esc(sp.foot)}</div><div class="rsign"><img src="icons/signature.png" alt="${CLINIC.sign}"></div></td></tr></tbody></table>
   <div class="rfoot" dir="rtl"><div>${CLINIC.name}</div><div>${CLINIC.addr}</div><div dir="ltr">${CLINIC.phones}</div></div></div>`}
+function monthReportHtml(m){const sp=monthReportSpec(m);PRINTSPEC=sp;return specHtml(sp)}
+let PRINTSPEC=null;
+async function b64(url){const r=await fetch(url);const b=new Uint8Array(await r.arrayBuffer());let s="";for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));return btoa(s)}
+async function imgData(url){const im=new Image();im.src=url;await im.decode();const c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;c.getContext("2d").drawImage(im,0,0);return{d:c.toDataURL("image/png"),w:im.naturalWidth,h:im.naturalHeight}}
+async function specPdf(sp){ // jsPDF shapes the Arabic and orders right-to-left itself; Amiri carries every letter form it needs
+  await loadScript("vendor/jspdf.umd.min.js");const {jsPDF}=window.jspdf;const d=new jsPDF({unit:"mm",format:"a4"});
+  const [fr,fb]=await Promise.all([b64("fonts/Amiri-Regular.ttf"),b64("fonts/Amiri-Bold.ttf")]);d.addFileToVFS("ar.ttf",fr);d.addFont("ar.ttf","ar","normal");d.addFileToVFS("arb.ttf",fb);d.addFont("arb.ttf","ar","bold");
+  let wm=null,sg=null;try{[wm,sg]=await Promise.all([imgData("icons/watermark.png"),imgData("icons/signature.png")])}catch(e){}
+  const PW=210,PH=297,L=16,R=PW-16,W=R-L;let y=0,page=0;
+  const deco=()=>{if(wm){const w=110,h=w*wm.h/wm.w;d.addImage(wm.d,"PNG",(PW-w)/2,(PH-h)/2,w,h,undefined,"FAST")}
+    d.setFont("ar","normal");d.setFontSize(9);d.setTextColor(90);d.text(`${CLINIC.name} · ${CLINIC.addr}`,PW/2,PH-12,{align:"center"});d.text(CLINIC.phones,PW/2,PH-7,{align:"center"});d.setTextColor(0)};
+  const newPage=()=>{if(page++)d.addPage();deco();y=18};newPage();
+  d.setFont("ar","bold");d.setFontSize(20);d.text("Stride Clinic",PW/2,y+4,{align:"center"});y+=13;d.setFontSize(15);d.text(sp.title,PW/2,y,{align:"center"});y+=8;
+  const fit=h=>{if(y+h>PH-22)newPage()};
+  for(const s of sp.secs){fit(22);d.setFont("ar","bold");d.setFontSize(13);d.text(s.title,R,y+4,{align:"right"});y+=8;
+    const tw=s.w.reduce((a,b)=>a+b,0),cw=s.w.map(x=>x/tw*W);
+    const row=(cells,head,bold)=>{d.setFont("ar",head||bold?"bold":"normal");d.setFontSize(11);const lines=cells.map((c,i)=>d.splitTextToSize(String(c??""),cw[i]-4));const h=Math.max(...lines.map(l=>l.length))*5+3;fit(h);
+      let x=R;cells.forEach((c,i)=>{const w=cw[i];if(head||bold){d.setFillColor(head?226:240,head?232:243,head?240:247);d.rect(x-w,y,w,h,"F")}d.setDrawColor(150);d.rect(x-w,y,w,h);
+        lines[i].forEach((t,k)=>d.text(t,x-2,y+5+k*5,{align:"right"}));x-=w});y+=h};
+    row(s.head,true);for(const r of s.rows)Array.isArray(r)?row(r):row(r.cells,false,true);if(s.foot)row(s.foot,false,true);
+    if(s.note){d.setFont("ar","normal");d.setFontSize(10);fit(6);d.text(s.note,R,y+4,{align:"right"});y+=6}y+=4}
+  fit(30);d.setFont("ar","normal");d.setFontSize(10);d.text(sp.foot,R,y+4,{align:"right"});y+=6;if(sg){const w=40,h=w*sg.h/sg.w;d.addImage(sg.d,"PNG",L,y,w,h)}
+  return d}
 function hadeerPlan(force){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
   const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only
@@ -1078,7 +1101,15 @@ function payerBillHtml(P,rows,from,to,no){
   <div class="rsign"><img src="icons/signature.png" alt="${CLINIC.sign}"></div></td></tr></tbody></table>
   <div class="rfoot" dir="rtl"><div>${CLINIC.name}</div><div>${CLINIC.addr}</div><div dir="ltr">${CLINIC.phones}</div></div></div>`}
 function showPrint(html){let root=document.getElementById("printRoot");if(!root){root=document.createElement("div");root.id="printRoot";document.body.appendChild(root)}
-  root.innerHTML=`<div class="ptool"><button class="btn primary" data-act="rpPrint">اطبع / احفظ PDF</button><button class="btn" data-act="rpClose">رجوع</button></div>${html}`;root.hidden=false}
+  root.innerHTML=`<div class="ptool">${PRINTSPEC?`<button class="btn primary" data-act="rpPdf">نزّل PDF</button><button class="btn" data-act="rpPrint">اطبع</button>`:`<button class="btn primary" data-act="rpPrint">اطبع / احفظ PDF</button>`}<button class="btn" data-act="rpClose">رجوع</button></div>${html}`;root.hidden=false;PRINTSPEC=PRINTSPEC}
+/* a real PDF file from the page on screen: works on the phone too, where printing from the installed app does nothing */
+function loadScript(src){return new Promise((res,rej)=>{const old=document.querySelector(`script[src="${src}"]`);if(old&&old.dataset.ok)return res();const sc=old||document.createElement("script");sc.src=src;sc.onload=()=>{sc.dataset.ok="1";res()};sc.onerror=()=>rej(new Error("load"));if(!old)document.head.appendChild(sc)})}
+async function savePdf(btn){const sp=PRINTSPEC;if(!sp){window.print();return}const label=btn?.textContent;if(btn){btn.disabled=true;btn.textContent="بيجهّز…"}
+  try{const d=await specPdf(sp);const name=`${sp.file}.pdf`,blob=d.output("blob"),file=new File([blob],name,{type:"application/pdf"});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:sp.file});return}catch(e){if(e&&e.name==="AbortError")return}}
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},3000);toast("الـ PDF اتحفظ")}
+  catch(e){console.warn("pdf",e);toast("مقدرتش أعمل الـ PDF، جرب تاني.")}
+  finally{if(btn){btn.disabled=false;btn.textContent=label}}}
 function payerPreview(no){PB.from=val("pb_from");PB.to=val("pb_to");const rows=billRows();if(!rows.length)return setErr("مفيش جلسات في الفترة دي");showPrint(payerBillHtml(PB.P,rows,PB.from,PB.to,no))}
 async function payerIssue(id){
   PB.from=val("pb_from");PB.to=val("pb_to");const rows=billRows();if(!rows.length)return setErr("مفيش جلسات في الفترة دي");
@@ -2868,7 +2899,8 @@ document.addEventListener("click",async e=>{
     case "rpRmRow":RP.rows.splice(+t.dataset.i,1);drawRows();break;
     case "rpPreview":rpPreview();break;
     case "rpPrint":window.print();break;
-    case "rpClose":{const r=document.getElementById("printRoot");if(r){r.hidden=true;r.innerHTML=""}break}
+    case "rpPdf":savePdf(t);break;
+    case "rpClose":{PRINTSPEC=null;const r=document.getElementById("printRoot");if(r){r.hidden=true;r.innerHTML=""}break}
     case "rpSave":guard(t,()=>rpSave(id||null));break;
     case "rpDel":guard(t,()=>rpDel(id));break;
     case "editRate":sheetRate(id,t.dataset.k);break;
