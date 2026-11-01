@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="1 نوفمبر · 83";
+const APP_VERSION="1 نوفمبر · 84";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -724,14 +724,14 @@ async function saveInst(){const name=val("in_name").trim()||"أقساط",total=n
   audit("money","قسط جديد",{info:`${name} · ${money(total)} على ${months} شهور · اتدفع ${before}`});closeSheet();toast("اتسجل")}
 async function setInst(id,m,on){const list=(S.inst||[]).map(p=>{if(p.id!==id)return p;const paid={...(p.paid||{})};if(on)paid[m]=today();else delete paid[m];return{...p,paid}});await S.db.doc("priv/installments").set({list});
   const p=(S.inst||[]).find(x=>x.id===id);audit("money",on?"دفع قسط":"لغى دفع قسط",{info:`${p?.name||""} · ${monthLabel(m)} · ${money(p?.monthly||0)}`});toast(on?"اتسجل":"اتلغى")}
-function hadeerPlan(){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
+function hadeerPlan(force){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
   const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only
   const calc=x=>{const rows=extRows(x.id,d=>d>="2026-10-01"&&d<="2026-10-29").filter(r=>pt(r.v.typeId));const packs=[];
     for(const p of Object.values(S.patients))for(const k of p.packs||[])if(packExtOf(p.id,k.id)===x.id&&pt(k.typeId)&&(k.preUsed||0)>0&&(k.date||"")>="2026-10-01")packs.push({p,k,v:Math.round((k.price||0)/(k.sessions||1)*k.preUsed)});
     return{x,rows,packs,sysV:rows.reduce((t,r)=>t+r.value,0),sysS:Math.round(rows.reduce((t,r)=>t+(r.pct==null?r.value*0.65:r.share),0)),preV:packs.reduce((t,a)=>t+a.v,0)}};
   const cands=exts(true).filter(e=>/هدير/.test(e.name||"")).map(calc).sort((a,b)=>(b.sysV+b.preV)-(a.sysV+a.preV));const H=cands[0];if(!H)return null;
-  if(extManual(H.x.id).some(e=>e.total===1&&e.month==="2026-10"))return null;
+  if(!force&&extManual(H.x.id).some(e=>e.total===1&&e.month==="2026-10"))return null;
   H.add=3800-H.sysV-H.preV;return H}
 async function hadeerSave(){const H=hadeerPlan();if(!H||H.add<0)return;const x=H.x;
   const list=(S.ext?.list||[]).map(e=>e.id!==x.id||(e.rates||[]).some(q=>q.typeId==="*"&&q.by==="self")?e:{...e,rates:[...(e.rates||[]),{typeId:"*",by:"self",pct:65}]});
@@ -741,14 +741,37 @@ async function hadeerSave(){const H=hadeerPlan();if(!H||H.add<0)return;const x=H
   if(!lines.length)lines.push({...base,id:randId(),patient:"مفيش حاجة قبل السيستم",price:0});
   await S.db.doc("cfg/ext").set({list,manual:[...(S.ext?.manual||[]),...lines]},{merge:true});
   audit("money","حساب دكتور من بره قبل السيستم",{target:x.name,info:`أكتوبر: على السيستم ${money(H.sysV)} + من الباكدجات قبل السيستم ${money(H.preV)} + غيرها ${money(H.add)} = 3,800`});toast("اتسجل")}
-function hadeerHtml(){const H=hadeerPlan();if(!H)return "";const totS=H.sysS+Math.round((H.preV+Math.max(0,H.add))*0.65),tot=H.sysV+H.preV+Math.max(0,H.add);
+function hadeerHtml(){if(S.ext?.octReset)return "";const H=hadeerPlan();if(!H)return "";const totS=H.sysS+Math.round((H.preV+Math.max(0,H.add))*0.65),tot=H.sysV+H.preV+Math.max(0,H.add);
   return `<div class="panel" style="border-color:var(--warn)"><h2>حساب ${esc(H.x.name)} لأكتوبر (من الورقة)</h2>
   <div class="list"><div class="row" style="cursor:default"><span class="t">على السيستم (1 ← 29 أكتوبر)</span><span class="end money">${money(H.sysV)}</span><span class="m">${H.rows.map(r=>`${esc(r.v.patientName)} ${esc(dmy(r.v.date))}`).join("، ")||"مفيش"}</span><span></span></div>
   <div class="row" style="cursor:default"><span class="t">قبل السيستم من الباكدجات</span><span class="end money">${money(H.preV)}</span><span class="m">${H.packs.map(a=>`${esc(a.p.name)}: ${a.k.preUsed} × ${money(Math.round((a.k.price||0)/(a.k.sessions||1)))}`).join(" · ")||"مفيش"} · فلوسها جوه الباكدج</span><span></span></div>
   <div class="row" style="cursor:default"><span class="t">قبل السيستم برّه الباكدجات (زي الكشف)</span><span class="end money">${money(H.add)}</span><span class="m">الباقي عشان يكمل 3,800</span><span></span></div></div>
   <div class="note">الإجمالي <b>${money(tot)}</b> · حقها <b>${money(totS)}</b> · للمركز <b>${money(tot-totS)}</b> · لسه مخدتش${totS===2470&&tot===3800?" ✓":` <b style="color:var(--bad)">(المفروض 3,800 · 2,470)</b>`}</div>
   ${H.add>=0?`<button class="btn primary" data-act="hadeerSave" data-confirm>سجّل على كده</button>`:`<p class="sub" style="margin:0;color:var(--bad)">المتسجل أكتر من الورقة. ابعتلي سكرين شوت.</p>`}</div>`}
-function mennaFixHtml(){const C=mennaClosePlan();if(!C)return "";
+function octResetPlan(){ // October for both outside doctors, rebuilt from the papers: wipe what was entered before and redo it once
+  if(S.role!=="owner"||today()>"2026-11-20"||S.ext?.octReset)return null;
+  const M=exts(true).find(e=>/من[ةه]/.test(e.name||"")),H=hadeerPlan(true);if(!M&&!H)return null;
+  const hLater=H?extRows(H.x.id,d=>d>="2026-10-30"&&d<="2026-10-31"):[],mRows=M?extRows(M.id,d=>d>="2026-10-01"&&d<="2026-10-28"):[];return{M,H,mRows,hLater,hLaterV:hLater.reduce((t,r)=>t+r.value,0),hLaterS:hLater.reduce((t,r)=>t+(r.pct==null?Math.round(r.value*0.65):r.share),0)}}
+function octResetHtml(){const R=octResetPlan();if(!R)return "";const H=R.H;
+  return `<div class="panel" style="border-color:var(--warn)"><h2>حساب أكتوبر من الورق (من الأول)</h2><p class="sub" style="margin:0">كل اللي اتسجل قبل كده لحسابات الدكاترة اللي بره في أكتوبر هيتشال، ويتحسب من جديد كده بس. المرضى بيفضلوا تبعهم زي ما هم.</p>
+  <div class="list">${R.M?`<div class="row" style="cursor:default"><span class="t"><b>${esc(R.M.name)}</b> · 1 ← 14 أكتوبر ✓ اتحاسبت</span><span class="end money">4,000</span><span class="m">خدت 2,600 · للمركز 1,400</span><span></span></div>
+    <div class="row" style="cursor:default"><span class="t"><b>${esc(R.M.name)}</b> · 15 ← 28 أكتوبر ✓ اتحاسبت</span><span class="end money">3,800</span><span class="m">خدت 2,470 · للمركز 1,330</span><span></span></div>`:""}
+  ${R.mRows.length?`<div class="row" style="cursor:default"><span class="t" style="color:var(--bad)">${esc(R.M.name)}: جلسات على السيستم في أكتوبر هتفضل وهتتزود</span><span class="end money">${money(R.mRows.reduce((t,r)=>t+r.value,0))}</span><span class="m">${R.mRows.map(r=>`${esc(r.v.patientName)} ${esc(dmy(r.v.date))}`).join("، ")} · لو دي مش المفروض تتحسب ابعتلي سكرين شوت</span><span></span></div>`:""}
+  ${H?`<div class="row" style="cursor:default"><span class="t"><b>${esc(H.x.name)}</b> · من الورقة (لحد 29 أكتوبر)</span><span class="end money">3,800</span><span class="m">حقها 2,470 · للمركز 1,330</span><span></span></div>
+    <div class="row" style="cursor:default"><span class="t"><b>${esc(H.x.name)}</b> · على السيستم 30 و31 أكتوبر</span><span class="end money">${money(R.hLaterV)}</span><span class="m">${R.hLater.map(r=>`${esc(r.v.patientName)} ${esc(dmy(r.v.date))}`).join("، ")||"مفيش"} · حقها ${money(R.hLaterS)} · للمركز ${money(R.hLaterV-R.hLaterS)}</span><span></span></div>`:""}</div>
+  ${H?`<div class="note"><b>${esc(H.x.name)} لأكتوبر:</b> الإجمالي <b>${money(3800+R.hLaterV)}</b> · ليها <b>${money(2470+R.hLaterS)}</b> · للمركز <b>${money(1330+R.hLaterV-R.hLaterS)}</b> · لسه مخدتش</div>`:""}
+  <button class="btn primary" data-act="octReset" data-confirm>احسبها كده من الأول</button></div>`}
+async function octReset(){const R=octResetPlan();if(!R)return;const M=R.M,H=R.H,ids=new Set([M?.id,H?.x.id].filter(Boolean));
+  const keep=(S.ext?.manual||[]).filter(e=>!ids.has(e.sid)),lines=[];const pt=physioId()||"*";
+  if(M){const q1=extPeriod(M,"2026-10-05"),q2=extPeriod(M,"2026-10-20");const L=(q,total,paid)=>({id:randId(),sid:M.id,patient:`حساب الفترة ${dmy(q.from)} ← ${dmy(q.to)}`,typeId:"*",count:1,price:total,self:true,settled:true,date:q.to,paidDate:paid,month:"2026-10",total:1,by:S.mySid,at:Date.now()});lines.push(L(q1,4000,"2026-10-15"),L(q2,3800,"2026-10-30"))}
+  if(H){const base={sid:H.x.id,typeId:pt,count:1,self:true,settled:false,date:"2026-10-29",month:"2026-10",total:1,by:S.mySid,at:Date.now()};
+    if(H.preV>0)lines.push({...base,id:randId(),patient:`جلسات قبل السيستم من الباكدجات (${H.packs.map(a=>`${a.p.name} ${a.k.preUsed}`).join("، ")})`,price:H.preV,fromPack:true});
+    if(H.add>0)lines.push({...base,id:randId(),patient:"قبل السيستم برّه الباكدجات (زي الكشف)",price:H.add})}
+  const pays=(S.ext?.pays||[]).filter(p=>!(ids.has(p.sid)&&(p.from||"")>="2026-09-15"&&(p.from||"")<="2026-10-31"));
+  const list=(S.ext?.list||[]).map(e=>!ids.has(e.id)||(e.rates||[]).some(q=>q.typeId==="*"&&q.by==="self")?e:{...e,rates:[...(e.rates||[]),{typeId:"*",by:"self",pct:65}]});
+  await S.db.doc("cfg/ext").set({manual:[...keep,...lines],pays,list,octReset:true},{merge:true});
+  audit("money","حساب أكتوبر للدكاترة اللي بره من الورق",{info:`${M?`${M.name}: 4,000 (2,600/1,400) + 3,800 (2,470/1,330) اتحاسبت`:""}${H?` · ${H.x.name}: ${money(3800+R.hLaterV)} لسه`:""}`,del:true});toast("اتحسب من الأول")}
+function mennaFixHtml(){if(S.ext?.octReset)return "";const C=mennaClosePlan();if(!C)return "";
   return `<div class="panel" style="border-color:var(--warn)"><h2>قفل حساب ${esc(C.x.name)}</h2>
   <div class="list"><div class="row" style="cursor:default"><span class="t">${esc(fmtRange(C.q1))}</span><span class="end money">4,000</span><span class="m">حقها <b>2,600</b> · للمركز <b>1,400</b> · اتحاسبت 15/10</span><span></span></div>
   <div class="row" style="cursor:default"><span class="t">${esc(fmtRange(C.q2))}</span><span class="end money">3,800</span><span class="m">حقها <b>2,470</b> · للمركز <b>1,330</b> · اتحاسبت النهارده</span><span></span></div></div>
@@ -782,7 +805,7 @@ function vExt(){
   const list=exts();if(!list.length)return `<div class="empty"><b>مفيش دكاترة من بره</b>ضيفهم من الإعدادات.</div>`;const own=S.role==="owner";extEnsure();
   const ut=own?untaggedPacks():[];
   const dp=own?extDupPair():null;
-  return (dp?`<div class="panel" style="border-color:var(--warn)"><h2>«${esc(dp.drop.name)}» و«${esc(dp.keep.name)}» دكتورة واحدة</h2><p class="sub" style="margin:0">هيبقوا اسم واحد بخزنة واحدة وحساب واحد. كل الجلسات والحجوزات والباكدجات وحساب أكتوبر بيتنقلوا، وكل جلسة بتفضل بنسبتها: ${[...(dp.keep.rates||[]),...(dp.drop.rates||[])].filter(r=>r.typeId!=="*").map(r=>`${esc(extFamily(r.typeId))} ${r.pct}%`).filter((v,i,a)=>a.indexOf(v)===i).join(" · ")}.</p><button class="btn primary" data-act="extMerge" data-confirm>ادمجهم</button></div>`:"")+mennaFixHtml()+hadeerHtml()+(ut.length?`<div class="panel" style="border-color:var(--warn)"><h2>باكدجات محتاجة تحدد مع مين</h2><p class="sub" style="margin:0">الباكدجات دي شكلها للدكاترة اللي بره. حدد كل واحد مع مين، عشان فلوسه تتحط في الخزنة الصح.</p>
+  return (dp?`<div class="panel" style="border-color:var(--warn)"><h2>«${esc(dp.drop.name)}» و«${esc(dp.keep.name)}» دكتورة واحدة</h2><p class="sub" style="margin:0">هيبقوا اسم واحد بخزنة واحدة وحساب واحد. كل الجلسات والحجوزات والباكدجات وحساب أكتوبر بيتنقلوا، وكل جلسة بتفضل بنسبتها: ${[...(dp.keep.rates||[]),...(dp.drop.rates||[])].filter(r=>r.typeId!=="*").map(r=>`${esc(extFamily(r.typeId))} ${r.pct}%`).filter((v,i,a)=>a.indexOf(v)===i).join(" · ")}.</p><button class="btn primary" data-act="extMerge" data-confirm>ادمجهم</button></div>`:"")+octResetHtml()+mennaFixHtml()+hadeerHtml()+(ut.length?`<div class="panel" style="border-color:var(--warn)"><h2>باكدجات محتاجة تحدد مع مين</h2><p class="sub" style="margin:0">الباكدجات دي شكلها للدكاترة اللي بره. حدد كل واحد مع مين، عشان فلوسه تتحط في الخزنة الصح.</p>
     <div class="list">${ut.map(u=>`<div class="row stack" style="cursor:default"><span class="t">${esc(u.p.name)} · ${esc(packTitle(u.k))}</span><span class="end"></span><span class="m">دفع ${money(u.k.paid||0)} · خلص ${u.k.used||0} من ${u.k.sessions}</span><span></span>
       <span class="bar" style="grid-column:1/-1">${exts(true).map(x=>`<button class="btn sm ${u.guess===x.id?"teal":""}" data-act="tagPack" data-id="${u.p.id}" data-k="${u.k.id}" data-x="${x.id}">مع ${esc(x.name)}</button>`).join("")}<button class="btn sm" data-act="tagPack" data-id="${u.p.id}" data-k="${u.k.id}" data-x="">المركز</button></span></div>`).join("")}</div></div>`:"")
   +`<p class="sub" style="margin:0">كل الجلسات في قايمة واحدة: <span class="chip c-ok">جوه السيستم</span> اتسجلت على الأبلكيشن، و<span class="chip c-warn">بره السيستم</span> اتكتبت بالإيد. النسبة على حسب مين جاب الحالة (من ملف المريض). الجلسة من الباكدج = سعر الباكدج ÷ عدد جلساته.</p>`+list.map(x=>{
@@ -2640,7 +2663,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2772,6 +2795,7 @@ document.addEventListener("click",async e=>{
     case "mennaAdd":guard(t,()=>mennaAdd(id));break;
     case "mennaClose":guard(t,mennaClose);break;
     case "hadeerSave":guard(t,hadeerSave);break;
+    case "octReset":guard(t,octReset);break;
     case "dropDeduct":guard(t,async()=>{const list=(S.leaves||[]).map(l=>l.sid===id&&l.date==="2026-10-12"&&l.type==="deduct"?{...l,type:"free",by:S.mySid,at:Date.now()}:l);await db.doc("priv/leaves").set({list});audit("att","شال خصم يوم",{target:staffName(id),date:"2026-10-12"});toast("الخصم اتشال")});break;
     case "newInst":sheetInst();break;
     case "saveInst":guard(t,saveInst);break;
