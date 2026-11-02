@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="2 نوفمبر · 92";
+const APP_VERSION="2 نوفمبر · 93";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -109,7 +109,7 @@ function subDoc(path,set){return S.db.doc(path).onSnapshot(d=>{set(d.exists?d.da
 function merge(){S.visits={...S.old.visits,...S.live.visits};S.payments={...S.old.payments,...S.live.payments};S.att={...S.old.att,...(S.live.attAll||{}),...S.live.att};S.expenses={...S.old.exp,...S.live.exp};S.appts={...S.old.appts,...S.live.appts}}
 function setLive(k){return o=>{S.live[k]=o;merge()}}
 function setupRoleSubs(){
-  clearSubs();const r=S.roleSubs,db=S.db,c=n=>db.collection(n);
+  clearSubs();S.subsAt=Date.now();const r=S.roleSubs,db=S.db,c=n=>db.collection(n);
   r.push(sub(c("staff"),o=>S.staff=o));
   r.push(subDoc("pub/types",d=>S.types=d?.list||[]));
   r.push(subDoc("pub/geo",d=>S.geo=d||null));
@@ -785,14 +785,17 @@ function vMyPay(){const list=Object.values(S.mypay||{}).sort((a,b)=>(b.month||""
   return list.length?`<div class="list">${list.map(p=>`<div class="row stack" style="cursor:default"><span class="t"><b>${esc(monthLabel(p.month))}</b></span><span class="end money" style="font-size:20px">${money(p.total)}</span><span class="m">${p.bonus&&!p.detail?`<span class="chip c-ok">✓ متزود عليه بونص</span>`:""}</span><span></span>${det(p)}</div>`).join("")}</div>`
     :`<div class="empty"><b>لسه مفيش مرتبات</b>مرتب كل شهر بيظهر هنا أول ما الشهر يخلص.</div>`}
 let payPubAt=0,payPubBusy=false;
-async function autoPublishPay(){ // the owner's app publishes last month's salaries by itself once the month is over, and keeps them right if something changes later
-  if(S.role!=="owner"||payPubBusy||!S.config||S.payPub===undefined||Date.now()-payPubAt<20000)return;const pm=prevMonth(today().slice(0,7));
+async function autoPublishPay(force){ // the owner's app publishes last month's salaries by itself once the month is over, and keeps them right if something changes later
+  // only once everything has arrived from the server (sessions, attendance, bonuses, sessions from before the system…), never from a half-loaded start
+  if(S.role!=="owner"||payPubBusy||!S.config||S.payPub===undefined||S.precomm===undefined||S.bonuses===undefined||S.leaves===undefined||!S.live?.visits||!navigator.onLine)return;
+  if(Date.now()-(S.subsAt||0)<25000){setTimeout(autoPublishPay,26000-(Date.now()-(S.subsAt||0)));return}
+  if(!force&&Date.now()-payPubAt<20000)return;const pm=prevMonth(today().slice(0,7));
   if(monthLoading(pm)){ensureMonth(pm);return}if(!Object.keys(S.staff||{}).length)return;payPubAt=Date.now();payPubBusy=true;
   try{const b=S.db.batch();let n=0;for(const x of payroll(pm)){if(x.s.me||x.fixed||!(x.total>0))continue;const id=`${pm}_${x.s.id}`,bAmt=Math.round((x.bonus||0)+(x.extra2||0)),d={sid:x.s.id,month:pm,total:Math.round(x.total),bonus:!!bAmt};
       if(cfg().payDetail[x.s.id])Object.assign(d,{detail:true,sal:Math.round(x.sal),otPay:Math.round(x.otPay),comm:Math.round(x.comm),full:x.full,half:x.half,bonusAmt:bAmt,deduction:Math.round(x.deduction||0)}); // e.g. Dr. Mohamed: the parts, never the cases themselves
       const o=S.payPub?.[id],same=o&&["total","bonus","detail","sal","otPay","comm","full","half","bonusAmt","deduction"].every(k=>(o[k]??null)===(d[k]??null));
       if(!same){b.set(S.db.doc("pay/"+id),{...d,at:Date.now()});n++}}
-    if(n)await b.commit()}catch(e){console.warn("pay",e)}finally{payPubBusy=false}}
+    if(n)await b.commit();S.payPubLast=Date.now();if(force)toast(n?`اتحدّث مرتب ${n}`:"المرتبات اللي عندهم مظبوطة")}catch(e){console.warn("pay",e)}finally{payPubBusy=false}}
 function hadeerPlan(force){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
   const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only
@@ -1414,7 +1417,8 @@ function vReports(){
   <div class="verdict ${vcls}"><b style="font-family:var(--f-display)">${vt}</b><span>${vs}</span></div>
   ${extProfitPanel(m)}${extPendingPanel()}${planPanel(m)}
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
-  <div class="panel"><h2>المرتبات</h2>
+  <div class="panel"><div class="sec-title"><h2>المرتبات</h2>${m===prevMonth(today().slice(0,7))?`<button class="btn sm" data-act="pubPay">حدّث «مرتبي» عند الفريق</button>`:""}</div>
+  ${m===prevMonth(today().slice(0,7))?`<p class="sub" style="margin:0">الأرقام دي هي اللي ظاهرة لكل واحد في «مرتبي»${Object.keys(S.payPub||{}).length?"":" (لسه متبعتتش)"}. أي تعديل بيتبعت لوحده بعد دقيقة من فتح الأبلكيشن.</p>`:""}
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
   ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.fixed?`<span class="chip c-mute">مرتب ثابت</span>`:x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.extra?`<div class="sub">${x.extra} يوم زيادة/تعويض</div>`:""}
     ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}${x.req!=null?`<div class="sub">اشتغل ${hm(x.got)} من ${hm(x.req)} مطلوبين${!x.ot&&x.short?` · ناقصه ${hm(x.short)}`:""}</div>`:""}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${x.extras.map(b=>`<div class="sub" style="color:var(--ok)">+ بونص ${money(b.amount)}${b.reason?` (${esc(b.reason)})`:""} <button class="btn ghost sm" data-act="delBonus" data-id="${b.id}" data-confirm aria-label="امسح البونص">✕</button></div>`).join("")}<button class="btn sm" data-act="addBonus" data-id="${x.s.id}" data-m="${m}" style="margin-top:4px">+ بونص</button>${x.bonus?`<div class="sub" style="color:var(--ok)">منه بونص الالتزام ${money(x.bonus)}${x.bonusSoFar?" (لو كمّل الشهر كده)":""}</div>`:x.bAmt?`<div class="sub">مفيش بونص الالتزام (${[x.absent?"غاب":"",x.paidLeave||x.deductDays?"خد إذن":"",x.short>0?"ساعاته ناقصة":""].filter(Boolean).join("، ")||"مفيش حضور"})</div>`:""}${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
@@ -2744,7 +2748,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2883,6 +2887,7 @@ document.addEventListener("click",async e=>{
     case "clearAdjust":guard(t,async()=>{const m=t.dataset.m;await S.db.doc("priv/adjust").set({[m]:firebase.firestore.FieldValue.delete()},{merge:true});audit("money","شال تسوية الشهر",{info:monthLabel(m),del:true});closeSheet();toast("التسوية اتشالت")});break;
     case "addFixed":{const box=document.getElementById("fixedRows");if(box){if(!box.querySelector(".fxrow"))box.innerHTML="";box.insertAdjacentHTML("beforeend",fixedRow())}break}
     case "delFixed":{t.closest(".fxrow")?.remove();break}
+    case "pubPay":payPubAt=0;autoPublishPay(true);break;
     case "monthReport":showPrint(monthReportHtml(t.dataset.m));break;
     case "octReset":guard(t,octReset);break;
     case "dropDeduct":guard(t,async()=>{const list=(S.leaves||[]).map(l=>l.sid===id&&l.date==="2026-10-12"&&l.type==="deduct"?{...l,type:"free",by:S.mySid,at:Date.now()}:l);await db.doc("priv/leaves").set({list});audit("att","شال خصم يوم",{target:staffName(id),date:"2026-10-12"});toast("الخصم اتشال")});break;
