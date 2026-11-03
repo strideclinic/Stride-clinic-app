@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="3 نوفمبر · 94";
+const APP_VERSION="3 نوفمبر · 95";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -128,6 +128,7 @@ function setupRoleSubs(){
     r.push(sub(c("exp").where("date",">=",winStart()),setLive("exp")));
     r.push(subDoc("cfg/prices",d=>{S.prices={};S.packTypes=d?.packs||[];S.single=d?.single||{};S.parts=d?.parts||{}}));
     r.push(subDoc("cfg/ext",d=>{S.ext=d||{}}));
+    r.push(subDoc("cfg/drawer",d=>{S.drawer=d?.days||{}}));
     r.push(sub(c("cfg"),o=>{S.payerList=o.payers?.list||[];const acct={};for(const [k,v] of Object.entries(o))if(k.startsWith("payer_"))acct[k.slice(6)]=v;S.payerAcct=acct}));
     r.push(sub(c("patients"),o=>S.patients=o));
     r.push(sub(c("users"),o=>S.users=o));
@@ -191,7 +192,7 @@ function render(){
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
   const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,ext:vExt,audit:vAudit,settings:vSettings,mine:vMine,myatt:vMyAtt,mypay:vMyPay}[S.tab];
-  main.innerHTML=(fn?backupNag():"")+(fn?fn():"");
+  main.innerHTML=(fn?backupNag()+drawerNag():"")+(fn?fn():"");
   if(S.tab==="patients")renderPatientList();
 }
 /* ---------- setup & login ---------- */
@@ -796,6 +797,45 @@ async function autoPublishPay(force){ // the owner's app publishes last month's 
       const o=S.payPub?.[id],same=o&&["total","bonus","detail","sal","otPay","comm","full","half","bonusAmt","deduction"].every(k=>(o[k]??null)===(d[k]??null));
       if(!same){b.set(S.db.doc("pay/"+id),{...d,at:Date.now()});n++}}
     if(n)await b.commit();S.payPubLast=Date.now();if(force)toast(n?`اتحدّث مرتب ${n}`:"المرتبات اللي عندهم مظبوطة")}catch(e){console.warn("pay",e)}finally{payPubBusy=false}}
+/* end-of-day cash drawer: what should be in it, what's counted, what's handed to the owner, what stays for tomorrow */
+function drawerOpening(d){const prev=Object.keys(S.drawer||{}).filter(x=>x<d).sort().pop();if(!prev)return{from:null,amt:0,gap:0};
+  let amt=num(S.drawer[prev].carry),gap=0;for(let n=dnum(prev)+1;n<dnum(d);n++){const g=drawerMoves(dstr(n));if(g.cashIn||g.out){gap++;amt+=g.cashIn-g.out}} /* days nobody closed: their cash is still in the drawer */
+  return{from:prev,amt,gap}}
+function drawerDay(d){const g=drawerMoves(d),op=drawerOpening(d);return{d,op,...g,expected:op.amt+g.cashIn-g.out,closed:S.drawer?.[d]||null}}
+function drawerMoves(d){const dm=dayMoney(x=>x===d);let cashIn=dm.cash,insta=dm.insta,out=0;const outs=[];
+  for(const x of Object.values(S.expenses))if(x.date===d&&!x.notDrawer){out+=num(x.amount);outs.push(`${x.category} ${money(x.amount)}`)}
+  const xo={};for(const p of (S.ext?.pays||[]))if(p.date===d)xo[p.sid]=(xo[p.sid]||0)+num(p.amount);
+  for(const e of (S.ext?.manual||[]))if(e.settled&&e.paidDate===d)xo[e.sid]=(xo[e.sid]||0)+manualCalc(e).share;
+  for(const [sid,a] of Object.entries(xo))if(a){out+=a;outs.push(`${extById(sid)?.name||"دكتور من بره"} ${money(a)}`)}
+  return{cashIn,insta,out,outs}}
+function drawerPanel(d){if(!isAdmin())return "";const D=drawerDay(d),c=D.closed;
+  const line=(l,v,sign)=>`<div class="row" style="cursor:default"><span class="t">${l}</span><span class="end money">${sign||""}${money(v)}</span></div>`;
+  return `<div class="panel" ${c?"":`style="border-color:var(--warn)"`}><div class="sec-title"><h2>خزنة ${esc(dayLabel(d))}</h2>${c?`<span class="chip c-ok">اتقفلت ✓</span>`:""}</div>
+  <div class="list">${line(`كان فيها${D.op.from?` من ${esc(dmy(D.op.from))}${D.op.gap?` <span class="sub">+ ${D.op.gap} يوم متقفلش</span>`:""}`:""}`,D.op.amt)}${line("دخل كاش",D.cashIn,"+ ")}${line(`طلع من الدرج${D.outs.length?` <span class="sub">(${D.outs.map(esc).join("، ")})</span>`:""}`,D.out,"− ")}
+  <div class="row" style="cursor:default"><span class="t"><b>المفروض يكون فيها</b></span><span class="end money"><b>${money(D.expected)}</b></span></div></div>
+  <p class="sub" style="margin:0">InstaPay النهارده ${money(D.insta)} (مش في الدرج).</p>
+  ${c?`<div class="note">اتعد <b>${money(c.counted)}</b>${c.diff?` · <b style="color:var(--bad)">${c.diff<0?"ناقص":"زيادة"} ${money(Math.abs(c.diff))}</b>${c.reason?` (${esc(c.reason)})`:""}`:" · مظبوط ✓"} · اتسلّم لد. محي <b>${money(c.handed)}</b> · فضل في الدرج <b>${money(c.carry)}</b><br><span class="sub">قفلتها ${esc(staffName(c.by))} ${esc(new Date(c.at).toLocaleTimeString("ar-EG-u-nu-latn",{hour:"numeric",minute:"2-digit"}))}</span></div>${S.role==="owner"?`<button class="btn sm" data-act="drawerOpen" data-id="${d}" data-confirm>افتح الخزنة تاني</button>`:""}`
+  :`<button class="btn primary" data-act="drawerSheet" data-id="${d}">اقفل الخزنة</button>`}</div>`}
+function sheetDrawer(d){const D=drawerDay(d);openSheet(`قفل خزنة ${dayLabel(d)}`,`<div class="note">المفروض يكون في الدرج <b>${money(D.expected)}</b></div>
+  <div class="grid2"><label class="f">عدّيتي كام في الدرج؟<input id="dw_count" inputmode="decimal"></label><label class="f">اتسلّم لد. محي كام؟<input id="dw_hand" inputmode="decimal" placeholder="0 لو مشي بدري"></label></div>
+  <label class="f" id="dw_rbox" hidden>سبب الفرق<input id="dw_reason"></label><div class="note" id="dw_sum">اكتبي الفلوس اللي في الدرج.</div><div class="err" id="formErr"></div>
+  <button class="btn primary" data-act="drawerClose" data-id="${d}">اقفل الخزنة</button>`);wireDrawer()}
+function wireDrawer(){const c=document.getElementById("dw_count");if(!c||c.dataset.w)return;c.dataset.w="1";const h=document.getElementById("dw_hand"),d=document.querySelector("[data-act=drawerClose]")?.dataset.id;
+  const f=()=>{const D=drawerDay(d),cnt=num(c.value),diff=Math.round(cnt-D.expected),hand=num(h.value);document.getElementById("dw_rbox").hidden=!(c.value&&diff);
+    document.getElementById("dw_sum").innerHTML=c.value===""?"اكتبي الفلوس اللي في الدرج.":`${diff?`<b style="color:var(--bad)">${diff<0?"ناقص":"زيادة"} ${money(Math.abs(diff))}</b>`:"مظبوط ✓"} · هيفضل في الدرج لبكره <b>${money(cnt-hand)}</b>`};
+  c.addEventListener("input",f);h.addEventListener("input",f)}
+async function drawerClose(d){const D=drawerDay(d),cs=val("dw_count").trim();if(cs==="")return setErr("اكتبي الفلوس اللي في الدرج");const counted=num(cs),handed=num(val("dw_hand")),diff=Math.round(counted-D.expected),reason=val("dw_reason").trim();
+  if(diff&&!reason)return setErr("اكتبي سبب الفرق");if(handed>counted)return setErr("اللي اتسلّم أكتر من اللي في الدرج");
+  const rec={opening:D.op.amt,cashIn:D.cashIn,out:D.out,insta:D.insta,expected:D.expected,counted,diff,reason,handed,carry:counted-handed,by:S.mySid,at:Date.now()};
+  await S.db.doc("cfg/drawer").set({days:{[d]:rec}},{merge:true});
+  audit("money","قفل الخزنة",{date:d,info:`المفروض ${money(D.expected)} · اتعد ${money(counted)}${diff?` · ${diff<0?"ناقص":"زيادة"} ${money(Math.abs(diff))} (${reason})`:""} · اتسلّم ${money(handed)}`});
+  alertOwner(`الخزنة اتقفلت · ${dmy(d)}`,`فيها ${money(counted)}${diff?` · ${diff<0?"ناقص":"زيادة"} ${money(Math.abs(diff))} (${reason})`:" · مظبوطة"} · اتسلّملك ${money(handed)} · فضل ${money(counted-handed)}`,diff?5:3);closeSheet();toast("الخزنة اتقفلت")}
+function drawerNag(){if(S.role!=="owner")return "";const y=dstr(dnum(today())-1);const D=drawerDay(y);if(D.closed||(!D.cashIn&&!D.out))return "";
+  return `<div class="note" style="margin-bottom:10px;border-color:var(--warn)">خزنة امبارح (${esc(dmy(y))}) متقفلتش: دخل كاش ${money(D.cashIn)}، والمفروض يكون فيها ${money(D.expected)}.</div>`}
+function drawerHistory(m){const ds=Object.entries(S.drawer||{}).filter(([d])=>d.startsWith(m)).sort((a,b)=>b[0].localeCompare(a[0]));if(!ds.length)return "";
+  const tot=ds.reduce((t,[,c])=>t+num(c.handed),0),diffT=ds.reduce((t,[,c])=>t+num(c.diff),0);
+  return `<div class="panel"><h2>الخزنة يوم بيوم</h2><div class="list">${ds.map(([d,c])=>`<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(d))} ${c.diff?`<span class="chip c-bad">${c.diff<0?"ناقص":"زيادة"} ${money(Math.abs(c.diff))}</span>`:`<span class="chip c-ok">مظبوطة</span>`}</span><span class="end money"><span class="sub">اتسلّم</span> ${money(c.handed)}</span><span class="m">المفروض ${money(c.expected)} · اتعد ${money(c.counted)} · فضل ${money(c.carry)}${c.reason?` · ${esc(c.reason)}`:""} · ${esc(staffName(c.by))}</span><span></span></div>`).join("")}</div>
+  <div class="note" style="display:flex;justify-content:space-between"><b>اتسلّملك الشهر ده</b><b>${money(tot)}${diffT?` · فرق ${diffT<0?"ناقص":"زيادة"} ${money(Math.abs(diffT))}`:""}</b></div></div>`}
 function hadeerPlan(force){ // one-time: what's on the system + the pre-system part = the paper (October: 3,800 · 2,470 / 1,330, not paid yet)
   if(S.role!=="owner"||today()>"2026-11-15")return null;
   const pt=r=>extFamily(r)==="علاج طبيعي"; // the paper is her physio cases only
@@ -1390,6 +1430,7 @@ function vReports(){
     <div class="stat"><div class="k">منهم InstaPay</div><div class="v money">${money(insta)}</div></div>
     <div class="stat"><div class="k">خرج اليوم</div><div class="v money" style="color:${out?"var(--bad)":"inherit"}">${money(out)}</div></div>
   </div>
+  ${drawerPanel(d)}
   ${dayExp.length||dayExt.length?`<div class="list">${dayExp.map(x=>`<button class="row" data-act="editExp" data-id="${x.id}"><span class="t">${esc(x.category)}</span><span class="end money">${money(x.amount)}</span><span class="m">${esc(x.note||"")}</span><span></span></button>`).join("")}${dayExt.map(p=>`<div class="row" style="cursor:default"><span class="t">حق ${esc(staffName(p.sid))}</span><span class="end money">${money(p.amount)}</span><span class="m">${esc(fmtRange(p))} · ${p.sessions} جلسة</span><span></span></div>`).join("")}</div>`:""}
   <div class="bar"><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="شهر المصروفات"><span class="sub grow">مصروفات ${esc(monthLabel(m))}</span></div>
   ${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
@@ -1424,7 +1465,7 @@ function vReports(){
     ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}${x.req!=null?`<div class="sub">اشتغل ${hm(x.got)} من ${hm(x.req)} مطلوبين${!x.ot&&x.short?` · ناقصه ${hm(x.short)}`:""}</div>`:""}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${x.extras.map(b=>`<div class="sub" style="color:var(--ok)">+ بونص ${money(b.amount)}${b.reason?` (${esc(b.reason)})`:""} <button class="btn ghost sm" data-act="delBonus" data-id="${b.id}" data-confirm aria-label="امسح البونص">✕</button></div>`).join("")}<button class="btn sm" data-act="addBonus" data-id="${x.s.id}" data-m="${m}" style="margin-top:4px">+ بونص</button>${x.bonus?`<div class="sub" style="color:var(--ok)">منه بونص الالتزام ${money(x.bonus)}${x.bonusSoFar?" (لو كمّل الشهر كده)":""}</div>`:x.bAmt?`<div class="sub">مفيش بونص الالتزام (${[x.absent?"غاب":"",x.paidLeave||x.deductDays?"خد إذن":"",x.short>0?"ساعاته ناقصة":""].filter(Boolean).join("، ")||"مفيش حضور"})</div>`:""}${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
   <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. الأوفر تايم بيتحسب على الشهر: بعد ما يكمّل ساعات كل أيامه في الشهر، يعني اليوم اللي بيعوّض بيه غياب مش أوفر تايم. أيام الإذن بتقلل الساعات المطلوبة. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
-  ${instPanel(m)}${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
+  ${drawerPanel(S.ui.drawerDay||today())}${drawerHistory(m)}${instPanel(m)}${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
 }
 /* ---------- views: settings ---------- */
 function vSettings(){
@@ -1507,6 +1548,7 @@ var patWarned=false,lockOk=false;
 /* month lock: after payroll is paid nobody but the owner changes anything dated in that month (also enforced by the rules) */
 function isLocked(d){const t=S.lock?.through;return !!(t&&d&&String(d).slice(0,7)<=t)}
 function lockBlock(...dates){ // true = stop; the owner is asked once, everyone else is refused
+  if(S.role!=="owner"&&dates.some(d=>d&&S.drawer?.[d])){const m=`خزنة يوم ${dmy(dates.find(d=>d&&S.drawer?.[d]))} اتقفلت، مينفعش يتسجل فيه فلوس. سجلها بتاريخ النهارده، أو كلم د. محي.`;if(document.getElementById("formErr"))setErr(m);else toast(m);return true}
   if(!dates.some(isLocked))return false;const say=m=>{if(document.getElementById("formErr"))setErr(m);else toast(m)};
   if(S.role==="owner"){if(lockOk)return false;lockOk=true;say(`شهر ${monthLabel(dates.find(isLocked).slice(0,7))} مقفول. لو متأكد إنك عايز تعدّل فيه دوس تاني، والتعديل هيتسجل في سجل التعديلات.`);return true}
   say(`شهر ${monthLabel(dates.find(isLocked).slice(0,7))} مقفول، مينفعش يتعدّل فيه. لو فيه حاجة اتنست، سجلها بتاريخ النهارده واكتب ملاحظة، أو كلم د. محي.`);return true}
@@ -2618,7 +2660,8 @@ async function selfAtt(kind){
 function sheetExp(id){
   const x=id?S.expenses[id]:{date:today()};if(!x)return;
   openSheet(id?"تعديل مصروف":"مصروف جديد",`<div class="grid2"><label class="f">البند<select id="x_cat">${EXP_CATS.map(c=>`<option ${c===x.category?"selected":""}>${c}</option>`).join("")}</select></label><label class="f">المبلغ<input id="x_amt" inputmode="decimal" value="${x.amount??""}"></label><label class="f">التاريخ<input type="date" id="x_date" value="${x.date}"></label></div>
-  <label class="f">ملاحظة<input id="x_note" value="${esc(x.note||"")}"></label><div class="err" id="formErr"></div>
+  <label class="f">ملاحظة<input id="x_note" value="${esc(x.note||"")}"></label>
+  <label class="seg" style="width:max-content"><span><input type="checkbox" id="x_drawer" ${x.notDrawer?"":"checked"} style="width:auto"> اتدفع من درج العيادة</span></label><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveExp" data-id="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delExp" data-id="${id}" data-confirm>حذف</button>`:""}</div>`);
 }
 function sheetPackType(id){
@@ -2783,7 +2826,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2886,7 +2929,7 @@ document.addEventListener("click",async e=>{
     case "selfOut":guard(t,()=>selfAtt("out"));break;
     case "newExp":sheetExp(null);break;
     case "editExp":sheetExp(id);break;
-    case "saveExp":guard(t,async()=>{const amount=num(val("x_amt"));if(!amount)return setErr("اكتب المبلغ");if(lockBlock(val("x_date")||today(),id?S.expenses[id]?.date:null))return;const body={category:val("x_cat"),amount,date:val("x_date")||today(),note:val("x_note").trim()};const was=id?S.expenses[id]:null;
+    case "saveExp":guard(t,async()=>{const amount=num(val("x_amt"));if(!amount)return setErr("اكتب المبلغ");if(lockBlock(val("x_date")||today(),id?S.expenses[id]?.date:null))return;const body={category:val("x_cat"),amount,date:val("x_date")||today(),note:val("x_note").trim(),notDrawer:!document.getElementById("x_drawer")?.checked};const was=id?S.expenses[id]:null;
       if(id){const ch=diffs([["المبلغ",was?.amount,amount],["البند",was?.category,body.category],["التاريخ",was?.date,body.date]]);if(ch.length)audit("exp","عدّل مصروف",{target:body.category,date:was?.date||body.date,info:ch.join(" · ")})}else audit("exp","مصروف جديد",{target:body.category,info:`${money(amount)}${body.note?` · ${body.note}`:""}`,date:body.date});
       if(id){await db.doc("exp/"+id).update(body);if(S.old.exp[id]){S.old.exp[id]={...S.old.exp[id],...body};merge()}}else await db.collection("exp").doc().set({...body,createdAt:Date.now(),by:S.mySid});closeSheet();toast("اتحفظ")});break;
     case "delExp":guard(t,async()=>{const was=S.expenses[id];if(lockBlock(was?.date))return;await db.doc("exp/"+id).delete();if(was)audit("exp","مسح مصروف",{target:was.category,date:was.date,info:`${money(was.amount)}${was.note?` · ${was.note}`:""}`,del:true});forget("exp",id);closeSheet()});break;
@@ -2926,6 +2969,9 @@ document.addEventListener("click",async e=>{
     case "bkLater":try{localStorage.setItem("bkSnooze",String(Date.now()+864e5))}catch(e){}sched();break;
     case "restoreMerge":guard(t,()=>doRestore(false));break;
     case "restoreExact":guard(t,()=>doRestore(true));break;
+    case "drawerSheet":sheetDrawer(id);break;
+    case "drawerClose":guard(t,()=>drawerClose(id));break;
+    case "drawerOpen":guard(t,async()=>{await S.db.doc("cfg/drawer").set({days:{[id]:firebase.firestore.FieldValue.delete()}},{merge:true});audit("money","فتح الخزنة تاني",{date:id,del:true});toast("الخزنة اتفتحت")});break;
     case "monthReport":showPrint(monthReportHtml(t.dataset.m));break;
     case "octReset":guard(t,octReset);break;
     case "dropDeduct":guard(t,async()=>{const list=(S.leaves||[]).map(l=>l.sid===id&&l.date==="2026-10-12"&&l.type==="deduct"?{...l,type:"free",by:S.mySid,at:Date.now()}:l);await db.doc("priv/leaves").set({list});audit("att","شال خصم يوم",{target:staffName(id),date:"2026-10-12"});toast("الخصم اتشال")});break;
