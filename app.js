@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="2 نوفمبر · 93";
+const APP_VERSION="3 نوفمبر · 94";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -139,7 +139,7 @@ function setupRoleSubs(){
   }
   if(S.role!=="owner")r.push(sub(c("pay").where("sid","==",S.mySid),o=>S.mypay=o)); // my own salary, published once the month is over
   else r.push(sub(c("pay").where("month","==",prevMonth(today().slice(0,7))),o=>S.payPub=o));
-  if(S.role==="owner"){r.push(sub(c("priv"),o=>{const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
+  if(S.role==="owner"){r.push(sub(c("priv"),o=>{S.privMeta=o.meta||{};const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
 }
 let prunedA=false;
 function pruneAppts(){ // finished appointments older than 4 months: the visit itself is the lasting record
@@ -191,7 +191,7 @@ function render(){
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
   const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,ext:vExt,audit:vAudit,settings:vSettings,mine:vMine,myatt:vMyAtt,mypay:vMyPay}[S.tab];
-  main.innerHTML=fn?fn():"";
+  main.innerHTML=(fn?backupNag():"")+(fn?fn():"");
   if(S.tab==="patients")renderPatientList();
 }
 /* ---------- setup & login ---------- */
@@ -1478,7 +1478,10 @@ function vSettings(){
   <label class="f">الاستقبال تيجي قبل أول حالة بـ (دقيقة)<input id="cfgSecLead" inputmode="numeric" value="${c.secLead}"></label></div>
   <p class="sub" style="margin:0">اللي ييجي بدري من غير شغل بيتحسب من الوقت ده. الدكتور لو عنده حالة قبله بيتحسب من ميعاد أول حالة، والاستقبال بتتحسب من قبل أول حالة في المركز بالدقايق دي.</p>
   <div class="bar"><button class="btn primary" data-act="saveCfg">حفظ المرتبات</button><span class="sub">سيب خانة النسبة فاضية لو مفيش نسبة.</span></div></div>
-  <div class="panel"><h2>نسخة احتياطية</h2><p class="sub" style="margin:0">نزّل ملف فيه كل بيانات المركز (المرضى والجلسات والدفعات والحضور والمصروفات والمرتبات). اعملها مرة في الشهر واحفظ الملف على Google Drive.</p><div class="bar"><button class="btn" data-act="backup">تنزيل نسخة احتياطية</button><span class="sub" id="bkMsg"></span></div></div>`:""}`;
+  <div class="panel"><h2>نسخة احتياطية</h2><p class="sub" style="margin:0">ملف فيه كل بيانات المركز: المرضى وشيتات الكشف، والجلسات، والحجوزات، والدفعات، والباكدجات، والحضور، والمصروفات، والمرتبات، والدكاترة اللي بره، والإعدادات. اعملها كل كام يوم واحفظها في Files أو Google Drive.${S.privMeta?.lastBackup?` آخر نسخة: <b>${esc(new Date(S.privMeta.lastBackup).toLocaleString("ar-EG-u-nu-latn",{day:"numeric",month:"long",hour:"numeric",minute:"2-digit"}))}</b>.`:""}</p>
+  <label class="seg" style="width:max-content"><span><input type="checkbox" id="bkPhotos" style="width:auto"> مع صور الكشف (الملف بيكبر)</span></label>
+  <div class="bar"><button class="btn primary" data-act="backup">اعمل نسخة احتياطية</button><span class="sub" id="bkMsg"></span></div>
+  <h3 style="font-size:14px;margin:6px 0 0">رجّع من نسخة</h3><input type="file" id="rsFile" accept=".json,application/json"><div id="rsBox">${RSH}</div></div>`:""}`;
 }
 /* ---------- views: doctor sessions ---------- */
 function vMine(){
@@ -2724,15 +2727,46 @@ function sheetType(id){
   <div class="bar"><button class="btn primary grow" data-act="saveType" data-id="${id||""}">حفظ</button>${id?`<button class="btn danger" data-act="delType" data-id="${id}" data-confirm>حذف</button>`:""}</div>`);
 }
 /* ---------- backup (owner) ---------- */
+/* backup: one file with everything (photos optional); restore: back to the file, with or without wiping what came after */
+const BK_COLS=["staff","patients","visits","payments","appts","att","exp","log","pdir","pay","cfg","priv","pub"]; // logins and the audit log are never written back
+function bkEnc(v){if(v&&typeof v.toDate==="function")return{__ts:v.toDate().getTime()};if(Array.isArray(v))return v.map(bkEnc);if(v&&typeof v==="object"){const o={};for(const [k,x] of Object.entries(v))o[k]=bkEnc(x);return o}return v}
+function bkDec(v){if(v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).length===1&&typeof v.__ts==="number")return firebase.firestore.Timestamp.fromMillis(v.__ts);if(Array.isArray(v))return v.map(bkDec);if(v&&typeof v==="object"){const o={};for(const [k,x] of Object.entries(v))o[k]=bkDec(x);return o}return v}
+function backupNag(){if(S.role!=="owner"||!S.privMeta)return "";const last=num(S.privMeta.lastBackup),days=last?Math.floor((Date.now()-last)/864e5):null;
+  if(days!=null&&days<3)return "";let snooze=0;try{snooze=+localStorage.getItem("bkSnooze")||0}catch(e){}if(Date.now()<snooze)return "";
+  return `<div class="note" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;${days==null||days>=7?"border-color:var(--bad)":""}"><span class="grow">${days==null?"لسه معملتش نسخة احتياطية خالص.":`آخر نسخة احتياطية من ${days} يوم.`}</span><button class="btn sm teal" data-act="backup">اعملها دلوقتي</button><button class="btn sm ghost" data-act="bkLater">بكره</button></div>`}
 async function backup(){
-  const msg=document.getElementById("bkMsg");msg.textContent="بيجمع البيانات…";
-  const cols=["staff","patients","visits","payments","att","exp","log","pdir"];const out={exportedAt:new Date().toISOString()};
-  for(const c of cols){const s=await S.db.collection(c).get();out[c]=s.docs.map(d=>({id:d.id,...d.data()}))}
-  for(const d of ["pub/types","cfg/prices","priv/config"]){const s=await S.db.doc(d).get();out[d]=s.exists?s.data():null}
-  const blob=new Blob([JSON.stringify(out)],{type:"application/json"});const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob);a.download=`stride-clinic-backup-${today()}.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-  msg.textContent="اتنزّل. صور الكشف مش جوا الملف ده.";
-}
+  const msg=document.getElementById("bkMsg");const say=t=>{if(msg)msg.textContent=t;else toast(t)};say("بيجمع البيانات…");
+  const withPhotos=!!document.getElementById("bkPhotos")?.checked;const out={app:"stride-clinic",version:2,exportedAt:new Date().toISOString(),photos:withPhotos,collections:{}};
+  for(const c of [...BK_COLS,...(withPhotos?["photos"]:[])]){const q=await S.db.collection(c).get();out.collections[c]=q.docs.map(d=>({id:d.id,...bkEnc(d.data())}))}
+  const name=`stride-backup-${today()}${withPhotos?"-photos":""}.json`,blob=new Blob([JSON.stringify(out)],{type:"application/json"}),file=new File([blob],name,{type:"application/json"});
+  await S.db.doc("priv/meta").set({lastBackup:Date.now(),lastBackupSize:blob.size},{merge:true});
+  const n=Object.values(out.collections).reduce((t,a)=>t+a.length,0);
+  if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:name});say(`اتعملت (${n} سجل). احفظها في Files أو Google Drive.`);return}catch(e){if(e&&e.name==="AbortError"){say("اتعملت، بس متحفظتش. دوس تاني واحفظها.");return}}}
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  say(`اتنزّلت (${n} سجل)${withPhotos?"":" من غير صور الكشف"}.`)}
+let RB=null,RSH=""; // the restore box survives the page redrawing while data comes back
+function setRS(html,add){RSH=add?RSH+html:html;const b=document.getElementById("rsBox");if(b)b.innerHTML=RSH}
+function bkCollections(data){if(data?.collections)return data.collections;const o={}; // older files (before November)
+  for(const c of ["staff","patients","visits","payments","att","exp","log","pdir"])if(Array.isArray(data?.[c]))o[c]=data[c];
+  for(const k of ["pub/types","cfg/prices","priv/config"])if(data?.[k]){const [c,id]=k.split("/");(o[c]=o[c]||[]).push({id,...data[k]})}return o}
+async function readRestore(input){const f=input.files?.[0];input.value="";if(!f)return;
+  try{const data=JSON.parse(await f.text());const cols=bkCollections(data);const ks=Object.keys(cols).filter(c=>BK_COLS.includes(c)||c==="photos");if(!ks.length)throw new Error("empty");
+    RB={cols,ks,at:data.exportedAt||""};const L={staff:"الفريق",patients:"مرضى",visits:"جلسة",payments:"دفعة",appts:"حجز",att:"يوم حضور",exp:"مصروف",log:"تسجيل دكتور",pdir:"اسم",pay:"مرتب منشور",cfg:"إعدادات",priv:"إعدادات خاصة",pub:"إعدادات عامة",photos:"صورة"};
+    setRS(`<div class="note">نسخة يوم <b>${esc(RB.at?new Date(RB.at).toLocaleString("ar-EG-u-nu-latn",{day:"numeric",month:"long",hour:"numeric",minute:"2-digit"}):"؟")}</b><br>${ks.map(c=>`${cols[c].length} ${L[c]||c}`).join(" · ")}</div>
+    <div class="bar"><button class="btn primary" data-act="restoreMerge" data-confirm>رجّع اللي اتمسح أو اتغيّر</button><button class="btn danger" data-act="restoreExact" data-confirm>رجّع النسخة بالظبط</button></div>
+    <p class="sub" style="margin:0">«رجّع اللي اتمسح أو اتغيّر» مبيمسحش حاجة اتسجلت بعد النسخة. «بالظبط» بيمسح كمان كل حاجة اتعملت بعدها.</p>`)}
+  catch(e){setRS(`<div class="note" style="color:var(--bad)">الملف ده مش نسخة احتياطية من الأبلكيشن.</div>`);RB=null}}
+let rsExactArmed=false;
+async function doRestore(exact){if(!RB)return;
+  if(exact&&!rsExactArmed){rsExactArmed=true;setRS(`<div class="note" style="color:var(--bad)">متأكد؟ أي جلسة أو دفعة أو مريض اتسجل بعد النسخة <b>هيتمسح</b>. دوس «رجّع النسخة بالظبط» تاني لو متأكد.</div>`,true);return}
+  rsExactArmed=false;const db=S.db;let w=0,del=0;const ops=[];
+  for(const c of RB.ks){const rows=RB.cols[c]||[];const ids=new Set(rows.map(r=>r.id));
+    for(const r of rows){const {id,...data}=r;ops.push(["set",`${c}/${id}`,bkDec(data)])}
+    if(exact){const cur=await db.collection(c).get();for(const d of cur.docs)if(!ids.has(d.id)&&!(c==="priv"&&d.id==="meta")){ops.push(["del",`${c}/${d.id}`]);del++}}}
+  const base=RSH.replace(/<div class="bar">[\s\S]*$/,"");setRS(base+`<div class="note">بيرجّع… 0 من ${ops.length}</div>`);
+  for(let i=0;i<ops.length;i+=300){const b=db.batch();for(const [k,p,d] of ops.slice(i,i+300)){k==="set"?b.set(db.doc(p),d):b.delete(db.doc(p));w++}await b.commit();setRS(base+`<div class="note">بيرجّع… ${Math.min(i+300,ops.length)} من ${ops.length}</div>`)}
+  audit("settings",exact?"رجّع نسخة احتياطية بالظبط":"رجّع من نسخة احتياطية",{info:`نسخة ${RB.at?dmy(RB.at.slice(0,10)):""} · ${w-del} سجل اترجع${del?` · ${del} اتمسح`:""}`,del:!!del});
+  RB=null;setRS(`<div class="note" style="color:var(--ok)">خلص: ${w-del} سجل اترجع${del?`، و${del} اتمسح`:""}.</div>`);toast("النسخة اترجعت")}
 /* ---------- events ---------- */
 document.addEventListener("submit",e=>{
   if(e.target.id==="loginForm"){e.preventDefault();doLogin().catch(err=>{console.error(err);document.getElementById("loginErr").textContent="حصلت مشكلة، جرب تاني."})}
@@ -2741,6 +2775,7 @@ document.addEventListener("submit",e=>{
 document.addEventListener("input",e=>{if(e.target.id==="q"){S.ui.q=e.target.value;renderPatientList()}if(e.target.id==="imp_text")drawImportPreview()});
 document.addEventListener("change",e=>{
   const id=e.target.id;
+  if(id==="rsFile"&&S.role==="owner"){readRestore(e.target);return}
   if(id==="dayPick"&&e.target.value){S.ui.date=e.target.value;e.target.blur();render()}
   if(id==="attPick"&&e.target.value){S.ui.attDate=e.target.value;e.target.blur();render()}
   if(id==="repPick"&&e.target.value){S.ui.repDay=e.target.value;e.target.blur();render()}
@@ -2748,7 +2783,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2888,6 +2923,9 @@ document.addEventListener("click",async e=>{
     case "addFixed":{const box=document.getElementById("fixedRows");if(box){if(!box.querySelector(".fxrow"))box.innerHTML="";box.insertAdjacentHTML("beforeend",fixedRow())}break}
     case "delFixed":{t.closest(".fxrow")?.remove();break}
     case "pubPay":payPubAt=0;autoPublishPay(true);break;
+    case "bkLater":try{localStorage.setItem("bkSnooze",String(Date.now()+864e5))}catch(e){}sched();break;
+    case "restoreMerge":guard(t,()=>doRestore(false));break;
+    case "restoreExact":guard(t,()=>doRestore(true));break;
     case "monthReport":showPrint(monthReportHtml(t.dataset.m));break;
     case "octReset":guard(t,octReset);break;
     case "dropDeduct":guard(t,async()=>{const list=(S.leaves||[]).map(l=>l.sid===id&&l.date==="2026-10-12"&&l.type==="deduct"?{...l,type:"free",by:S.mySid,at:Date.now()}:l);await db.doc("priv/leaves").set({list});audit("att","شال خصم يوم",{target:staffName(id),date:"2026-10-12"});toast("الخصم اتشال")});break;
