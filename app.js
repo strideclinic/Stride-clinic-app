@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="4 نوفمبر · 96";
+const APP_VERSION="4 نوفمبر · 97";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -140,7 +140,7 @@ function setupRoleSubs(){
   }
   if(S.role!=="owner")r.push(sub(c("pay").where("sid","==",S.mySid),o=>S.mypay=o)); // my own salary, published once the month is over
   else r.push(sub(c("pay").where("month","==",prevMonth(today().slice(0,7))),o=>S.payPub=o));
-  if(S.role==="owner"){r.push(sub(c("priv"),o=>{S.privMeta=o.meta||{};const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
+  if(S.role==="owner"){r.push(sub(c("priv"),o=>{S.privMeta=o.meta||{};S.rent=o.rent||null;const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
 }
 let prunedA=false;
 function pruneAppts(){ // finished appointments older than 4 months: the visit itself is the lasting record
@@ -192,7 +192,7 @@ function render(){
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
   const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,ext:vExt,audit:vAudit,settings:vSettings,mine:vMine,myatt:vMyAtt,mypay:vMyPay}[S.tab];
-  main.innerHTML=(fn?backupNag()+drawerNag():"")+(fn?fn():"");
+  main.innerHTML=(fn?backupNag()+drawerNag()+rentNag():"")+(fn?fn():"");
   if(S.tab==="patients")renderPatientList();
 }
 /* ---------- setup & login ---------- */
@@ -437,7 +437,37 @@ function revenue(month){
   return{raw,adj,cash:mo.cash-vin.cash,insta:mo.insta-vin.insta,collected:raw+adj,fromExt:E.moved,extShareCenter:E.shareCenter,vaultIn:vin.t,charged:charged+manual,sessions,unpaid,manual};
 }
 function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)&&!(x.ext&&extById(x.ext))){ /* a refund from an outside doctor's vault isn't the clinic's expense */o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}
-  const rent=Object.entries(o).filter(([k])=>/إيجار|ايجار/.test(k)).reduce((a,[,v])=>a+v,0);return{o,t,rent,other:t-rent}} // rent is shown on its own
+  let rent=Object.entries(o).filter(([k])=>/إيجار|ايجار/.test(k)).reduce((a,[,v])=>a+v,0),rentAuto=false;
+  if(!rent&&S.role==="owner"){rent=rentOf(month);if(rent){rentAuto=true;t+=rent}} /* the monthly rent counts by itself unless a rent expense was entered by hand */
+  return{o,t,rent,rentAuto,other:t-rent}} // rent is shown on its own
+/* monthly rent: a list of {from:"YYYY-MM",amount,pct?,confirmed?}; it goes up every May and the owner is asked by how much */
+const RENT_DEF={list:[{from:"2026-11",amount:18000,confirmed:true},{from:"2027-05",amount:21600,pct:20}],month:5};
+function rentList(){return [...((S.rent||RENT_DEF).list||[])].sort((a,b)=>a.from.localeCompare(b.from))}
+function rentOf(m){const e=rentList().filter(x=>x.from<=m).pop();return e?num(e.amount):0}
+function rentNext(){const m=today().slice(0,7);return rentList().find(x=>x.from>m)||null}
+function rentRaiseM(){const t=today(),y=+t.slice(0,4),mm=String((S.rent||RENT_DEF).month||5).padStart(2,"0");return `${y}-${mm}`}
+function rentNag(){if(S.role!=="owner"||!S.privMeta)return "";const t=today(),rm=rentRaiseM();const start=dstr(dnum(rm+"-01")-10),end=dstr(dnum(rm+"-01")+30);if(t<start||t>end)return "";
+  const e=rentList().find(x=>x.from===rm);if(e?.confirmed)return "";const before=rentOf(prevMonth(rm));
+  return `<div class="note" style="margin-bottom:10px;border-color:var(--warn)">🏠 ${e?`الإيجار هيزيد ${e.pct?e.pct+"% ":""}من ${esc(monthLabel(rm))} ويبقى <b>${money(e.amount)}</b> بدل ${money(before)}. ده صح؟`:`شهر ${esc(monthLabel(rm))}: الإيجار المفروض يزيد. هيزيد كام؟ (دلوقتي ${money(before)})`}
+  <div class="bar" style="margin-top:8px">${e?`<button class="btn sm teal" data-act="rentOk">تمام</button>`:""}<button class="btn sm" data-act="rentEdit" data-m="${rm}">${e?"غيّر الزيادة":"اكتب الزيادة"}</button></div></div>`}
+function rentPanel(m){const cur=rentOf(m),nx=rentNext();const ex=expByCat(m);
+  return `<div class="panel"><div class="sec-title"><h2>الإيجار</h2><button class="btn sm" data-act="rentEdit" data-m="${nx?.from||rentRaiseM()}">تعديل</button></div>
+  <p style="margin:0">${money(cur)} في الشهر${ex.rentAuto?" · بيتحسب لوحده في المصروفات":ex.rent?` · الشهر ده متسجل بإيدك ${money(ex.rent)}`:""}</p>
+  ${nx?`<p class="sub" style="margin:0">هيزيد ${nx.pct?nx.pct+"% ":""}من ${esc(monthLabel(nx.from))} ويبقى ${money(nx.amount)}${nx.confirmed?"":" (هفكرك قبلها تأكد)"}.</p>`:`<p class="sub" style="margin:0">كل شهر ${esc(monthLabel(rentRaiseM()).split(" ")[0])} هفكرك وأسألك هيزيد كام.</p>`}</div>`}
+function sheetRent(rm){const before=rentOf(prevMonth(rm)),e=rentList().find(x=>x.from===rm);const now=today().slice(0,7);
+  openSheet("الإيجار",`<div class="grid2"><label class="f">الإيجار دلوقتي<input id="rn_cur" inputmode="decimal" value="${rentOf(now)}"></label><label class="f">من شهر<input id="rn_from" type="month" value="${esc(rentList().filter(x=>x.from<=now).pop()?.from||now)}"></label></div>
+  <h3 style="margin:6px 0 0">الزيادة الجاية</h3><div class="grid2"><label class="f">من شهر<input id="rn_rm" type="month" value="${rm}"></label><label class="f">هيزيد كام %<input id="rn_pct" inputmode="decimal" value="${e?.pct??""}" placeholder="مثلًا 20"></label></div>
+  <label class="f">أو اكتب الإيجار الجديد على طول<input id="rn_new" inputmode="decimal" value="${e?.amount??""}"></label>
+  <div class="note" id="rn_sum"></div><div class="err" id="formErr"></div><button class="btn primary" data-act="rentSave">حفظ</button>`,()=>{
+  const f=()=>{const cur=num(val("rn_cur")),p=num(val("rn_pct"));const nw=document.activeElement?.id==="rn_new"?num(val("rn_new")):p?Math.round(cur*(1+p/100)):num(val("rn_new"));if(document.activeElement?.id!=="rn_new"&&p)document.getElementById("rn_new").value=nw;
+    document.getElementById("rn_sum").innerHTML=nw?`من ${esc(monthLabel(val("rn_rm")))} الإيجار هيبقى <b>${money(nw)}</b> (زيادة ${money(nw-cur)})`:"لو لسه متعرفش الزيادة سيبها فاضية، وهفكرك."};
+  ["rn_cur","rn_pct","rn_new","rn_rm"].forEach(i=>document.getElementById(i).addEventListener("input",f));f()})}
+async function rentSave(){const cur=num(val("rn_cur")),from=val("rn_from"),rm=val("rn_rm"),pct=num(val("rn_pct")),nw=num(val("rn_new"));if(!cur||!from)return setErr("اكتب الإيجار ومن شهر إيه");
+  if(rm&&rm<=from)return setErr("شهر الزيادة لازم يكون بعد شهر الإيجار الحالي");
+  let list=rentList().filter(x=>x.from<from);list.push({from,amount:cur,confirmed:true});
+  if(rm&&nw)list.push({from:rm,amount:nw,...(pct?{pct}:{}),confirmed:rm<=today().slice(0,7)||dnum(today())>=dnum(rm+"-01")-10});
+  await S.db.doc("priv/rent").set({list,month:+(rm||rentRaiseM()).slice(5)||5});audit("money","الإيجار",{info:`${money(cur)} من ${from}${rm&&nw?` · ${money(nw)} من ${rm}`:""}`});closeSheet();toast("اتحفظ")}
+async function rentOk(){const rm=rentRaiseM();const list=rentList().map(x=>x.from===rm?{...x,confirmed:true}:x);await S.db.doc("priv/rent").set({list,month:(S.rent||RENT_DEF).month||5});toast("تمام، الإيجار الجديد اتسجل")}
 function dayNav(act,pickId,d){return `<button class="btn sm" data-act="${act}" data-n="-1">اليوم اللي قبله</button><input type="date" id="${pickId}" value="${d}" style="max-width:170px" aria-label="اليوم"><button class="btn sm" data-act="${act}" data-n="1">اللي بعده</button>`}
 function monthLoading(m){return isAdmin()&&m<winMonth()&&S.loadedMonths[m]!==true}
 /* ---------- views: visits ---------- */
@@ -1350,10 +1380,11 @@ function monthStat(k,m){
     <div class="row" style="cursor:default"><span class="t">المرتبات والأوفر تايم والنسب</span><span class="end money" style="color:var(--bad)">− ${money(Math.round(salT))}</span></div>
     ${extT?`<div class="row" style="cursor:default"><span class="t">حق دكاترة من بره على جلسات فلوسها في المركز</span><span class="end money" style="color:var(--bad)">− ${money(extT)}</span></div>`:""}
     <div class="row" style="cursor:default"><span class="t">مصروفات تانية</span><span class="end money" style="color:var(--bad)">− ${money(ex.other)}</span></div>
-    <div class="row" style="cursor:default"><span class="t">الإيجار</span><span class="end money" style="color:var(--bad)">− ${money(ex.rent)}</span></div></div>
+    <div class="row" style="cursor:default"><span class="t">الإيجار${ex.rentAuto?` <span class="sub">(الشهري)</span>`:""}</span><span class="end money" style="color:var(--bad)">− ${money(ex.rent)}</span></div></div>
     ${tot("صافي الشهر",Math.round(net),net<0?"var(--bad)":"var(--ok)")}
     ${instOf(m).length?(()=>{const it=instOf(m).reduce((t,x)=>t+num(x.p.monthly),0);return `<div class="list"><div class="row" style="cursor:default"><span class="t">قسط الأجهزة الشهر ده (لوحده)</span><span class="end money" style="color:var(--bad)">− ${money(it)}</span></div></div>${tot("بعد القسط",Math.round(net-it))}`})():""}
-    ${exts(true).length?(()=>{const vb=exts(true).reduce((t,x)=>t+vaultOf(x).bal,0);return `<div class="list"><div class="row" style="cursor:default"><span class="t">خزنة الدكاترة اللي بره (على جنب)</span><span class="end money" style="color:var(--warn)">+ ${money(vb)}</span></div></div>${tot("معاك كله (الصافي + خزنة الدكاترة اللي بره)",Math.round(net+vb))}`})():""}
+    ${exts(true).length?(()=>{const vb=exts(true).reduce((t,x)=>t+vaultOf(x).bal,0),it=instOf(m).reduce((t,x)=>t+num(x.p.monthly),0),base=Math.round(net-it);return `<div class="list"><div class="row" style="cursor:default"><span class="t">خزنة الدكاترة اللي بره (على جنب)</span><span class="end money" style="color:var(--warn)">+ ${money(vb)}</span></div></div>${tot(`${it?"بعد القسط":"الصافي"} + خزنة الدكاترة اللي بره`,base+vb,base+vb<0?"var(--bad)":"")}<p class="sub" style="margin:0">ده بس عشان تعرف الكاش اللي في إيدك فيه كام، لكن فلوس خزنة الدكاترة اللي بره مش بتاعتك، دي حقهم لحد ما يتحاسبوا.</p>`})():""}
+    ${m===today().slice(0,7)?`<div class="note" style="border-color:var(--warn)">الشهر لسه ماشي: المرتبات${ex.rentAuto?" والإيجار":""} محسوبين للشهر كله، لكن الدخل لحد النهارده بس. عشان كده الصافي ممكن يطلع بالسالب في أول الشهر، والصورة الحقيقية بتبان في آخره.</div>`:""}
     <p class="sub" style="margin:0">${exts(true).length?`حق الدكاترة اللي بره بيطلع من خزنتهم، مش من صافي المركز. `:""}${rv.unpaid?`ولسه على الحالات كلهم ${money(rv.unpaid)} مدفعوهمش، ودول مش داخلين في الحساب ده لحد ما يتدفعوا.`:""}</p>`);
 }
 function extPendingPanel(){ // off-system sessions not settled yet with outside doctors: kept apart from the clinic's revenue
@@ -1465,7 +1496,7 @@ function vReports(){
     ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}${x.req!=null?`<div class="sub">اشتغل ${hm(x.got)} من ${hm(x.req)} مطلوبين${!x.ot&&x.short?` · ناقصه ${hm(x.short)}`:""}</div>`:""}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${x.extras.map(b=>`<div class="sub" style="color:var(--ok)">+ بونص ${money(b.amount)}${b.reason?` (${esc(b.reason)})`:""} <button class="btn ghost sm" data-act="delBonus" data-id="${b.id}" data-confirm aria-label="امسح البونص">✕</button></div>`).join("")}<button class="btn sm" data-act="addBonus" data-id="${x.s.id}" data-m="${m}" style="margin-top:4px">+ بونص</button>${x.bonus?`<div class="sub" style="color:var(--ok)">منه بونص الالتزام ${money(x.bonus)}${x.bonusSoFar?" (لو كمّل الشهر كده)":""}</div>`:x.bAmt?`<div class="sub">مفيش بونص الالتزام (${[x.absent?"غاب":"",x.paidLeave||x.deductDays?"خد إذن":"",x.short>0?"ساعاته ناقصة":""].filter(Boolean).join("، ")||"مفيش حضور"})</div>`:""}${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
   </tbody><tfoot><tr><td>الإجمالي</td><td></td><td>${money(pr.reduce((s,x)=>s+x.sal,0))}</td><td></td><td>${money(otNow)}</td><td>${money(pr.reduce((s,x)=>s+x.comm,0))}</td><td>${money(salTotal)}</td></tr></tfoot></table></div>
   <p class="sub" style="margin:0">سعر الدقيقة = المرتب ÷ (أيام شغله في الشهر حسب جدوله × ${cfg().hoursBase} ساعات × 60)، والأوفر تايم الدقيقة بـ ${cfg().otMult}. الأوفر تايم بيتحسب على الشهر: بعد ما يكمّل ساعات كل أيامه في الشهر، يعني اليوم اللي بيعوّض بيه غياب مش أوفر تايم. أيام الإذن بتقلل الساعات المطلوبة. اللي مالوش جدول بيتحسب على ${cfg().daysBase} يوم. النسبة محسوبة على المبلغ اللي الحالة دفعته فعلاً في الجلسة.</p></div>
-  ${drawerPanel(S.ui.drawerDay||today())}${drawerHistory(m)}${instPanel(m)}${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
+  ${drawerPanel(S.ui.drawerDay||today())}${drawerHistory(m)}${rentPanel(m)}${instPanel(m)}${expensesPanel}${discountsPanel(m)}${sourcesPanel}`;
 }
 /* ---------- views: settings ---------- */
 function vSettings(){
@@ -2831,7 +2862,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -2977,6 +3008,9 @@ document.addEventListener("click",async e=>{
     case "restoreMerge":guard(t,()=>doRestore(false));break;
     case "restoreExact":guard(t,()=>doRestore(true));break;
     case "drawerSheet":sheetDrawer(id);break;
+    case "rentEdit":sheetRent(t.dataset.m);break;
+    case "rentSave":guard(t,rentSave);break;
+    case "rentOk":guard(t,rentOk);break;
     case "drawerClose":guard(t,()=>drawerClose(id));break;
     case "drawerOpen":guard(t,async()=>{await S.db.doc("cfg/drawer").set({days:{[id]:firebase.firestore.FieldValue.delete()}},{merge:true});audit("money","فتح الخزنة تاني",{date:id,del:true});toast("الخزنة اتفتحت")});break;
     case "monthReport":showPrint(monthReportHtml(t.dataset.m));break;
