@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="3 نوفمبر · 95";
+const APP_VERSION="4 نوفمبر · 96";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -2065,6 +2065,11 @@ function sessionRow(a){
   <span class="end bar">${quick}</span>
   <span class="m">${packMismatch(a)} ${[kindOf(a),docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
+let PENDBACK=false;
+function sheetPending(){const L=Object.values(S.appts).filter(needsRecord).sort((a,b)=>(a.date+(a.time||"")).localeCompare(b.date+(b.time||"")));
+  if(!L.length){PENDBACK=false;closeSheet();toast("كله اتأكد ✓");return}
+  openSheet(`مستنية تأكيدك (${L.length})`,`<div class="list">${L.map(a=>`<button class="row" data-act="pendOpen" data-id="${a.id}"><span class="t">${esc(a.patientName)}</span><span class="end"><span class="btn sm teal">أكّد</span></span><span class="m">${esc(dayLabel(a.date))}${a.date===today()?" · النهارده":""} · ${esc(a.time||"")} · ${esc(apptDocs(a).map(staffName).join(" + ")||"مفيش دكتور")}<br>${esc(kindOf(a))}</span><span></span></button>`).join("")}</div>
+  <p class="sub" style="margin:0">بعد ما تأكد كل واحدة بترجع للستة دي لوحدها.</p>`)}
 function vSessions(){
   const d=S.ui.date;ensureMonth(d.slice(0,7));
   const appts=Object.values(S.appts).filter(a=>a.date===d&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(appts),0);
@@ -2076,7 +2081,7 @@ function vSessions(){
   const missing=Object.values(S.appts).filter(needsRecord);
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn" data-act="newPay">+ دفعة</button><button class="btn primary" data-act="newWalkin">+ جلسة من غير ميعاد</button></div>
   ${lockNote(d)}${dupPanel()}
-  ${missing.length?`<div class="note">فيه ${missing.length} جلسة خلصت ومستنية تأكيدك للدكتور والفلوس${missing.some(a=>a.date!==d)?"، منهم في أيام تانية":""}. دوس «أكّد» جنبها.</div>`:""}
+  ${missing.length?`<button class="note tap" data-act="pendList" style="display:block;width:100%;text-align:start;cursor:pointer;font:inherit;color:inherit">فيه <b>${missing.length}</b> جلسة خلصت ومستنية تأكيدك للدكتور والفلوس${missing.some(a=>a.date!==d)?"، منهم في أيام تانية":""}. <b style="color:var(--acc,#2b3f86)">دوس هنا تشوفهم ›</b></button>`:""}
   <div class="stats">
     <button class="stat tap" data-act="statList" data-k="came"><div class="k">جم النهارده ›</div><div class="v num">${came}</div></button>
     <button class="stat tap" data-act="statList" data-k="no"><div class="k">محضروش / كنسلوا ›</div><div class="v num">${appts.filter(a=>["noshow","cancelled"].includes(a.status)).length}</div></button>
@@ -2828,7 +2833,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -2844,11 +2849,13 @@ document.addEventListener("click",async e=>{
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
-    case "openSession":sheetSession(id);break;
+    case "openSession":PENDBACK=false;sheetSession(id);break;
+    case "pendList":sheetPending();break;
+    case "pendOpen":PENDBACK=true;sheetSession(id);break;
     case "quickArrive":guard(t,()=>quickArrive(id));break;
     case "quickCancel":sheetQuickCancel(id);break;
     case "doCancel":guard(t,()=>doCancel(id,t.dataset.r));break;
-    case "saveSession":guard(t,()=>saveSession(id));break;
+    case "saveSession":guard(t,async()=>{await saveSession(id);if(PENDBACK&&!document.querySelector("#sheetRoot .sheet"))setTimeout(sheetPending,300)});break;
     case "newWalkin":sheetWalkin();break;
     case "saveWalkin":guard(t,saveWalkin);break;
     case "setBackfill":guard(t,async()=>{const from=val("bf_from"),to=val("bf_to");if(!from||!to||from>to)return toast("اختار فترة صح");
