@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="8 نوفمبر · 99";
+const APP_VERSION="8 نوفمبر · 100";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1808,7 +1808,7 @@ function creditLabel(c){return c.mode==="split"?`نص ونص: ${staffName(c.a)} 
 function sessionInfo(pid,kind,excludeId,date,time,typeId){ // "جلسة 4 من 10 · باكدج علاج طبيعي" from the package of that type, "جلسة رقم 7" otherwise
   if(kind==="exam")return{label:"كشف",packId:null};
   const pack=packsFor(pid,typeId)[0];
-  const before=Object.values(S.appts).filter(x=>x.id!==excludeId&&x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!S.visits[x.id]&&!["cancelled","noshow"].includes(x.status)&&shownAppt(x)&&((x.date||"")+(x.time||""))<(date+time)&&(!pack||x.packId===pack.id)).length;
+  const before=Object.values(S.appts).filter(x=>x.id!==excludeId&&x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!S.visits[x.id]&&!["cancelled","noshow"].includes(x.status)&&shownAppt(x)&&(((x.date||"")+(x.time||""))<(date+time)||(((x.date||"")+(x.time||""))===(date+time)&&String(x.id)<String(excludeId||"")))&&(!pack||x.packId===pack.id)).length; /* two sessions at the same hour (e.g. two people on one package) get 11 and 12, not 11 twice */
   if(pack){const n=(pack.used||0)+before+1;return{label:`جلسة ${Math.min(n,pack.sessions)} من ${pack.sessions} · ${packTitle(pack)}`,packId:pack.id}}
   const rate=typeId?S.patients[pid]?.rates?.[typeId]:null;
   return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} ${rate!=null?"بالجلسة":"منفردة"}`:""}`,packId:null};
