@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="6 نوفمبر · 98";
+const APP_VERSION="8 نوفمبر · 99";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -518,6 +518,29 @@ function statusChip(s){return {pending:`<span class="chip c-warn">مستني ا�
 function vPatients(){
   return `<div id="payerBox"></div><div class="bar"><input id="q" class="grow" placeholder="دوّر بالاسم أو الموبايل" value="${esc(S.ui.q)}" aria-label="بحث"><button class="btn primary" data-act="newPatient">+ مريض جديد</button></div><div class="bar"><button class="btn sm" data-act="quickAdd">إضافة سريعة للمرضى القدام</button><button class="btn sm" data-act="pasteList">لصق قايمة</button>${S.role==="owner"?`<button class="btn sm teal" data-act="reviewCounts">🔍 راجع عدد الجلسات</button>`:""}</div><div id="plist"></div>`;
 }
+/* who owes money: late ones first, a polite WhatsApp nudge, and a note so nobody is nudged twice in a row */
+const INSTAPAY="01129577564";
+function debtRows(){const lastPay={};const bump=(pid,d)=>{if(pid&&d&&(!lastPay[pid]||d>lastPay[pid]))lastPay[pid]=d};
+  for(const x of Object.values(S.payments))if(x.kind!=="discount"&&num(x.amount)>0)bump(x.patientId,x.date);for(const v of Object.values(S.visits))if(num(v.paid)>0)bump(v.patientId,v.date);
+  const now=dnum(today());
+  return Object.values(S.patients).filter(p=>!p.payer&&Math.round(num(p.charged)-num(p.paid))>0).map(p=>{const due=Math.round(num(p.charged)-num(p.paid));
+    const open=(p.packs||[]).filter(k=>(k.used||0)<k.sessions&&!k.refund),owedPack=(p.packs||[]).some(k=>packOwed(k)>0);
+    const idle=p.last?now-dnum(p.last):999,late=!open.length||idle>14;const ext=extById(p.broughtBy)||(p.packs||[]).map(k=>extById(k.ext)).find(Boolean);
+    const since=lastPay[p.id]||(p.packs||[]).map(k=>k.date).filter(Boolean).sort()[0]||p.last||p.examDate||"";
+    return{p,due,late,idle,ext,lastPay:lastPay[p.id]||"",since,owedPack,open}})}
+function debtMsg(r){const p=r.p,first=(p.name||"").trim().split(/\s+/)[0];const t=p.gender==="أنثى"?`أستاذة ${first}`:p.gender==="ذكر"?`أستاذ ${first}`:"يا فندم";
+  return `أهلًا ${t}، بنفكّر حضرتك إن فيه مبلغ ${money(r.due)} متبقي ${r.owedPack?"من الباكدج":"من الجلسات"}. تقدر تدفعه في المركز كاش أو InstaPay على الرقم ${INSTAPAY}. شكرًا لحضرتك 🙏 Stride Clinic`}
+function sheetDebts(){const sort=S.ui.debtSort||"amt";let R=debtRows();if(sort==="big")R=R.filter(r=>r.due>=1000);
+  R.sort(sort==="old"?(a,b)=>(a.since||"9").localeCompare(b.since||"9"):(a,b)=>b.due-a.due);
+  const days=d=>{if(!d)return "";const n=dnum(today())-dnum(d);return n<=0?"النهارده":n===1?"امبارح":`من ${n} يوم`};
+  const row=r=>{const num_=waNumber(r.p.phone)||waNumber(r.p.phone2),rem=r.p.debtRemindAt;const remD=rem?new Date(rem).toISOString().slice(0,10):"";const fresh=rem&&Date.now()-rem<3*864e5;
+    return `<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t"><b>${esc(r.p.name)}</b>${r.ext?` <span class="chip c-acc">${esc(r.ext.name)}</span>`:""}</span><span class="end money" style="color:var(--bad)"><b>عليه ${money(r.due)}</b></span>
+    <span class="m" style="grid-column:1/-1">${r.open.length?esc(r.open.map(k=>`${packTitle(k)} · فاضل ${k.sessions-(k.used||0)}`).join("، ")):"مفيش باكدج مفتوح"} · آخر دفعة ${r.lastPay?days(r.lastPay):"مش ظاهرة"} · آخر جلسة ${r.p.last?days(r.p.last):"—"}${rem?` · <b>اتفكّر ${esc(dmy(remD))}</b>`:""}</span>
+    <span class="bar" style="grid-column:1/-1;margin:4px 0 0">${num_?`<a class="btn sm ${fresh?"":"teal"}" href="https://wa.me/${num_}?text=${encodeURIComponent(debtMsg(r))}" target="_blank" rel="noopener" data-act="debtRemind" data-id="${r.p.id}">${fresh?"اتبعت ✓":"واتساب"}</a>`:`<span class="chip c-mute">مفيش موبايل</span>`}<button class="btn sm" data-act="payFor" data-id="${r.p.id}">سجل دفعة</button><button class="btn sm" data-act="openPatient" data-id="${r.p.id}">افتح الملف</button></span></div>`};
+  const late=R.filter(r=>r.late),on=R.filter(r=>!r.late),sum=a=>money(a.reduce((t,r)=>t+r.due,0));
+  openSheet(`عليهم فلوس (${R.length}) · ${sum(R)}`,`<div class="seg" style="margin-bottom:8px">${[["amt","الأكبر مبلغ"],["old","الأقدم"],["big","فوق 1000"]].map(([k,l])=>`<label><input type="radio" name="dsort" data-act="debtSort" data-id="${k}" ${sort===k?"checked":""}> ${l}</label>`).join("")}</div>
+  <h3 style="margin:6px 0">🔴 متأخرين (${late.length}) · ${sum(late)}</h3><p class="sub" style="margin:0 0 6px">خلصوا الباكدج أو بقالهم أكتر من أسبوعين مجوش. دول اللي لازم نكلمهم.</p><div class="list">${late.map(row).join("")||`<p class="sub">مفيش 👌</p>`}</div>
+  <h3 style="margin:12px 0 6px">🟡 لسه بيجوا (${on.length}) · ${sum(on)}</h3><p class="sub" style="margin:0 0 6px">عليهم باقي الباكدج وهما لسه بيحضروا، فطبيعي يدفعوا في الجلسات الجاية.</p><div class="list">${on.map(row).join("")||`<p class="sub">مفيش</p>`}</div>`)}
 function renderPatientList(){
   const el=document.getElementById("plist");if(!el)return;
   const q=nd(S.ui.q).trim();const b=balances();
@@ -525,7 +548,8 @@ function renderPatientList(){
   const owe=Object.values(b).reduce((s,x)=>s+Math.max(0,x.charged-x.paid),0);
   const pyEl=document.getElementById("payerBox");if(pyEl)pyEl.innerHTML=payersPanel();
   const shown=ps.slice(0,200);
-  el.innerHTML=(Object.keys(S.patients).length?`<div class="stats" style="margin-bottom:12px"><div class="stat"><div class="k">عدد الملفات</div><div class="v num">${Object.keys(S.patients).length}</div></div><div class="stat"><div class="k">إجمالي اللي على الحالات</div><div class="v money">${money(owe)}</div></div></div>`:"")+
+  const dr=isAdmin()?debtRows():[];
+  el.innerHTML=(dr.length?`<button class="btn" data-act="debts" style="width:100%;margin-bottom:10px;justify-content:space-between;display:flex"><span>💰 عليهم فلوس (${dr.length})${dr.some(r=>r.late)?` · <b style="color:var(--bad)">${dr.filter(r=>r.late).length} متأخرين</b>`:""}</span><b>${money(dr.reduce((t,r)=>t+r.due,0))} ›</b></button>`:"")+(Object.keys(S.patients).length?`<div class="stats" style="margin-bottom:12px"><div class="stat"><div class="k">عدد الملفات</div><div class="v num">${Object.keys(S.patients).length}</div></div><div class="stat"><div class="k">إجمالي اللي على الحالات</div><div class="v money">${money(owe)}</div></div></div>`:"")+
   (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${p.payer&&payerById(p.payer)?`<span class="chip c-acc">${esc(payerById(p.payer).name)}</span>`:balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${(n=>n?`خلص ${n} جلسة`:"")(doneCount(p))}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
   :`<div class="empty"><b>${q?"مفيش مريض بالاسم ده":"لسه مفيش ملفات مرضى"}</b>${q?"جرب جزء من الاسم أو رقم الموبايل.":"اضغط «+ مريض جديد» واملا شيت الكشف، وصوّر الورقة كمان عشان لو ضاعت."}</div>`);
 }
@@ -2911,7 +2935,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -3084,6 +3108,9 @@ document.addEventListener("click",async e=>{
     case "statList":statSheet(t.dataset.k);break;
     case "mStat":monthStat(t.dataset.k,t.dataset.m);break;
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
+    case "debts":sheetDebts();break;
+    case "debtSort":S.ui.debtSort=id;sheetDebts();break;
+    case "debtRemind":S.db.doc("patients/"+id).update({debtRemindAt:Date.now(),debtRemindBy:S.mySid}).catch(()=>{});if(S.patients[id])S.patients[id].debtRemindAt=Date.now();setTimeout(sheetDebts,400);break;
     case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
     case "newPayerType":sheetPayerType(null);break;
     case "editPayerType":sheetPayerType(id);break;
