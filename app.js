@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="8 نوفمبر · 100";
+const APP_VERSION="9 نوفمبر · 101";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -541,6 +541,26 @@ function sheetDebts(){const sort=S.ui.debtSort||"amt";let R=debtRows();if(sort==
   openSheet(`عليهم فلوس (${R.length}) · ${sum(R)}`,`<div class="seg" style="margin-bottom:8px">${[["amt","الأكبر مبلغ"],["old","الأقدم"],["big","فوق 1000"]].map(([k,l])=>`<label><input type="radio" name="dsort" data-act="debtSort" data-id="${k}" ${sort===k?"checked":""}> ${l}</label>`).join("")}</div>
   <h3 style="margin:6px 0">🔴 متأخرين (${late.length}) · ${sum(late)}</h3><p class="sub" style="margin:0 0 6px">خلصوا الباكدج أو بقالهم أكتر من أسبوعين مجوش. دول اللي لازم نكلمهم.</p><div class="list">${late.map(row).join("")||`<p class="sub">مفيش 👌</p>`}</div>
   <h3 style="margin:12px 0 6px">🟡 لسه بيجوا (${on.length}) · ${sum(on)}</h3><p class="sub" style="margin:0 0 6px">عليهم باقي الباكدج وهما لسه بيحضروا، فطبيعي يدفعوا في الجلسات الجاية.</p><div class="list">${on.map(row).join("")||`<p class="sub">مفيش</p>`}</div>`)}
+/* patients who went quiet: sessions left but no visit, finished and didn't renew, or examined and never started */
+function lostRows(){const now=dnum(today()),t=today();const fut=new Set(Object.values(S.appts).filter(a=>a.date>=t&&!["cancelled","noshow"].includes(a.status)).map(a=>a.patientId));
+  const out=[];for(const p of Object.values(S.patients)){if(p.payer||fut.has(p.id))continue;if(p.lostOff&&(!p.last||p.last<=p.lostOff))continue; /* hidden as "won't come back" until he shows up again */
+    const idle=p.last?now-dnum(p.last):null,packs=p.packs||[];const open=packs.filter(k=>(k.used||0)<k.sessions&&!k.refund);
+    if(open.length&&p.last&&idle>=14){out.push({p,why:"left",idle,left:open.reduce((a,k)=>a+k.sessions-(k.used||0),0)});continue}
+    if(!open.length&&packs.length&&p.last&&idle>=7&&idle<=90){out.push({p,why:"done",idle});continue}
+    if(!num(p.count)&&!open.length&&p.examDate&&now-dnum(p.examDate)>=3&&now-dnum(p.examDate)<=60)out.push({p,why:"exam",idle:now-dnum(p.examDate)})}
+  return out.sort((a,b)=>({left:0,exam:1,done:2}[a.why]-{left:0,exam:1,done:2}[b.why])||a.idle-b.idle)}
+function lostMsg(r){const p=r.p,first=(p.name||"").trim().split(/\s+/)[0];const t=p.gender==="أنثى"?`أستاذة ${first}`:p.gender==="ذكر"?`أستاذ ${first}`:"يا فندم";
+  return r.why==="left"?`أهلًا ${t}، وحشتنا في Stride Clinic 🙏 لسه فاضل لحضرتك ${r.left} ${r.left>10||r.left<3?"جلسة":"جلسات"} في الباكدج. تحب نحجزلك ميعاد الأسبوع ده؟`
+   :r.why==="exam"?`أهلًا ${t}، بنطمن على حضرتك بعد الكشف في Stride Clinic 🙏 تحب نحجزلك أول جلسة علاج؟`
+   :`أهلًا ${t}، بنطمن على حضرتك بعد ما خلصت جلساتك في Stride Clinic 🙏 نتمنى تكون أحسن. لو محتاج متابعة أو جلسات تانية نحجزلك على طول.`}
+function sheetLost(){const R=lostRows();const grp=[["left","🔴 فاضلهم جلسات ومبقوش يجوا","عندهم جلسات مدفوعة في الباكدج ومجوش من أسبوعين أو أكتر، ومفيش ليهم حجز."],["exam","🟠 كشفوا ومبدأوش","عملوا كشف ومحجزوش ولا جلسة."],["done","🟡 خلصوا ومجددوش","خلصوا الباكدج من أسبوع لـ3 شهور ومفيش ليهم حجز جديد."]];
+  const days=n=>n===0?"النهارده":n===1?"امبارح":`من ${n} يوم`;
+  const row=r=>{const wn=waNumber(r.p.phone)||waNumber(r.p.phone2),rem=r.p.lostRemindAt,fresh=rem&&Date.now()-rem<5*864e5;
+    return `<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t"><b>${esc(r.p.name)}</b></span><span class="end">${patBalChip(r.p.id)}</span>
+    <span class="m" style="grid-column:1/-1">${r.why==="left"?`فاضل ${r.left} · `:""}${r.why==="exam"?`كشف ${days(r.idle)}`:`آخر جلسة ${days(r.idle)}`}${r.p.phone?` · ${esc(r.p.phone)}`:""}${rem?` · <b>اتكلم ${esc(dmy(new Date(rem).toISOString().slice(0,10)))}</b>`:""}</span>
+    <span class="bar" style="grid-column:1/-1;margin:4px 0 0">${wn?`<a class="btn sm ${fresh?"":"teal"}" href="https://wa.me/${wn}?text=${encodeURIComponent(lostMsg(r))}" target="_blank" rel="noopener" data-act="lostRemind" data-id="${r.p.id}">${fresh?"اتبعت ✓":"واتساب"}</a>`:`<span class="chip c-mute">مفيش موبايل</span>`}<button class="btn sm" data-act="lostBook" data-id="${r.p.id}">احجزله</button><button class="btn sm" data-act="openPatient" data-id="${r.p.id}">افتح الملف</button><button class="btn sm ghost" data-act="lostOff" data-id="${r.p.id}" data-confirm>مش هيرجع</button></span></div>`};
+  openSheet(`اختفوا (${R.length})`,grp.map(([k,h,d])=>{const L=R.filter(r=>r.why===k);return `<h3 style="margin:10px 0 4px">${h} (${L.length})</h3><p class="sub" style="margin:0 0 6px">${d}</p><div class="list">${L.map(row).join("")||`<p class="sub">مفيش 👌</p>`}</div>`}).join("")+
+  `<p class="sub">«مش هيرجع» بيشيله من اللستة، ولو رجع وعمل جلسة تاني بيرجع يتحسب عادي.</p>`)}
 function renderPatientList(){
   const el=document.getElementById("plist");if(!el)return;
   const q=nd(S.ui.q).trim();const b=balances();
@@ -548,8 +568,8 @@ function renderPatientList(){
   const owe=Object.values(b).reduce((s,x)=>s+Math.max(0,x.charged-x.paid),0);
   const pyEl=document.getElementById("payerBox");if(pyEl)pyEl.innerHTML=payersPanel();
   const shown=ps.slice(0,200);
-  const dr=isAdmin()?debtRows():[];
-  el.innerHTML=(dr.length?`<button class="btn" data-act="debts" style="width:100%;margin-bottom:10px;justify-content:space-between;display:flex"><span>💰 عليهم فلوس (${dr.length})${dr.some(r=>r.late)?` · <b style="color:var(--bad)">${dr.filter(r=>r.late).length} متأخرين</b>`:""}</span><b>${money(dr.reduce((t,r)=>t+r.due,0))} ›</b></button>`:"")+(Object.keys(S.patients).length?`<div class="stats" style="margin-bottom:12px"><div class="stat"><div class="k">عدد الملفات</div><div class="v num">${Object.keys(S.patients).length}</div></div><div class="stat"><div class="k">إجمالي اللي على الحالات</div><div class="v money">${money(owe)}</div></div></div>`:"")+
+  const dr=isAdmin()?debtRows():[],lr=isAdmin()?lostRows():[];
+  el.innerHTML=(dr.length?`<button class="btn" data-act="debts" style="width:100%;margin-bottom:10px;justify-content:space-between;display:flex"><span>💰 عليهم فلوس (${dr.length})${dr.some(r=>r.late)?` · <b style="color:var(--bad)">${dr.filter(r=>r.late).length} متأخرين</b>`:""}</span><b>${money(dr.reduce((t,r)=>t+r.due,0))} ›</b></button>`:"")+(lr.length?`<button class="btn" data-act="lost" style="width:100%;margin-bottom:10px;justify-content:space-between;display:flex"><span>📞 اختفوا (${lr.length})${lr.some(r=>r.why==="left")?` · <b style="color:var(--bad)">${lr.filter(r=>r.why==="left").length} فاضلهم جلسات</b>`:""}</span><b>›</b></button>`:"")+(Object.keys(S.patients).length?`<div class="stats" style="margin-bottom:12px"><div class="stat"><div class="k">عدد الملفات</div><div class="v num">${Object.keys(S.patients).length}</div></div><div class="stat"><div class="k">إجمالي اللي على الحالات</div><div class="v money">${money(owe)}</div></div></div>`:"")+
   (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${p.payer&&payerById(p.payer)?`<span class="chip c-acc">${esc(payerById(p.payer).name)}</span>`:balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${(n=>n?`خلص ${n} جلسة`:"")(doneCount(p))}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
   :`<div class="empty"><b>${q?"مفيش مريض بالاسم ده":"لسه مفيش ملفات مرضى"}</b>${q?"جرب جزء من الاسم أو رقم الموبايل.":"اضغط «+ مريض جديد» واملا شيت الكشف، وصوّر الورقة كمان عشان لو ضاعت."}</div>`);
 }
@@ -1878,8 +1898,8 @@ function vMyAppts(){
   ${list.length?`<div class="list">${list.map(a=>apptRow(a,"doctor",apptDocs(a).length>1)).join("")}</div>`:all.length?"":`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}
   ${cancelledList(all,"doctor")}`;
 }
-function sheetAppt(id){
-  const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session"};if(!a)return;apptWarned=false;apptDupWarned=false;
+function sheetAppt(id,pid){
+  const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session",...(pid?{patientId:pid}:{})};if(!a)return;apptWarned=false;apptDupWarned=false;
   const cur=a.patientId&&S.patients[a.patientId]?pLabel(S.patients[a.patientId]):(a.patientName||"");
   const docOpts=sel=>workerOpts().map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
   const ds=apptDocs(a);
@@ -2935,7 +2955,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -3109,6 +3129,10 @@ document.addEventListener("click",async e=>{
     case "mStat":monthStat(t.dataset.k,t.dataset.m);break;
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "debts":sheetDebts();break;
+    case "lost":sheetLost();break;
+    case "lostRemind":S.db.doc("patients/"+id).update({lostRemindAt:Date.now()}).catch(()=>{});if(S.patients[id])S.patients[id].lostRemindAt=Date.now();setTimeout(sheetLost,400);break;
+    case "lostBook":closeSheet();setTimeout(()=>sheetAppt(null,id),250);break;
+    case "lostOff":guard(t,async()=>{await S.db.doc("patients/"+id).update({lostOff:today()});if(S.patients[id])S.patients[id].lostOff=today();audit("patient","شيله من «اختفوا»",{target:S.patients[id]?.name});sheetLost()});break;
     case "debtSort":S.ui.debtSort=id;sheetDebts();break;
     case "debtRemind":S.db.doc("patients/"+id).update({debtRemindAt:Date.now(),debtRemindBy:S.mySid}).catch(()=>{});if(S.patients[id])S.patients[id].debtRemindAt=Date.now();setTimeout(sheetDebts,400);break;
     case "remind":S.db.doc("appts/"+id).update({remindedAt:Date.now(),remindedBy:S.mySid}).catch(()=>{});break;
