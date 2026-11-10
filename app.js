@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="9 نوفمبر · 101";
+const APP_VERSION="10 نوفمبر · 102";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -542,6 +542,45 @@ function sheetDebts(){const sort=S.ui.debtSort||"amt";let R=debtRows();if(sort==
   <h3 style="margin:6px 0">🔴 متأخرين (${late.length}) · ${sum(late)}</h3><p class="sub" style="margin:0 0 6px">خلصوا الباكدج أو بقالهم أكتر من أسبوعين مجوش. دول اللي لازم نكلمهم.</p><div class="list">${late.map(row).join("")||`<p class="sub">مفيش 👌</p>`}</div>
   <h3 style="margin:12px 0 6px">🟡 لسه بيجوا (${on.length}) · ${sum(on)}</h3><p class="sub" style="margin:0 0 6px">عليهم باقي الباكدج وهما لسه بيحضروا، فطبيعي يدفعوا في الجلسات الجاية.</p><div class="list">${on.map(row).join("")||`<p class="sub">مفيش</p>`}</div>`)}
 /* patients who went quiet: sessions left but no visit, finished and didn't renew, or examined and never started */
+/* treatment program: written in the patient's file, the treating doctor reads it, adds or removes items, and leaves comments */
+const PLAN_QUICK=["TENS","Ultrasound","TECAR","Shockwave","Hot pack","Ice","Laser","Interferential","Traction","Manual therapy","Mobilization","Stretching","Strengthening","Core","Balance","Gait training","Kinesio tape","Dry needling","Cupping","Massage"];
+let PL=null;
+function meName(){return S.mySid?staffName(S.mySid):S.role==="owner"?"د. محي":"—"}
+function fmtAt(t){if(!t)return "";const d=new Date(t),ds=d.toISOString().slice(0,10);return `${dmy(ds)} ${d.toLocaleTimeString("ar-EG-u-nu-latn",{hour:"numeric",minute:"2-digit"})}`}
+async function sheetPlan(pid,name){openSheet("البرنامج العلاجي",`<div class="empty"><b>بيحمّل…</b></div>`);
+  let d={};try{const x=await S.db.doc("plans/"+pid).get();d=x.exists?x.data():{}}catch(e){d={}}
+  PL={pid,name:d.name||S.patients[pid]?.name||name||"",orig:JSON.parse(JSON.stringify(d.items||[])),items:JSON.parse(JSON.stringify(d.items||[])),d};drawPlan()}
+function planItemsHtml(){return PL.items.length?PL.items.map((it,i)=>`<div class="grid2" style="grid-template-columns:1fr 120px auto;gap:6px;align-items:end;margin-bottom:6px">
+  <label class="f" style="margin:0">${i===0?"الحاجة":""}<input data-pl="t" data-i="${i}" value="${esc(it.t||"")}"></label><label class="f" style="margin:0">${i===0?"التفاصيل":""}<input data-pl="d" data-i="${i}" value="${esc(it.d||"")}" placeholder="10 د / 3×10"></label>
+  <button class="btn sm ghost" data-act="planDel" data-id="${i}" aria-label="شيل" style="color:var(--bad)">✕</button></div>`).join(""):`<p class="sub">لسه مفيش حاجة في البرنامج. زوّد من تحت.</p>`}
+function drawPlan(){const d=PL.d,cm=d.comments||[],ch=(d.changes||[]).slice(-15).reverse();
+  openSheet(`البرنامج · ${PL.name}`,`${d.updatedAt?`<p class="sub" style="margin:0">آخر تعديل: ${esc(d.updatedName||"")} · ${esc(fmtAt(d.updatedAt))}</p>`:""}
+  <label class="f">التشخيص والهدف<textarea id="pl_goal" rows="2" placeholder="مثلًا: Lt knee OA · الهدف يمشي من غير ألم">${esc(d.goal||"")}</textarea></label>
+  <h3 style="margin:8px 0 4px">البرنامج</h3><div id="pl_items">${planItemsHtml()}</div>
+  <div class="bar" style="flex-wrap:wrap;gap:6px;margin:6px 0">${PLAN_QUICK.map(q=>`<button class="btn sm" data-act="planQuick" data-id="${esc(q)}">+ ${esc(q)}</button>`).join("")}<button class="btn sm teal" data-act="planAdd">+ حاجة تانية</button></div>
+  <label class="f">ملاحظات البرنامج<textarea id="pl_note" rows="2" placeholder="مثلًا: ممنوع حرارة · يزوّد الوزن كل أسبوع">${esc(d.note||"")}</textarea></label>
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="planSave">حفظ البرنامج</button>
+  <h3 style="margin:16px 0 4px">الكومنتات (${cm.length})</h3>
+  <div class="list">${cm.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t"><b>${esc(c.name||"")}</b> <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m" style="white-space:pre-wrap">${esc(c.text)}</span></div>`).join("")||`<p class="sub">مفيش كومنتات لسه.</p>`}</div>
+  <label class="f">اكتب كومنت<textarea id="pl_c" rows="2" placeholder="مثلًا: العيان اتحسن في الثني، زودت التقوية"></textarea></label><button class="btn teal" data-act="planComment">ابعت الكومنت</button>
+  ${ch.length?`<details style="margin-top:12px"><summary style="cursor:pointer" class="sub">التعديلات اللي حصلت (${(d.changes||[]).length})</summary><div class="list">${ch.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t">${esc(c.name)} <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m">${esc(c.what)}</span></div>`).join("")}</div></details>`:""}`,
+  ()=>{document.getElementById("pl_items").addEventListener("input",e=>{const x=e.target;if(x.dataset.pl&&PL.items[x.dataset.i])PL.items[x.dataset.i][x.dataset.pl]=x.value})})}
+function planRedrawItems(){document.getElementById("pl_items").innerHTML=planItemsHtml()}
+function planDiff(a,b){const key=x=>(x.t||"").trim();const A=new Map(a.map(x=>[x.id,x])),B=new Map(b.map(x=>[x.id,x]));const out=[];
+  for(const x of b)if(key(x)&&!A.has(x.id))out.push(`زوّد ${key(x)}${x.d?` (${x.d})`:""}`);
+  for(const x of a)if(!B.has(x.id)||!key(B.get(x.id)))out.push(`شال ${key(x)}`);
+  for(const x of b){const o=A.get(x.id);if(o&&key(x)&&(key(o)!==key(x)||(o.d||"")!==(x.d||"")))out.push(`عدّل ${key(o)}${o.d?` (${o.d})`:""} ← ${key(x)}${x.d?` (${x.d})`:""}`)}
+  return out}
+async function planSave(){const items=PL.items.map(x=>({...x,t:(x.t||"").trim(),d:(x.d||"").trim()})).filter(x=>x.t);const goal=val("pl_goal").trim(),note=val("pl_note").trim();
+  const diff=planDiff(PL.orig,items);if((PL.d.goal||"")!==goal)diff.push("عدّل التشخيص والهدف");if((PL.d.note||"")!==note)diff.push("عدّل الملاحظات");
+  if(!diff.length)return setErr("مفيش حاجة اتغيرت");
+  const me=meName(),at=Date.now();const ch={by:S.mySid||S.role,name:me,at,what:diff.join(" · ")};
+  await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,goal,note,items,updatedAt:at,updatedBy:S.mySid||S.role,updatedName:me,...(PL.d.createdAt?{}:{createdAt:at,createdName:me}),changes:firebase.firestore.FieldValue.arrayUnion(ch)},{merge:true});
+  if(S.role!=="owner")alertOwner(`${me} عدّل البرنامج`,`${PL.name}: ${diff.length} تعديل`,3);
+  toast("البرنامج اتحفظ");sheetPlan(PL.pid,PL.name)}
+async function planComment(){const text=val("pl_c").trim();if(!text)return setErr("اكتب الكومنت الأول");const me=meName();
+  await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,comments:firebase.firestore.FieldValue.arrayUnion({id:randId(),by:S.mySid||S.role,name:me,at:Date.now(),text}),lastCommentAt:Date.now()},{merge:true});
+  if(S.role!=="owner")alertOwner(`كومنت جديد من ${me}`,`على برنامج ${PL.name}`,3);toast("الكومنت اتبعت");sheetPlan(PL.pid,PL.name)}
 function lostRows(){const now=dnum(today()),t=today();const fut=new Set(Object.values(S.appts).filter(a=>a.date>=t&&!["cancelled","noshow"].includes(a.status)).map(a=>a.patientId));
   const out=[];for(const p of Object.values(S.patients)){if(p.payer||fut.has(p.id))continue;if(p.lostOff&&(!p.last||p.last<=p.lostOff))continue; /* hidden as "won't come back" until he shows up again */
     const idle=p.last?now-dnum(p.last):null,packs=p.packs||[];const open=packs.filter(k=>(k.used||0)<k.sessions&&!k.refund);
@@ -1867,7 +1906,7 @@ function cancelledList(list,view){ // cancelled / no-show at the end, so the day
   return `<h3 style="font-size:14px;margin:14px 0 6px">اتلغوا أو محضروش (${off.length})</h3><div class="list">${off.map(a=>`<div class="row stack" style="cursor:default;opacity:.85"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} <span class="chip ${a.status==="noshow"?"c-warn":"c-bad"}">${esc(cancelWho(a))}</span></span>
     <span class="end bar">${view==="admin"?`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`:""}</span><span class="m">${esc([kindOf(a),apptDocs(a).length>1||view==="admin"?apptDocs(a).map(staffName).join(" + "):""].filter(Boolean).join(" · "))}</span><span></span></div>`).join("")}</div>`}
 function apptRow(a,view,showDoc){
-  const doctorBtns=a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"";
+  const doctorBtns=(a.patientId?`<button class="btn sm" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">البرنامج</button>`:"")+(a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"");
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
@@ -2601,6 +2640,7 @@ function sheetPatient(id){
   ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b||doneCount(p)?`خلص ${doneCount(p)} جلسة من الأول${p.exams?` + ${p.exams>1?p.exams+" كشف":"الكشف"}`:""} · إجمالي ${money(b?.charged||0)} · دفع ${money(b?.paid||0)}`:""}</span></div>
   <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm teal" data-act="newInvoice" data-id="${id}">فاتورة جلسات</button><button class="btn sm teal" data-act="newReport" data-id="${id}">تقرير</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
+  <button class="btn" data-act="plan" data-id="${id}" style="width:100%;display:flex;justify-content:space-between"><span>📋 البرنامج العلاجي</span><b>›</b></button>
   ${isAdmin()?`<div id="pt_acct"></div>`:""}${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
   <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("phone2","موبايل تاني (اختياري)","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
   <label class="f">النوع<select id="pt_gender"><option value="">—</option><option ${p.gender==="ذكر"?"selected":""}>ذكر</option><option ${p.gender==="أنثى"?"selected":""}>أنثى</option></select></label>
@@ -3130,6 +3170,12 @@ document.addEventListener("click",async e=>{
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "debts":sheetDebts();break;
     case "lost":sheetLost();break;
+    case "plan":sheetPlan(id,t.dataset.name);break;
+    case "planAdd":PL.items.push({id:randId(),t:"",d:""});planRedrawItems();document.querySelector(`#pl_items [data-i="${PL.items.length-1}"]`)?.focus();break;
+    case "planQuick":if(!PL.items.some(x=>(x.t||"").trim()===id)){PL.items.push({id:randId(),t:id,d:""});planRedrawItems()}else toast("موجودة في البرنامج");break;
+    case "planDel":PL.items.splice(+id,1);planRedrawItems();break;
+    case "planSave":guard(t,planSave);break;
+    case "planComment":guard(t,planComment);break;
     case "lostRemind":S.db.doc("patients/"+id).update({lostRemindAt:Date.now()}).catch(()=>{});if(S.patients[id])S.patients[id].lostRemindAt=Date.now();setTimeout(sheetLost,400);break;
     case "lostBook":closeSheet();setTimeout(()=>sheetAppt(null,id),250);break;
     case "lostOff":guard(t,async()=>{await S.db.doc("patients/"+id).update({lostOff:today()});if(S.patients[id])S.patients[id].lostOff=today();audit("patient","شيله من «اختفوا»",{target:S.patients[id]?.name});sheetLost()});break;

@@ -66,6 +66,8 @@ service cloud.firestore {
     match /staff/{sid}  { allow read: if isStaff(); allow write: if isAdmin(); }
     match /pub/{doc}    { allow read: if isStaff(); allow write: if isOwner() || (isAdmin() && doc == 'types'); }
     match /pdir/{pid}   { allow read: if isStaff(); allow write: if isAdmin(); }
+    // treatment program: every doctor can read it, edit it and comment; only the owner and Reham can delete it
+    match /plans/{pid}  { allow read, create, update: if isStaff(); allow delete: if isAdmin(); }
 
     // ---- owner + Reham only ----
     match /cfg/{doc}        { allow read, write: if isAdmin(); }
