@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="10 نوفمبر · 102";
+const APP_VERSION="10 نوفمبر · 103";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -543,44 +543,96 @@ function sheetDebts(){const sort=S.ui.debtSort||"amt";let R=debtRows();if(sort==
   <h3 style="margin:12px 0 6px">🟡 لسه بيجوا (${on.length}) · ${sum(on)}</h3><p class="sub" style="margin:0 0 6px">عليهم باقي الباكدج وهما لسه بيحضروا، فطبيعي يدفعوا في الجلسات الجاية.</p><div class="list">${on.map(row).join("")||`<p class="sub">مفيش</p>`}</div>`)}
 /* patients who went quiet: sessions left but no visit, finished and didn't renew, or examined and never started */
 /* treatment program: written in the patient's file, the treating doctor reads it, adds or removes items, and leaves comments */
-const PLAN_QUICK=["TENS","Ultrasound","TECAR","Shockwave","Hot pack","Ice","Laser","Interferential","Traction","Manual therapy","Mobilization","Stretching","Strengthening","Core","Balance","Gait training","Kinesio tape","Dry needling","Cupping","Massage"];
+/* treatment program = the clinic's paper "Program Sheet": the same boxes, sides and progress columns, plus the Progress Note and comments.
+   "|RL" = side Rt/Lt, "|T" = a short detail (grade, direction, …×…) */
+const PF={
+  up:{title:"Cervical / TMJ / Shoulder / Elbow / Wrist",
+    str:["SCM|RL","Scalenes (Ant.-Med.-Post.)|RL","Suboccipital","Paraspinal Cervical","Upper Trap|RL","Serratus Anterior|RL","Levator Scapula|RL","Rhomboids|RL","Infraspinatus / Teres Major- Minor|RL","Pectoralis Major / Minor|RL","Latissimus Dorsi|RL","Arm|RL","Biceps|RL","Deltoid|RL","Triceps|RL","Common Extensor Origin|RL","Common Flexor Origin|RL","Intraoral","Extraoral (Supra/infra hyoid)"],
+    stretch:["SCM|RL","Levator Scapula|RL","Scalenes (Ant.-Med.-Post.)|RL","Pectoralis Major (S/C)|RL","Upper Trap|RL","Pectoralis Minor|RL","Posterior Capsule (Shoulder)"],
+    mob:["Mulligan (SNAG/RNAG)|T","Maitland Thoracic (…×…)|T","Maitland Shoulder (Post. / Infer. / Ant.)|T","SC joint (post. / Infer.)|T","Humeroradial (D/V) (…×…)|T","Proximal Radioulnar (D/V) (…×…)|T","Distal Radioulnar (D/V) (…×…)|T","Radiocarpal Joint (D/V/R/U)|T","Carpometacarpal Glides (Thumb) (D/V/R/U)|T","Metacarpophalangeal & Interphalangeal (D/V/R/U)|T","TMJ Inferior|RL","TMJ Anterior|RL","TMJ Anteriomedial"],
+    neuro:["Median Nerve|RL","Ulnar Nerve|RL","Radial Nerve|RL"],
+    ex:[["Cervical",["Flexors Endurance","Extensors Endurance","Cool's Extension","Cool's Abduction"]],["",["Thoracic Mobility","Breathing ex"]],["TMJ",["Opening","Closing","Lateral Deviation (Rt/Lt)"]],["Shoulder",["Cool's External Rot.","Cool's Forward Flex.","Upper Trap","Serratus Anterior"]],["Elbow",["Elbow Flexion","Elbow Extension","Supination/ Pronation"]],["Wrist",["Wrist Flexion","Wrist Extension","Deviation (U/R)","Fingers","Tendon Glide"]],["",["Proprioception (Cervical / Shoulder / wrist)"]]]},
+  low:{title:"Lumbar / Hip / Knee / Ankle",
+    str:["Paraspinal","QL|RL","Gluteus|RL","Hamstrings|RL","Quadriceps|RL","Adductors|RL","Calf|RL","Tibialis Posterior|RL","Tibialis Anterior|RL","Peroneal|RL","Planter fascia|RL"],
+    stretch:["Hamstrings|RL","Rectus Femoris|RL","Piriformis|RL","Calf|RL"],
+    mob:["Mulligan Lumbar|T","Hip (Post.)|RL","Hip Mulligan|RL","Knee (Post. / Ant.)|RL","knee Mulligan|RL","Patella|RL","Talocrural (D/V)|RL","Subtalar (M/L)|RL","Ankle Mulligan|RL"],
+    neuro:["Sciatic|RL","Femoral|RL"],
+    ex:[["Lumbar",["Multifidus Activation","TA Activation","Curl ups","Bridges","Plank","Side Plank","SLR Abduction","SLR Extension"]],["Hip",["SLR Flexion","Thigh Thrust","External / Internal"]],["Knee",["Quad Sets","Terminal Knee Ext.","Hamstrings Sets","Leg Extension","Hamstring Curl","Leg Press"]],["Ankle",["Calf Raises / Soles","Dorsi / Planter","Eversion / Inversion","Big Toe Flexion","Dooming"]],["Functional",["Squats","Lunges","Balance / Proprioception","Agility"]]]},
+  agents:["Hot Pack","ES (TENS-IF-NEMS)","Us/Phonophoresis","Ice pack"]};
+const PF_CATS=[["str","Soft Tissue Release"],["stretch","Stretches"],["mob","Mobilization"],["neuro","Neurodynamic"]];
+function pfItems(){const o={};for(const r of ["up","low"]){for(const [c] of PF_CATS)for(const x of PF[r][c]){const [n,m]=x.split("|");o[`${r}.${c}.${n}`]={n,m,r,c}}
+  for(const [g,L] of PF[r].ex)for(const n of L)o[`${r}.ex.${g}.${n}`]={n,r,c:"ex",g}}
+  for(const n of PF.agents)o[`ag.${n}`]={n,c:"ag"};return o}
+const PFI=pfItems();
 let PL=null;
 function meName(){return S.mySid?staffName(S.mySid):S.role==="owner"?"د. محي":"—"}
 function fmtAt(t){if(!t)return "";const d=new Date(t),ds=d.toISOString().slice(0,10);return `${dmy(ds)} ${d.toLocaleTimeString("ar-EG-u-nu-latn",{hour:"numeric",minute:"2-digit"})}`}
-async function sheetPlan(pid,name){openSheet("البرنامج العلاجي",`<div class="empty"><b>بيحمّل…</b></div>`);
+function pfBlank(){return{sel:{},goals:["","","",""],notes:[],dx:"",other:""}}
+async function sheetPlan(pid,name){openSheet("البرنامج",`<div class="empty"><b>بيحمّل…</b></div>`);
   let d={};try{const x=await S.db.doc("plans/"+pid).get();d=x.exists?x.data():{}}catch(e){d={}}
-  PL={pid,name:d.name||S.patients[pid]?.name||name||"",orig:JSON.parse(JSON.stringify(d.items||[])),items:JSON.parse(JSON.stringify(d.items||[])),d};drawPlan()}
-function planItemsHtml(){return PL.items.length?PL.items.map((it,i)=>`<div class="grid2" style="grid-template-columns:1fr 120px auto;gap:6px;align-items:end;margin-bottom:6px">
-  <label class="f" style="margin:0">${i===0?"الحاجة":""}<input data-pl="t" data-i="${i}" value="${esc(it.t||"")}"></label><label class="f" style="margin:0">${i===0?"التفاصيل":""}<input data-pl="d" data-i="${i}" value="${esc(it.d||"")}" placeholder="10 د / 3×10"></label>
-  <button class="btn sm ghost" data-act="planDel" data-id="${i}" aria-label="شيل" style="color:var(--bad)">✕</button></div>`).join(""):`<p class="sub">لسه مفيش حاجة في البرنامج. زوّد من تحت.</p>`}
-function drawPlan(){const d=PL.d,cm=d.comments||[],ch=(d.changes||[]).slice(-15).reverse();
-  openSheet(`البرنامج · ${PL.name}`,`${d.updatedAt?`<p class="sub" style="margin:0">آخر تعديل: ${esc(d.updatedName||"")} · ${esc(fmtAt(d.updatedAt))}</p>`:""}
-  <label class="f">التشخيص والهدف<textarea id="pl_goal" rows="2" placeholder="مثلًا: Lt knee OA · الهدف يمشي من غير ألم">${esc(d.goal||"")}</textarea></label>
-  <h3 style="margin:8px 0 4px">البرنامج</h3><div id="pl_items">${planItemsHtml()}</div>
-  <div class="bar" style="flex-wrap:wrap;gap:6px;margin:6px 0">${PLAN_QUICK.map(q=>`<button class="btn sm" data-act="planQuick" data-id="${esc(q)}">+ ${esc(q)}</button>`).join("")}<button class="btn sm teal" data-act="planAdd">+ حاجة تانية</button></div>
-  <label class="f">ملاحظات البرنامج<textarea id="pl_note" rows="2" placeholder="مثلًا: ممنوع حرارة · يزوّد الوزن كل أسبوع">${esc(d.note||"")}</textarea></label>
-  <div class="err" id="formErr"></div><button class="btn primary" data-act="planSave">حفظ البرنامج</button>
-  <h3 style="margin:16px 0 4px">الكومنتات (${cm.length})</h3>
-  <div class="list">${cm.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t"><b>${esc(c.name||"")}</b> <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m" style="white-space:pre-wrap">${esc(c.text)}</span></div>`).join("")||`<p class="sub">مفيش كومنتات لسه.</p>`}</div>
-  <label class="f">اكتب كومنت<textarea id="pl_c" rows="2" placeholder="مثلًا: العيان اتحسن في الثني، زودت التقوية"></textarea></label><button class="btn teal" data-act="planComment">ابعت الكومنت</button>
-  ${ch.length?`<details style="margin-top:12px"><summary style="cursor:pointer" class="sub">التعديلات اللي حصلت (${(d.changes||[]).length})</summary><div class="list">${ch.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t">${esc(c.name)} <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m">${esc(c.what)}</span></div>`).join("")}</div></details>`:""}`,
-  ()=>{document.getElementById("pl_items").addEventListener("input",e=>{const x=e.target;if(x.dataset.pl&&PL.items[x.dataset.i])PL.items[x.dataset.i][x.dataset.pl]=x.value})})}
-function planRedrawItems(){document.getElementById("pl_items").innerHTML=planItemsHtml()}
-function planDiff(a,b){const key=x=>(x.t||"").trim();const A=new Map(a.map(x=>[x.id,x])),B=new Map(b.map(x=>[x.id,x]));const out=[];
-  for(const x of b)if(key(x)&&!A.has(x.id))out.push(`زوّد ${key(x)}${x.d?` (${x.d})`:""}`);
-  for(const x of a)if(!B.has(x.id)||!key(B.get(x.id)))out.push(`شال ${key(x)}`);
-  for(const x of b){const o=A.get(x.id);if(o&&key(x)&&(key(o)!==key(x)||(o.d||"")!==(x.d||"")))out.push(`عدّل ${key(o)}${o.d?` (${o.d})`:""} ← ${key(x)}${x.d?` (${x.d})`:""}`)}
+  const s={...pfBlank(),...JSON.parse(JSON.stringify({sel:d.sel||{},goals:d.goals||["","","",""],notes:d.notes||[],dx:d.dx||d.goal||"",other:d.other||d.note||""}))};
+  const has=Object.values(s.sel).some(v=>v.on);
+  PL={pid,name:d.name||S.patients[pid]?.name||name||"",d,orig:JSON.parse(JSON.stringify(s)),s,tab:PL&&PL.pid===pid?PL.tab:(Object.keys(s.sel).some(k=>k.startsWith("low.")&&s.sel[k].on)&&!Object.keys(s.sel).some(k=>k.startsWith("up.")&&s.sel[k].on)?"low":"up"),edit:!has};drawPlan()}
+const pfE=s=>esc(s);
+function pfSideBtns(k,v){return ["Rt","Lt","Both"].map(x=>`<button class="btn sm ${v.side===x?"primary":""}" data-act="pfSide" data-id="${pfE(k)}" data-v="${x}">${x==="Both"?"Rt+Lt":x}</button>`).join("")}
+function pfLabel(k,v){const it=PFI[k];if(!it)return k;return `${it.n}${v?.side?` (${v.side==="Both"?"Rt+Lt":v.side})`:""}${v?.note?` · ${v.note}`:""}`}
+function pfCheck(k,label,extra){const v=PL.s.sel[k]||{};return `<div class="pf-it ${v.on?"on":""}"><label><input type="checkbox" data-pf="on" data-k="${pfE(k)}" ${v.on?"checked":""}> ${pfE(label)}</label>${v.on?extra(v):""}</div>`}
+function pfRegionEdit(r){const R=PF[r];let h="";
+  for(const [c,t] of PF_CATS){h+=`<h4>${t}</h4><div class="pf-grid">`+R[c].map(x=>{const [n,m]=x.split("|"),k=`${r}.${c}.${n}`;
+    return pfCheck(k,n,v=>m==="RL"?`<div class="bar pf-sub">${pfSideBtns(k,v)}</div>`:m==="T"?`<input class="pf-sub" data-pf="note" data-k="${pfE(k)}" value="${pfE(v.note||"")}" placeholder="grade / direction / …×…">`:"")}).join("")+`</div>`}
+  h+=`<h4>Exercise</h4>`;for(const [g,L] of R.ex){h+=g?`<div class="pf-g">${g}</div>`:"";h+=`<div class="pf-grid">`+L.map(n=>{const k=`${r}.ex.${g}.${n}`;
+    return pfCheck(k,n,v=>`<div class="pf-prog pf-sub">${[0,1,2,3].map(i=>`<input data-pf="p${i}" data-k="${pfE(k)}" value="${pfE((v.p||[])[i]||"")}" placeholder="Progress ${i+1}">`).join("")}</div>`)}).join("")+`</div>`}
+  return h}
+function pfAgentsEdit(){return `<h4>Physical Agents</h4><div class="pf-grid">`+PF.agents.map(n=>{const k=`ag.${n}`;return pfCheck(k,n,v=>`<div class="pf-prog pf-sub" style="grid-template-columns:1fr 1fr"><input data-pf="area" data-k="${pfE(k)}" value="${pfE(v.area||"")}" placeholder="Area"><input data-pf="time" data-k="${pfE(k)}" value="${pfE(v.time||"")}" placeholder="Time"></div>`)}).join("")+`</div>`}
+function pfRegionView(r){const R=PF[r],S_=PL.s.sel;let h="";
+  for(const [c,t] of PF_CATS){const L=R[c].map(x=>`${r}.${c}.${x.split("|")[0]}`).filter(k=>S_[k]?.on);if(L.length)h+=`<h4>${t}</h4><ul class="pf-ul">${L.map(k=>`<li>${pfE(pfLabel(k,S_[k]))}</li>`).join("")}</ul>`}
+  const ex=[];for(const [g,L] of R.ex)for(const n of L){const k=`${r}.ex.${g}.${n}`;if(S_[k]?.on)ex.push([g,n,S_[k]])}
+  if(ex.length)h+=`<h4>Exercise</h4><div class="pf-tbl"><table><tr><th>Exercise</th><th>Progress 1</th><th>Progress 2</th><th>Progress 3</th><th>Progress 4</th></tr>${ex.map(([g,n,v])=>`<tr><td>${g?`<span class="sub">${g}</span> `:""}${pfE(n)}</td>${[0,1,2,3].map(i=>`<td>${pfE((v.p||[])[i]||"")}</td>`).join("")}</tr>`).join("")}</table></div>`;
+  return h}
+function pfAgentsView(){const L=PF.agents.map(n=>`ag.${n}`).filter(k=>PL.s.sel[k]?.on);if(!L.length)return "";
+  return `<h4>Physical Agents</h4><div class="pf-tbl"><table><tr><th></th><th>Area</th><th>Time</th></tr>${L.map(k=>{const v=PL.s.sel[k];return `<tr><td>${pfE(PFI[k].n)}</td><td>${pfE(v.area||"")}</td><td>${pfE(v.time||"")}</td></tr>`}).join("")}</table></div>`}
+function pfProgress(){const s=PL.s;return `<div class="pf-goals">${[0,1,2,3].map(i=>`<label class="f">Goal ${i+1}<input data-pfg="${i}" value="${pfE(s.goals[i]||"")}" placeholder="مثلًا Pain / ROM flex / Walking"></label>`).join("")}</div>
+  <div class="list">${s.notes.map((r,i)=>`<div class="pf-note"><div class="sec-title" style="margin:0"><b>#${i+1}</b><input type="date" data-pfn="date" data-i="${i}" value="${pfE(r.date||"")}" style="width:auto"><span class="sub">${pfE(r.name||"")}</span></div>
+    <div class="pf-prog">${[0,1,2,3].map(j=>`<input data-pfn="g${j}" data-i="${i}" value="${pfE((r.g||[])[j]||"")}" placeholder="${pfE(s.goals[j]||`Goal ${j+1}`)}">`).join("")}</div>
+    <textarea data-pfn="note" data-i="${i}" rows="2" placeholder="Notes">${pfE(r.note||"")}</textarea></div>`).join("")||`<p class="sub">لسه مفيش Progress Note.</p>`}</div>
+  <button class="btn sm teal" data-act="pfNoteAdd">+ زوّد Progress Note النهارده</button>`}
+function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).slice(-15).reverse();const tab=PL.tab,cnt=r=>Object.keys(s.sel).filter(k=>k.startsWith(r+".")&&s.sel[k].on).length;
+  const tabs=[["up",`Upper (${cnt("up")})`],["low",`Lower (${cnt("low")})`],["prog",`Progress Note (${s.notes.length})`],["cm",`كومنتات (${cm.length})`]];
+  let body="";if(tab==="up"||tab==="low")body=(PL.edit?pfRegionEdit(tab)+pfAgentsEdit():(pfRegionView(tab)+pfAgentsView())||`<p class="sub">مفيش حاجة متعلّم عليها هنا. دوس «عدّل الفورم».</p>`);
+  else if(tab==="prog")body=pfProgress();
+  else body=`<div class="list">${cm.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t"><b>${esc(c.name||"")}</b> <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m" style="white-space:pre-wrap">${esc(c.text)}</span></div>`).join("")||`<p class="sub">مفيش كومنتات لسه.</p>`}</div>
+    <label class="f">اكتب كومنت<textarea id="pl_c" rows="3" placeholder="مثلًا: العيان اتحسن في الثني، زودت التقوية"></textarea></label><button class="btn teal" data-act="planComment">ابعت الكومنت</button>
+    ${ch.length?`<details style="margin-top:12px"><summary style="cursor:pointer" class="sub">التعديلات اللي حصلت (${(d.changes||[]).length})</summary><div class="list">${ch.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t">${esc(c.name)} <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m">${esc(c.what)}</span></div>`).join("")}</div></details>`:""}`;
+  const sh=document.querySelector("#sheetRoot .sheet"),sc=sh?.scrollTop||0,sc2=sh?.parentElement?.scrollTop||0,same=document.getElementById("pf_body")&&PL._t===tab;PL._t=tab;
+  openSheet(`البرنامج · ${PL.name}`,`<style>.pf h4{margin:12px 0 4px;padding:4px 8px;background:var(--line,#e6ebf3);border-radius:6px;font-size:14px}.pf .pf-g{font-weight:700;margin:6px 0 2px;color:var(--acc,#2b3f86)}.pf-grid{display:grid;gap:4px}.pf-it{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:6px 8px}.pf-it.on{border-color:var(--acc,#2b3f86);background:rgba(43,63,134,.06)}.pf-it label{display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600}.pf-it input[type=checkbox]{width:18px;height:18px}.pf-sub{margin-top:6px}.pf-prog{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}.pf-prog input,.pf-sub{min-width:0;font-size:13px;padding:6px}.pf-ul{margin:0;padding-inline-start:18px}.pf-tbl{overflow-x:auto}.pf-tbl table{border-collapse:collapse;width:100%;font-size:13px}.pf-tbl td,.pf-tbl th{border:1px solid var(--line,#d5dbe5);padding:4px 6px;text-align:start}.pf-goals{display:grid;grid-template-columns:1fr 1fr;gap:6px}.pf-note{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:8px;margin-bottom:6px;display:grid;gap:6px}@media(max-width:420px){.pf-prog{grid-template-columns:1fr 1fr}}</style>
+  ${d.updatedAt?`<p class="sub" style="margin:0">آخر تعديل: ${esc(d.updatedName||"")} · ${esc(fmtAt(d.updatedAt))}</p>`:""}
+  <label class="f">Diagnosis<input id="pl_dx" dir="ltr" value="${pfE(s.dx)}" ${PL.edit?"":"readonly"} placeholder="مثلًا Lt knee OA"></label>
+  <div class="seg" style="margin:6px 0;flex-wrap:wrap">${tabs.map(([k,l])=>`<button class="btn sm ${tab===k?"primary":""}" data-act="pfTab" data-id="${k}">${l}</button>`).join("")}</div>
+  <div class="pf" id="pf_body" dir="ltr" style="text-align:left">${body}</div>
+  ${tab==="up"||tab==="low"?`<label class="f">Other / ملاحظات<textarea id="pl_other" rows="2" ${PL.edit?"":"readonly"}>${pfE(s.other)}</textarea></label>`:""}
+  <div class="err" id="formErr"></div>
+  ${tab!=="cm"?`<div class="bar" style="position:sticky;bottom:0;background:var(--bg,#f4f7fb);padding:8px 0">${(tab==="up"||tab==="low")&&!PL.edit?`<button class="btn" data-act="pfEdit">عدّل الفورم</button>`:""}<button class="btn primary" data-act="planSave">حفظ</button>${PL.edit&&(tab==="up"||tab==="low")?`<button class="btn" data-act="pfView">اعرض المختار بس</button>`:""}</div>`:""}`,
+  root=>{if(same){root.scrollTop=sc;if(root.parentElement)root.parentElement.scrollTop=sc2}root.addEventListener("input",pfInput);root.addEventListener("change",pfInput)})}
+function pfInput(e){const x=e.target,s=PL.s;if(x.id==="pl_dx"){s.dx=x.value;return}if(x.id==="pl_other"){s.other=x.value;return}
+  if(x.dataset.pfg!=null){s.goals[+x.dataset.pfg]=x.value;return}
+  if(x.dataset.pfn){const r=s.notes[+x.dataset.i];if(!r)return;const f=x.dataset.pfn;if(f[0]==="g"&&f.length===2){r.g=r.g||["","","",""];r.g[+f[1]]=x.value}else r[f]=x.value;return}
+  const k=x.dataset.k,f=x.dataset.pf;if(!k||!f)return;const v=s.sel[k]=s.sel[k]||{};
+  if(f==="on"){if(e.type!=="change")return;v.on=x.checked;if(!x.checked){delete s.sel[k]}drawPlan();return}
+  if(f[0]==="p"&&f.length===2){v.p=v.p||["","","",""];v.p[+f[1]]=x.value}else v[f]=x.value}
+function pfDiff(a,b){const out=[],keys=new Set([...Object.keys(a.sel),...Object.keys(b.sel)]);
+  for(const k of keys){const o=a.sel[k],n=b.sel[k];const on1=!!o?.on,on2=!!n?.on;if(!on1&&on2)out.push(`زوّد ${pfLabel(k,n)}`);else if(on1&&!on2)out.push(`شال ${pfLabel(k,o)}`);
+    else if(on1&&on2){const f=v=>JSON.stringify([v.side||"",v.note||"",v.area||"",v.time||"",...(v.p||[]).map(x=>x||"")].join("|"));if(f(o)!==f(n)){const pi=[0,1,2,3].filter(i=>((o.p||[])[i]||"")!==((n.p||[])[i]||""));out.push(pi.length&&f({...o,p:[]})===f({...n,p:[]})?`${PFI[k]?.n||k}: Progress ${pi.map(i=>i+1).join("،")}`:`عدّل ${pfLabel(k,n)}`)}}}
+  if(a.dx!==b.dx)out.push("عدّل Diagnosis");if(a.other!==b.other)out.push("عدّل الملاحظات");if(JSON.stringify(a.goals)!==JSON.stringify(b.goals))out.push("عدّل الـGoals");
+  if(b.notes.length>a.notes.length)out.push(`زوّد Progress Note #${b.notes.length}`);else if(JSON.stringify(a.notes)!==JSON.stringify(b.notes))out.push("عدّل Progress Note");
   return out}
-async function planSave(){const items=PL.items.map(x=>({...x,t:(x.t||"").trim(),d:(x.d||"").trim()})).filter(x=>x.t);const goal=val("pl_goal").trim(),note=val("pl_note").trim();
-  const diff=planDiff(PL.orig,items);if((PL.d.goal||"")!==goal)diff.push("عدّل التشخيص والهدف");if((PL.d.note||"")!==note)diff.push("عدّل الملاحظات");
-  if(!diff.length)return setErr("مفيش حاجة اتغيرت");
-  const me=meName(),at=Date.now();const ch={by:S.mySid||S.role,name:me,at,what:diff.join(" · ")};
-  await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,goal,note,items,updatedAt:at,updatedBy:S.mySid||S.role,updatedName:me,...(PL.d.createdAt?{}:{createdAt:at,createdName:me}),changes:firebase.firestore.FieldValue.arrayUnion(ch)},{merge:true});
+async function planSave(){const s=PL.s;s.notes=s.notes.filter(r=>r.date||r.note||(r.g||[]).some(Boolean));const diff=pfDiff(PL.orig,s);if(!diff.length)return setErr("مفيش حاجة اتغيرت");
+  const me=meName(),at=Date.now(),ch={by:S.mySid||S.role,name:me,at,what:diff.slice(0,12).join(" · ")+(diff.length>12?` · و${diff.length-12} كمان`:"")};
+  await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,sel:s.sel,goals:s.goals,notes:s.notes,dx:s.dx,other:s.other,updatedAt:at,updatedBy:S.mySid||S.role,updatedName:me,...(PL.d.createdAt?{}:{createdAt:at,createdName:me}),changes:firebase.firestore.FieldValue.arrayUnion(ch)},{merge:true});
   if(S.role!=="owner")alertOwner(`${me} عدّل البرنامج`,`${PL.name}: ${diff.length} تعديل`,3);
-  toast("البرنامج اتحفظ");sheetPlan(PL.pid,PL.name)}
+  toast("البرنامج اتحفظ");await sheetPlan(PL.pid,PL.name)}
 async function planComment(){const text=val("pl_c").trim();if(!text)return setErr("اكتب الكومنت الأول");const me=meName();
   await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,comments:firebase.firestore.FieldValue.arrayUnion({id:randId(),by:S.mySid||S.role,name:me,at:Date.now(),text}),lastCommentAt:Date.now()},{merge:true});
-  if(S.role!=="owner")alertOwner(`كومنت جديد من ${me}`,`على برنامج ${PL.name}`,3);toast("الكومنت اتبعت");sheetPlan(PL.pid,PL.name)}
+  if(S.role!=="owner")alertOwner(`كومنت جديد من ${me}`,`على برنامج ${PL.name}`,3);toast("الكومنت اتبعت");await sheetPlan(PL.pid,PL.name)}
 function lostRows(){const now=dnum(today()),t=today();const fut=new Set(Object.values(S.appts).filter(a=>a.date>=t&&!["cancelled","noshow"].includes(a.status)).map(a=>a.patientId));
   const out=[];for(const p of Object.values(S.patients)){if(p.payer||fut.has(p.id))continue;if(p.lostOff&&(!p.last||p.last<=p.lostOff))continue; /* hidden as "won't come back" until he shows up again */
     const idle=p.last?now-dnum(p.last):null,packs=p.packs||[];const open=packs.filter(k=>(k.used||0)<k.sessions&&!k.refund);
@@ -3171,9 +3223,11 @@ document.addEventListener("click",async e=>{
     case "debts":sheetDebts();break;
     case "lost":sheetLost();break;
     case "plan":sheetPlan(id,t.dataset.name);break;
-    case "planAdd":PL.items.push({id:randId(),t:"",d:""});planRedrawItems();document.querySelector(`#pl_items [data-i="${PL.items.length-1}"]`)?.focus();break;
-    case "planQuick":if(!PL.items.some(x=>(x.t||"").trim()===id)){PL.items.push({id:randId(),t:id,d:""});planRedrawItems()}else toast("موجودة في البرنامج");break;
-    case "planDel":PL.items.splice(+id,1);planRedrawItems();break;
+    case "pfTab":PL.tab=id;drawPlan();break;
+    case "pfEdit":PL.edit=true;drawPlan();break;
+    case "pfView":PL.edit=false;drawPlan();break;
+    case "pfSide":{const v=PL.s.sel[id]=PL.s.sel[id]||{on:true};v.side=v.side===t.dataset.v?"":t.dataset.v;drawPlan();break}
+    case "pfNoteAdd":PL.s.notes.push({date:today(),g:["","","",""],note:"",by:S.mySid||S.role,name:meName()});drawPlan();setTimeout(()=>{const L=document.querySelectorAll("#pf_body .pf-note");L[L.length-1]?.scrollIntoView({block:"center"})},50);break;
     case "planSave":guard(t,planSave);break;
     case "planComment":guard(t,planComment);break;
     case "lostRemind":S.db.doc("patients/"+id).update({lostRemindAt:Date.now()}).catch(()=>{});if(S.patients[id])S.patients[id].lostRemindAt=Date.now();setTimeout(sheetLost,400);break;
