@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="10 نوفمبر · 103";
+const APP_VERSION="11 نوفمبر · 104";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -187,7 +187,7 @@ function render(){
   if(!S.uid){who.textContent="المعادي";tabs.hidden=true;main.innerHTML=S.setupDone===false?vSetup():S.setupDone==null?`<div class="empty"><b>بيحمّل…</b></div>`:vLogin();return}
   if(S.role==="none"){who.textContent="";tabs.hidden=true;main.innerHTML=`<div class="empty"><b>الحساب ده مش مفعّل</b>ممكن يكون اتوقف أو اتعمله باسورد جديد. كلم د. محي.<div style="margin-top:12px"><button class="btn" data-act="logout">خروج</button></div></div>`;return}
   if(!S.role){main.innerHTML=`<div class="empty"><b>بيحمّل…</b></div>`;return}
-  who.innerHTML=`<div class="hbtns"><span><b>${esc(staffName(S.mySid))}</b> · ${ROLE_NAMES[S.role]||""}</span><button class="btn sm" data-act="myAccount">حسابي</button><button class="btn sm" data-act="logout">خروج</button></div>`;
+  who.innerHTML=`<div class="hbtns"><span><b>${esc(staffName(S.mySid))}</b> · ${ROLE_NAMES[S.role]||""}</span><button class="btn sm" data-act="guide" aria-label="إزاي أستخدم الأبلكيشن">؟</button><button class="btn sm" data-act="myAccount">حسابي</button><button class="btn sm" data-act="logout">خروج</button></div>`;
   const tl=tabsFor();
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
@@ -611,7 +611,7 @@ function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).sli
   <div class="pf" id="pf_body" dir="ltr" style="text-align:left">${body}</div>
   ${tab==="up"||tab==="low"?`<label class="f">Other / ملاحظات<textarea id="pl_other" rows="2" ${PL.edit?"":"readonly"}>${pfE(s.other)}</textarea></label>`:""}
   <div class="err" id="formErr"></div>
-  ${tab!=="cm"?`<div class="bar" style="position:sticky;bottom:0;background:var(--bg,#f4f7fb);padding:8px 0">${(tab==="up"||tab==="low")&&!PL.edit?`<button class="btn" data-act="pfEdit">عدّل الفورم</button>`:""}<button class="btn primary" data-act="planSave">حفظ</button>${PL.edit&&(tab==="up"||tab==="low")?`<button class="btn" data-act="pfView">اعرض المختار بس</button>`:""}</div>`:""}`,
+  ${tab!=="cm"?`<div class="bar" style="position:sticky;bottom:0;background:var(--bg,#f4f7fb);padding:8px 0">${(tab==="up"||tab==="low")&&!PL.edit?`<button class="btn" data-act="pfEdit">عدّل الفورم</button>`:""}${!PL.edit&&PL.d.updatedAt?`<button class="btn" data-act="planPdf">PDF / طباعة</button>`:""}<button class="btn primary" data-act="planSave">حفظ</button>${PL.edit&&(tab==="up"||tab==="low")?`<button class="btn" data-act="pfView">اعرض المختار بس</button>`:""}</div>`:""}`,
   root=>{if(same){root.scrollTop=sc;if(root.parentElement)root.parentElement.scrollTop=sc2}root.addEventListener("input",pfInput);root.addEventListener("change",pfInput)})}
 function pfInput(e){const x=e.target,s=PL.s;if(x.id==="pl_dx"){s.dx=x.value;return}if(x.id==="pl_other"){s.other=x.value;return}
   if(x.dataset.pfg!=null){s.goals[+x.dataset.pfg]=x.value;return}
@@ -633,6 +633,74 @@ async function planSave(){const s=PL.s;s.notes=s.notes.filter(r=>r.date||r.note|
 async function planComment(){const text=val("pl_c").trim();if(!text)return setErr("اكتب الكومنت الأول");const me=meName();
   await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,comments:firebase.firestore.FieldValue.arrayUnion({id:randId(),by:S.mySid||S.role,name:me,at:Date.now(),text}),lastCommentAt:Date.now()},{merge:true});
   if(S.role!=="owner")alertOwner(`كومنت جديد من ${me}`,`على برنامج ${PL.name}`,3);toast("الكومنت اتبعت");await sheetPlan(PL.pid,PL.name)}
+/* package almost over: tell the desk while the patient is still inside */
+function renewChip(a){if(!a.patientId||["cancelled","noshow"].includes(a.status))return "";let i;const v=S.visits[a.id];
+  if(v||a.confirmed){const k=(S.patients[a.patientId]?.packs||[]).find(k=>k.id===(v?.packId||a.packId));if(!k)return "";i={packId:k.id,left:Math.max(0,k.sessions-(k.used||0))}} /* done today: what's left now */
+  else i=sessionInfo(a.patientId,a.kind,a.id,a.date,a.time||"",a.typeId);if(!i?.packId||i.left==null||i.left>2)return "";
+  const p=S.patients[a.patientId];if((p?.packs||[]).some(k=>k.id!==i.packId&&(k.used||0)<k.sessions&&!k.refund))return ""; /* already has the next one */
+  return `<button class="chip c-warn" data-act="sellPack" data-id="${a.patientId}" style="border:0;cursor:pointer">${i.left===0?"آخر جلسة في الباكدج · جدّدله ›":`فاضل ${i.left} بعدها · كلّمه على التجديد ›`}</button>`}
+/* the Program Sheet as a PDF, laid out like the paper: landscape, boxes ticked, sides and progress written in */
+async function pfPdf(){await loadScript("vendor/jspdf.umd.min.js");const {jsPDF}=window.jspdf;const d=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"});
+  const [fr,fb]=await Promise.all([b64("fonts/Amiri-Regular.ttf"),b64("fonts/Amiri-Bold.ttf")]);d.addFileToVFS("ar.ttf",fr);d.addFont("ar.ttf","ar","normal");d.addFileToVFS("arb.ttf",fb);d.addFont("arb.ttf","ar","bold");
+  let wm=null;try{wm=await imgData("icons/watermark.png")}catch(e){}
+  const PW=297,PH=210,L=8,R=PW-8,W=R-L,s=PL.s,sel=s.sel;let pg=0;
+  const deco=()=>{if(pg++)d.addPage();if(wm){const w=95,h=w*wm.h/wm.w;d.addImage(wm.d,"PNG",(PW-w)/2,(PH-h)/2,w,h,undefined,"FAST")}};
+  const box=(x,y,on)=>{d.setDrawColor(40);d.setLineWidth(0.25);d.rect(x,y-2.4,2.6,2.6);if(on){d.setLineWidth(0.5);d.line(x+0.4,y-1.1,x+1.1,y-0.2);d.line(x+1.1,y-0.2,x+2.4,y-2.2);d.setLineWidth(0.25)}};
+  const txt=(t,x,y,o={})=>{d.setFont("helvetica",o.b?"bold":"normal");d.setFontSize(o.s||7.5);d.text(String(t),x,y,o.al?{align:o.al}:undefined)};
+  const head=(title)=>{deco();d.setFont("ar","bold");d.setFontSize(12);d.text(`الاسم: ${PL.name}`,R,9,{align:"right"});txt(`•  ${title}`,L+2,9,{b:1,s:10});
+    if(s.dx){txt(`Diagnosis: ${s.dx}`,L+95,9,{s:8.5})}return 12};
+  const itemTxt=(k,n)=>{const v=sel[k];if(!v?.on)return n;return n+(v.side?` [${v.side==="Both"?"Rt+Lt":v.side}]`:"")+(v.note?` [${v.note}]`:"")};
+  const region=(r)=>{const R_=PF[r];let y=head(R_.title);const lw=40,cw=(W-lw)/4,lh=3.6;
+    for(const [c,t] of PF_CATS){const L_=R_[c].map(x=>x.split("|")[0]);const per=Math.ceil(L_.length/4),cols=[0,1,2,3].map(i=>L_.slice(i*per,(i+1)*per));
+      const rows=Math.max(1,...cols.map(cl=>cl.reduce((a,n)=>a+d.splitTextToSize(itemTxt(`${r}.${c}.${n}`,n),cw-6).length,0)));const h=rows*lh+2;
+      d.setFillColor(226,230,236);d.rect(L,y,lw,h,"F");d.setDrawColor(60);d.rect(L,y,W,h);txt(t,L+2,y+h/2+1.2,{b:1,s:9});
+      cols.forEach((cl,i)=>{const x=L+lw+i*cw;d.line(x,y,x,y+h);let yy=y+lh;for(const n of cl){const k=`${r}.${c}.${n}`,on=!!sel[k]?.on;box(x+1.5,yy,on);const ls=d.splitTextToSize(itemTxt(k,n),cw-6);ls.forEach((l,j)=>txt(l,x+5,yy+j*lh,{b:on}));yy+=ls.length*lh}});y+=h}
+    /* exercise table */
+    const nEx=R_.ex.reduce((a,[,x])=>a+x.length,0),gw=7,ew=40,pw=(W-gw-ew)/4,rh=Math.min(5.6,(PH-8-y-5-(r==="low"?(s.other?20:15):0))/nEx);d.setFillColor(226,230,236);d.rect(L,y,W,5,"F");d.rect(L,y,W,5);txt("Exercise",L+2,y+3.6,{b:1,s:9});
+    for(let i=0;i<4;i++){const x=L+gw+ew+i*pw;d.line(x,y,x,y+5);txt(`Progress ${i+1}`,x+pw/2,y+3.6,{b:1,s:9,al:"center"})}y+=5;
+    for(const [g,Ls] of R_.ex){const y0=y;for(const n of Ls){const k=`${r}.ex.${g}.${n}`,v=sel[k],on=!!v?.on;d.rect(L+gw,y,W-gw,rh);box(L+gw+1.5,y+rh/2+1.2,on);txt(n,L+gw+5,y+rh/2+1.2,{b:on});
+        for(let i=0;i<4;i++){const x=L+gw+ew+i*pw;d.line(x,y,x,y+rh);const t=(v?.p||[])[i]||"";if(t)txt(d.splitTextToSize(t,pw-2)[0],x+1.2,y+rh/2+1.2,{s:7})}y+=rh}
+      d.setFillColor(226,230,236);d.rect(L,y0,gw,y-y0,"FD");
+      if(g){d.setFont("helvetica","bold");d.setFontSize(7);d.setFillColor(226,230,236);d.rect(L,y0,gw,y-y0,"FD");d.text(g,L+gw/2+1.2,(y0+y)/2+d.getTextWidth(g)/2,{angle:90})}}
+    return y};
+  region("up");let y=region("low");
+  /* physical agents */
+  const aw=[30,32,40,40,30],ax=L+(W-aw.reduce((a,b)=>a+b,0))/2;y+=4;const rowA=(cells,yy,b)=>{let x=ax;cells.forEach((c,i)=>{if(i===0){d.setFillColor(226,230,236);d.rect(x,yy,aw[i],4.5,"FD")}else d.rect(x,yy,aw[i],4.5);
+      if(c&&c.box!=null){box(x+1.5,yy+3.5,c.box);txt(c.t,x+5,yy+3.4,{b:1,s:7.5})}else txt(c||"",x+1.5,yy+3.4,{b:b||i===0,s:7.5});x+=aw[i]})};
+  if(y+14<=PH-2){rowA(["Physical Agents",...PF.agents.map(n=>({t:n,box:!!sel[`ag.${n}`]?.on}))],y,1);rowA(["Area",...PF.agents.map(n=>sel[`ag.${n}`]?.area||"")],y+4.5);rowA(["Time",...PF.agents.map(n=>sel[`ag.${n}`]?.time||"")],y+9);y+=14}
+  if(s.other&&y+8<PH){d.setFont("ar","normal");d.setFontSize(9);d.text(`Other: ${s.other}`,L,y+4)}
+  /* progress note */
+  deco();txt("Progress Note",PW/2,12,{b:1,s:11,al:"center"});const cw2=[9,20,36,36,36,36],nw=W-4-cw2.reduce((a,b)=>a+b,0);const cols=[...cw2,nw];let yy=15;const hx=L+2;
+  const hdr=["","Date",...[0,1,2,3].map(i=>s.goals[i]?`${s.goals[i]}`:`Goal ${i+1}`),"Notes"];let x=hx;d.setFillColor(226,230,236);
+  hdr.forEach((h,i)=>{d.setFillColor(226,230,236);d.rect(x,yy,cols[i],10,"FD");txt(d.splitTextToSize(h,cols[i]-2)[0],x+cols[i]/2,yy+6.2,{b:1,s:9,al:"center"});x+=cols[i]});yy+=10;
+  const rows=Math.max(12,s.notes.length),rh=Math.min(14,(PH-yy-8)/rows);
+  for(let i=0;i<rows;i++){const r_=s.notes[i]||{};x=hx;const cells=[String(i+1),r_.date?dmy(r_.date):"",...[0,1,2,3].map(j=>(r_.g||[])[j]||""),r_.note||""];
+    cells.forEach((c,j)=>{if(j===0){d.setFillColor(226,230,236);d.rect(x,yy,cols[j],rh,"FD")}else d.rect(x,yy,cols[j],rh);
+      const ar=/[؀-ۿ]/.test(c);const ls=d.splitTextToSize(c,cols[j]-2).slice(0,Math.max(1,Math.floor(rh/3.4)));
+      if(ar){d.setFont("ar","normal");d.setFontSize(8.5);ls.forEach((l,k)=>d.text(l,x+cols[j]-1,yy+4+k*3.4,{align:"right"}))}else ls.forEach((l,k)=>txt(l,j===0?x+cols[j]/2:x+1,yy+4+k*3.4,{b:j===0,s:j===0?9:7.5,al:j===0?"center":undefined}));x+=cols[j]});yy+=rh}
+  return d}
+async function shareBlob(blob,name){const file=new File([blob],name,{type:"application/pdf"});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:name});return}catch(e){if(e&&e.name==="AbortError")return}}
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},3000);toast("الـ PDF اتحفظ")}
+async function planPdf(btn){const label=btn?.textContent;if(btn){btn.disabled=true;btn.textContent="بيجهّز…"}
+  try{const d=await pfPdf();await shareBlob(d.output("blob"),`Program - ${PL.name}.pdf`)}catch(e){console.warn("pdf",e);toast("مقدرتش أعمل الـ PDF، جرب تاني.")}
+  finally{if(btn){btn.disabled=false;btn.textContent=label}}}
+/* how to use it: short steps, only the ones for whoever is logged in */
+const GUIDE={
+ secretary:[["الحجز",["من «الحجز» دوسي «+ حجز»، اكتبي اسم العيان، اختاري اليوم والساعة والدكتور ونوع الجلسة.","لو العيان عنده باكدج، رقم الجلسة بيتكتب لوحده (جلسة 5 من 12)."]],
+  ["لما العيان يوصل",["في «جلسات اليوم» دوسي «وصل»، ولما يدخل للدكتور دوسي «دخل» واختاري الدكتور.","لو ظهر جنبه «فاضل 2 بعدها · كلّمه على التجديد» دوسي عليه وكلميه وهو لسه جوه."]],
+  ["تأكيد الجلسات",["الدكتور بيسجل اللي عمله. لو ظهرت «فيه X جلسة مستنية تأكيدك» دوسي عليها.","لكل جلسة: اتأكدي من الدكتور والفلوس ودوسي حفظ، وهترجعي للستة لوحدك."]],
+  ["الفلوس",["دفعة الباكدج لازم تبقى «على الباكدج» مش «الحساب كله». الشاشة بتختاره لوحدها، متغيريهوش إلا لو متأكدة.","«المرضى والكشف» ← «💰 عليهم فلوس»: ابعتي تذكير واتساب للمتأخرين، وبيتسجل إنك بعتي.","«📞 اختفوا»: اللي فاضلهم جلسات ومبقوش يجوا. ابعتيلهم أو احجزيلهم."]],
+  ["آخر اليوم",["«دخل وخرج اليوم» ← «اقفل الخزنة»: اعدّي الدرج واكتبي الرقم، واكتبي اتسلّم كام لد. محي (صفر لو مشي بدري).","لو فيه فرق لازم تكتبي السبب. بعد القفل اليوم ده مبيتعدلش."]]],
+ doctor:[["جلساتك",["في «جلساتي» بتلاقي العيانين بتوعك النهارده.","لما تبدأ مع العيان دوس «بدأت»، ولما تخلص دوس «خلصت». ريهام هتأكد الجلسة."]],
+  ["البرنامج",["دوس «البرنامج» جنب العيان: تشوف البرنامج اللي اتكتبله (Upper / Lower).","«عدّل الفورم» عشان تعلّم أو تشيل حاجة، وتكتب الـProgress للتمارين، ودوس حفظ.","«Progress Note» ← «+ زوّد Progress Note النهارده» واكتب الـGoals والـNotes.","«كومنتات» ← اكتب رأيك في حالة العيان. د. محي بيوصله إشعار."]],
+  ["مرتبي",["في آخر الشهر بيظهرلك مرتبك في «مرتبي»."]]],
+ owner:[["كل يوم",["لو ظهر فوق «خزنة امبارح متقفلتش» اسأل ريهام.","إشعارات الموبايل بتقولك لما الخزنة تتقفل أو دكتور يعدّل برنامج."]],
+  ["الحسابات",["«الحسابات والمرتبات»: دخل الشهر والمرتبات والمصروفات والإيجار والقسط. دوس على أي رقم يفتح تفاصيله.","«حسابات محتاجة مراجعة»: عيان الباكدج بتاعه مش مظبوط، افتح ملفه ودوس الزرار اللي في المربع الأحمر.","ملف أي عيان ← «كشف حساب»: كل حركة بتاريخها."]],
+  ["آخر الشهر",["نزّل تقرير الشهر PDF، وبعدين اقفل الشهر عشان محدش يعدّل فيه.","«مرتبي» بيتنشر للدكاترة لوحده، ولو عايز تنشره بإيدك فيه زرار.","كل 3-7 أيام هيفكرك تاخد نسخة احتياطية، خدها."]],
+  ["البرنامج",["ملف العيان ← «📋 البرنامج العلاجي»: علّم على اللي العيان هياخده وحدد الجنب Rt/Lt.","«PDF / طباعة» بيطلع نفس الورقة."]]]};
+function sheetGuide(){const g=GUIDE[S.role]||GUIDE.doctor;const extra=S.role==="owner"?[["ريهام بتعمل إيه",GUIDE.secretary.flatMap(([,x])=>x).slice(0,4)]]:[];
+  openSheet("إزاي أستخدم الأبلكيشن",[...g,...extra].map(([h,L])=>`<h3 style="margin:12px 0 6px">${esc(h)}</h3><ol style="margin:0;padding-inline-start:20px;display:grid;gap:6px">${L.map(x=>`<li>${esc(x)}</li>`).join("")}</ol>`).join("")+`<p class="sub" style="margin-top:14px">لو حاجة مش واضحة اسأل د. محي.</p>`)}
 function lostRows(){const now=dnum(today()),t=today();const fut=new Set(Object.values(S.appts).filter(a=>a.date>=t&&!["cancelled","noshow"].includes(a.status)).map(a=>a.patientId));
   const out=[];for(const p of Object.values(S.patients)){if(p.payer||fut.has(p.id))continue;if(p.lostOff&&(!p.last||p.last<=p.lostOff))continue; /* hidden as "won't come back" until he shows up again */
     const idle=p.last?now-dnum(p.last):null,packs=p.packs||[];const open=packs.filter(k=>(k.used||0)<k.sessions&&!k.refund);
@@ -1920,7 +1988,7 @@ function sessionInfo(pid,kind,excludeId,date,time,typeId){ // "جلسة 4 من 1
   if(kind==="exam")return{label:"كشف",packId:null};
   const pack=packsFor(pid,typeId)[0];
   const before=Object.values(S.appts).filter(x=>x.id!==excludeId&&x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!S.visits[x.id]&&!["cancelled","noshow"].includes(x.status)&&shownAppt(x)&&(((x.date||"")+(x.time||""))<(date+time)||(((x.date||"")+(x.time||""))===(date+time)&&String(x.id)<String(excludeId||"")))&&(!pack||x.packId===pack.id)).length; /* two sessions at the same hour (e.g. two people on one package) get 11 and 12, not 11 twice */
-  if(pack){const n=(pack.used||0)+before+1;return{label:`جلسة ${Math.min(n,pack.sessions)} من ${pack.sessions} · ${packTitle(pack)}`,packId:pack.id}}
+  if(pack){const n=(pack.used||0)+before+1;return{label:`جلسة ${Math.min(n,pack.sessions)} من ${pack.sessions} · ${packTitle(pack)}`,packId:pack.id,left:Math.max(0,pack.sessions-n)}}
   const rate=typeId?S.patients[pid]?.rates?.[typeId]:null;
   return{label:`جلسة رقم ${(S.patients[pid]?.count||0)+before+1}${typeId?` · ${typeName(typeId)} ${rate!=null?"بالجلسة":"منفردة"}`:""}`,packId:null};
 }
@@ -1962,7 +2030,7 @@ function apptRow(a,view,showDoc){
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(view==="doctor"?docLabel(kindOf(a)):kindOf(a))}</span> ${view==="doctor"?"":packMismatch(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(view==="doctor"?docLabel(kindOf(a)):kindOf(a))}</span> ${view==="doctor"?"":packMismatch(a)} ${view==="doctor"?"":renewChip(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
@@ -3222,7 +3290,9 @@ document.addEventListener("click",async e=>{
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "debts":sheetDebts();break;
     case "lost":sheetLost();break;
+    case "guide":sheetGuide();break;
     case "plan":sheetPlan(id,t.dataset.name);break;
+    case "planPdf":planPdf(t);break;
     case "pfTab":PL.tab=id;drawPlan();break;
     case "pfEdit":PL.edit=true;drawPlan();break;
     case "pfView":PL.edit=false;drawPlan();break;
