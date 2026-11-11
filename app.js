@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="11 نوفمبر · 105";
+const APP_VERSION="11 نوفمبر · 106";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -93,7 +93,7 @@ async function onAuth(u){
     if(!p||p.active!==true){if(S.settingUp)return;S.role="none";clearSubs();render();return}
     const changed=p.role!==S.role||p.staffId!==S.mySid;
     S.role=p.role;S.mySid=p.staffId;
-    if(changed){setupRoleSubs();S.tab=defaultTab()}
+    if(changed){setupRoleSubs();S.tab=restoredTab()||defaultTab()}
     if(p.mustChange&&!document.querySelector(".sheet"))setTimeout(()=>sheetAccount(true),150);
     sched();
   },e=>{console.warn(e);S.role="none";render()});
@@ -172,6 +172,11 @@ function syncBackfillSub(){
   if(!backfillOn()&&backfillUnsub){backfillUnsub();backfillUnsub=null;S.live.attAll={};merge()}
   sched();
 }
+/* a refresh comes back to the same tab, day and scroll (for 15 min), otherwise the usual first tab */
+function saveView(){try{localStorage.setItem("stride_view",JSON.stringify({role:S.role,sid:S.mySid,tab:S.tab,date:S.ui?.date,y:window.scrollY,at:Date.now()}))}catch(e){}}
+function restoredTab(){try{const v=JSON.parse(localStorage.getItem("stride_view")||"null");if(!v||v.role!==S.role||v.sid!==S.mySid||Date.now()-v.at>15*60e3)return null;
+  if(!tabsFor().some(([k])=>k===v.tab))return null;if(v.date&&S.ui)S.ui.date=v.date;if(v.y)setTimeout(()=>window.scrollTo(0,v.y),900);return v.tab}catch(e){return null}}
+window.addEventListener("pagehide",saveView);document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")saveView()});
 function defaultTab(){return {owner:"sessions",secretary:"sessions",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
@@ -611,7 +616,7 @@ function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).sli
     <label class="f">اكتب كومنت<textarea id="pl_c" rows="3" placeholder="مثلًا: العيان اتحسن في الثني، زودت التقوية"></textarea></label><button class="btn teal" data-act="planComment">ابعت الكومنت</button>
     ${ch.length?`<details style="margin-top:12px"><summary style="cursor:pointer" class="sub">التعديلات اللي حصلت (${(d.changes||[]).length})</summary><div class="list">${ch.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t">${esc(c.name)} <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m">${esc(c.what)}</span></div>`).join("")}</div></details>`:""}`;
   const sh=document.querySelector("#sheetRoot .sheet"),sc=sh?.scrollTop||0,sc2=sh?.parentElement?.scrollTop||0,same=document.getElementById("pf_body")&&PL._t===tab;PL._t=tab;
-  openSheet(`البرنامج · ${PL.name}`,`<style>.pf h4{margin:12px 0 4px;padding:4px 8px;background:var(--line,#e6ebf3);border-radius:6px;font-size:14px}.pf .pf-g{font-weight:700;margin:6px 0 2px;color:var(--acc,#2b3f86)}.pf-grid{display:grid;gap:4px}.pf-it{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:6px 8px}.pf-it.on{border-color:var(--acc,#2b3f86);background:rgba(43,63,134,.06)}.pf-it label{display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600}.pf-it input[type=checkbox]{width:18px;height:18px}.pf-sub{margin-top:6px}.pf-prog{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}.pf-prog input,.pf-sub{min-width:0;font-size:13px;padding:6px}.pf-ul{margin:0;padding-inline-start:18px}.pf-tbl{overflow-x:auto}.pf-tbl table{border-collapse:collapse;width:100%;font-size:13px}.pf-tbl td,.pf-tbl th{border:1px solid var(--line,#d5dbe5);padding:4px 6px;text-align:start}.pf-goals{display:grid;grid-template-columns:1fr 1fr;gap:6px}.pf-add{display:flex;gap:6px;margin-top:6px}.pf-add input{flex:1;min-width:0;font-size:13px;padding:6px}.pf-note{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:8px;margin-bottom:6px;display:grid;gap:6px}@media(max-width:420px){.pf-prog{grid-template-columns:1fr 1fr}}</style>
+  openSheet(`البرنامج · ${PL.name}`,`<style>.pf h4{margin:12px 0 4px;padding:4px 8px;background:var(--line,#e6ebf3);border-radius:6px;font-size:14px}.pf .pf-g{font-weight:700;margin:6px 0 2px;color:var(--acc,#2b3f86)}.pf-grid{display:grid;gap:4px}.pf-it{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:6px 8px}.pf-it.on{border-color:var(--acc,#2b3f86);background:rgba(43,63,134,.06)}.pf-it label{display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600}.pf-it input[type=checkbox]{width:18px;height:18px}.pf-sub{margin-top:6px}.pf-prog{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}.pf-prog input,.pf-sub{min-width:0;font-size:16px;padding:6px}.pf-ul{margin:0;padding-inline-start:18px}.pf-tbl{overflow-x:auto}.pf-tbl table{border-collapse:collapse;width:100%;font-size:13px}.pf-tbl td,.pf-tbl th{border:1px solid var(--line,#d5dbe5);padding:4px 6px;text-align:start}.pf-goals{display:grid;grid-template-columns:1fr 1fr;gap:6px}.pf-add{display:flex;gap:6px;margin-top:6px}.pf-add input{flex:1;min-width:0;font-size:16px;padding:6px}.pf-note{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:8px;margin-bottom:6px;display:grid;gap:6px}@media(max-width:420px){.pf-prog{grid-template-columns:1fr 1fr}}</style>
   ${d.updatedAt?`<p class="sub" style="margin:0">آخر تعديل: ${esc(d.updatedName||"")} · ${esc(fmtAt(d.updatedAt))}</p>`:""}
   <label class="f">Diagnosis<input id="pl_dx" dir="ltr" value="${pfE(s.dx)}" ${PL.edit?"":"readonly"} placeholder="مثلًا Lt knee OA"></label>
   <div class="seg" style="margin:6px 0;flex-wrap:wrap">${tabs.map(([k,l])=>`<button class="btn sm ${tab===k?"primary":""}" data-act="pfTab" data-id="${k}">${l}</button>`).join("")}</div>
@@ -636,10 +641,10 @@ async function planSave(){const s=PL.s;s.notes=s.notes.filter(r=>r.date||r.note|
   const me=meName(),at=Date.now(),ch={by:S.mySid||S.role,name:me,at,what:diff.slice(0,12).join(" · ")+(diff.length>12?` · و${diff.length-12} كمان`:"")};
   await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,sel:s.sel,goals:s.goals,notes:s.notes,dx:s.dx,other:s.other,custom:s.custom||[],updatedAt:at,updatedBy:S.mySid||S.role,updatedName:me,...(PL.d.createdAt?{}:{createdAt:at,createdName:me}),changes:firebase.firestore.FieldValue.arrayUnion(ch)},{merge:true});
   if(S.role!=="owner")alertOwner(`${me} عدّل البرنامج`,`${PL.name}: ${diff.length} تعديل`,3);
-  toast("البرنامج اتحفظ");await sheetPlan(PL.pid,PL.name)}
+  toast("البرنامج اتحفظ ✓");if(S.role==="doctor"){closeSheet();S.tab=defaultTab();render();window.scrollTo(0,0)}else await sheetPlan(PL.pid,PL.name)}
 async function planComment(){const text=val("pl_c").trim();if(!text)return setErr("اكتب الكومنت الأول");const me=meName();
   await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,comments:firebase.firestore.FieldValue.arrayUnion({id:randId(),by:S.mySid||S.role,name:me,at:Date.now(),text}),lastCommentAt:Date.now()},{merge:true});
-  if(S.role!=="owner")alertOwner(`كومنت جديد من ${me}`,`على برنامج ${PL.name}`,3);toast("الكومنت اتبعت");await sheetPlan(PL.pid,PL.name)}
+  if(S.role!=="owner")alertOwner(`كومنت جديد من ${me}`,`على برنامج ${PL.name}`,3);toast("الكومنت اتبعت ✓");if(S.role==="doctor"){closeSheet();S.tab=defaultTab();render();window.scrollTo(0,0)}else await sheetPlan(PL.pid,PL.name)}
 /* package almost over: tell the desk while the patient is still inside */
 function renewChip(a){if(!a.patientId||["cancelled","noshow"].includes(a.status))return "";let i;const v=S.visits[a.id];
   if(v||a.confirmed){const k=(S.patients[a.patientId]?.packs||[]).find(k=>k.id===(v?.packId||a.packId));if(!k)return "";i={packId:k.id,left:Math.max(0,k.sessions-(k.used||0))}} /* done today: what's left now */
@@ -3134,7 +3139,7 @@ document.addEventListener("click",async e=>{
   if(t.hasAttribute("data-confirm")&&!t.dataset.armed){t.dataset.armed="1";t.dataset.label=t.textContent;t.textContent="متأكد؟ اضغط تاني";setTimeout(()=>{if(t.isConnected){delete t.dataset.armed;t.textContent=t.dataset.label}},4000);return}
   const db=S.db;
   switch(a){
-    case "tab":S.tab=t.dataset.k;render();window.scrollTo(0,0);break;
+    case "tab":S.tab=t.dataset.k;render();window.scrollTo(0,0);saveView();break;
     case "close":closeSheet();break;
     case "logout":S.auth.signOut();break;
     case "forgotPw":forgotPw();break;
@@ -3385,7 +3390,7 @@ if("serviceWorker" in navigator&&location.protocol==="https:")window.addEventLis
   document.addEventListener("touchend",async()=>{if(y0==null)return;y0=null;
     if(dy*0.6<TH){show(0,"");return}show(TH,"بيتحدث…");
     try{const r=await navigator.serviceWorker?.getRegistration?.();await r?.update?.()}catch(e){}
-    location.reload()});
+    saveView();location.reload()});
 })();
 setInterval(()=>{if(["appts","myappts"].includes(S.tab)&&Object.values(S.appts).some(a=>a.status==="started"))sched()},60000); // keeps "in session for N min" fresh
 boot();

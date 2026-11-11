@@ -77,6 +77,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:1
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
 .num,td,.money{font-variant-numeric:tabular-nums}
 button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{font-size:16px} /* iPhone zooms into any box under 16px and stays zoomed */
 h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance}
 header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
 .wrap{max-width:880px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
