@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="11 نوفمبر · 106";
+const APP_VERSION="15 نوفمبر · 107";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -112,6 +112,7 @@ function setupRoleSubs(){
   clearSubs();S.subsAt=Date.now();const r=S.roleSubs,db=S.db,c=n=>db.collection(n);
   r.push(sub(c("staff"),o=>S.staff=o));
   r.push(subDoc("pub/types",d=>S.types=d?.list||[]));
+  r.push(subDoc("pub/hep",d=>S.hepLib=d||{}));
   r.push(subDoc("pub/geo",d=>S.geo=d||null));
   r.push(subDoc("pub/notify",d=>S.notify=d||null));
   r.push(subDoc("pub/lock",d=>S.lock=d||{}));
@@ -582,7 +583,8 @@ function fmtAt(t){if(!t)return "";const d=new Date(t),ds=d.toISOString().slice(0
 function pfBlank(){return{sel:{},goals:["","","",""],notes:[],dx:"",other:"",custom:[]}}
 async function sheetPlan(pid,name){openSheet("البرنامج",`<div class="empty"><b>بيحمّل…</b></div>`);
   let d={};try{const x=await S.db.doc("plans/"+pid).get();d=x.exists?x.data():{}}catch(e){d={}}
-  const s={...pfBlank(),...JSON.parse(JSON.stringify({sel:d.sel||{},goals:d.goals||["","","",""],notes:d.notes||[],dx:d.dx||d.goal||"",other:d.other||d.note||"",custom:d.custom||[]}))};
+  const s={...pfBlank(),...JSON.parse(JSON.stringify({sel:d.sel||{},goals:d.goals||["","","",""],notes:d.notes||[],dx:d.dx||d.goal||"",other:d.other||d.note||"",custom:d.custom||[],hep:d.hep||{items:{},sex:"",note:""}}))};
+  if(!s.hep.sex)s.hep.sex=hepSexDefault(pid);
   const has=Object.values(s.sel).some(v=>v.on);
   PL={pid,name:d.name||S.patients[pid]?.name||name||"",d,orig:JSON.parse(JSON.stringify(s)),s,tab:PL&&PL.pid===pid?PL.tab:(Object.keys(s.sel).some(k=>k.startsWith("low.")&&s.sel[k].on)&&!Object.keys(s.sel).some(k=>k.startsWith("up.")&&s.sel[k].on)?"low":"up"),edit:!has};drawPlan()}
 const pfE=s=>esc(s);
@@ -609,9 +611,10 @@ function pfProgress(){const s=PL.s;return `<div class="pf-goals">${[0,1,2,3].map
     <textarea data-pfn="note" data-i="${i}" rows="2" placeholder="Notes">${pfE(r.note||"")}</textarea></div>`).join("")||`<p class="sub">لسه مفيش Progress Note.</p>`}</div>
   <button class="btn sm teal" data-act="pfNoteAdd">+ زوّد Progress Note النهارده</button>`}
 function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).slice(-15).reverse();const tab=PL.tab,cnt=r=>Object.keys(s.sel).filter(k=>k.startsWith(r+".")&&s.sel[k].on).length;
-  const tabs=[["up",`Upper (${cnt("up")})`],["low",`Lower (${cnt("low")})`],["prog",`Progress Note (${s.notes.length})`],["cm",`كومنتات (${cm.length})`]];
+  const tabs=[["up",`Upper (${cnt("up")})`],["low",`Lower (${cnt("low")})`],["prog",`Progress Note (${s.notes.length})`],["hep",`تمارين البيت (${Object.values(s.hep.items).filter(v=>v.on).length})`],["cm",`كومنتات (${cm.length})`]];
   let body="";if(tab==="up"||tab==="low")body=(PL.edit?pfRegionEdit(tab)+pfAgentsEdit():(pfRegionView(tab)+pfAgentsView())||`<p class="sub">مفيش حاجة متعلّم عليها هنا. دوس «عدّل الفورم».</p>`);
   else if(tab==="prog")body=pfProgress();
+  else if(tab==="hep")body=hepTab();
   else body=`<div class="list">${cm.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t"><b>${esc(c.name||"")}</b> <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m" style="white-space:pre-wrap">${esc(c.text)}</span></div>`).join("")||`<p class="sub">مفيش كومنتات لسه.</p>`}</div>
     <label class="f">اكتب كومنت<textarea id="pl_c" rows="3" placeholder="مثلًا: العيان اتحسن في الثني، زودت التقوية"></textarea></label><button class="btn teal" data-act="planComment">ابعت الكومنت</button>
     ${ch.length?`<details style="margin-top:12px"><summary style="cursor:pointer" class="sub">التعديلات اللي حصلت (${(d.changes||[]).length})</summary><div class="list">${ch.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t">${esc(c.name)} <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m">${esc(c.what)}</span></div>`).join("")}</div></details>`:""}`;
@@ -623,9 +626,9 @@ function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).sli
   <div class="pf" id="pf_body" dir="ltr" style="text-align:left">${body}</div>
   ${tab==="up"||tab==="low"?`<label class="f">Other / ملاحظات<textarea id="pl_other" rows="2" ${PL.edit?"":"readonly"}>${pfE(s.other)}</textarea></label>`:""}
   <div class="err" id="formErr"></div>
-  ${tab!=="cm"?`<div class="bar" style="position:sticky;bottom:0;background:var(--bg,#f4f7fb);padding:8px 0">${(tab==="up"||tab==="low")&&!PL.edit?`<button class="btn" data-act="pfEdit">عدّل الفورم</button>`:""}${!PL.edit&&PL.d.updatedAt?`<button class="btn" data-act="planPdf">PDF / طباعة</button>`:""}<button class="btn primary" data-act="planSave">حفظ</button>${PL.edit&&(tab==="up"||tab==="low")?`<button class="btn" data-act="pfView">اعرض المختار بس</button>`:""}</div>`:""}`,
+  ${tab!=="cm"?`<div class="bar" style="position:sticky;bottom:0;background:var(--bg,#f4f7fb);padding:8px 0">${(tab==="up"||tab==="low")&&!PL.edit?`<button class="btn" data-act="pfEdit">عدّل الفورم</button>`:""}${!PL.edit&&PL.d.updatedAt&&tab!=="hep"?`<button class="btn" data-act="planPdf">PDF / طباعة</button>`:""}<button class="btn primary" data-act="planSave">حفظ</button>${PL.edit&&(tab==="up"||tab==="low")?`<button class="btn" data-act="pfView">اعرض المختار بس</button>`:""}</div>`:""}`,
   root=>{if(same){root.scrollTop=sc;if(root.parentElement)root.parentElement.scrollTop=sc2}root.addEventListener("input",pfInput);root.addEventListener("change",pfInput)})}
-function pfInput(e){const x=e.target,s=PL.s;if(x.id==="pl_dx"){s.dx=x.value;return}if(x.id==="pl_other"){s.other=x.value;return}
+function pfInput(e){const x=e.target,s=PL.s;if(x.dataset.hep){if(x.dataset.hep==="on"&&e.type!=="change")return;if(hepInput(x)==="redraw")drawPlan();return}if(x.id==="pl_dx"){s.dx=x.value;return}if(x.id==="pl_other"){s.other=x.value;return}
   if(x.dataset.pfg!=null){s.goals[+x.dataset.pfg]=x.value;return}
   if(x.dataset.pfn){const r=s.notes[+x.dataset.i];if(!r)return;const f=x.dataset.pfn;if(f[0]==="g"&&f.length===2){r.g=r.g||["","","",""];r.g[+f[1]]=x.value}else r[f]=x.value;return}
   const k=x.dataset.k,f=x.dataset.pf;if(!k||!f)return;const v=s.sel[k]=s.sel[k]||{};
@@ -635,11 +638,12 @@ function pfDiff(a,b){const out=[],keys=new Set([...Object.keys(a.sel),...Object.
   for(const k of keys){const o=a.sel[k],n=b.sel[k];const on1=!!o?.on,on2=!!n?.on;if(!on1&&on2)out.push(`زوّد ${pfLabel(k,n)}`);else if(on1&&!on2)out.push(`شال ${pfLabel(k,o)}`);
     else if(on1&&on2){const f=v=>JSON.stringify([v.side||"",v.note||"",v.area||"",v.time||"",...(v.p||[]).map(x=>x||"")].join("|"));if(f(o)!==f(n)){const pi=[0,1,2,3].filter(i=>((o.p||[])[i]||"")!==((n.p||[])[i]||""));out.push(pi.length&&f({...o,p:[]})===f({...n,p:[]})?`${pfName(k)}: Progress ${pi.map(i=>i+1).join("،")}`:`عدّل ${pfLabel(k,n)}`)}}}
   if(a.dx!==b.dx)out.push("عدّل Diagnosis");if(a.other!==b.other)out.push("عدّل الملاحظات");if(JSON.stringify(a.goals)!==JSON.stringify(b.goals))out.push("عدّل الـGoals");
+  if(JSON.stringify({i:(a.hep||{}).items||{},n:(a.hep||{}).note||"",x:(a.hep||{}).sex||""})!==JSON.stringify({i:b.hep.items,n:b.hep.note||"",x:b.hep.sex||""})){const on=Object.keys(b.hep.items).filter(k=>b.hep.items[k].on);out.push(`تمارين البيت: ${on.map(k=>HEPI[k]?.n||k).join("، ")||"اتشالت"}`)}
   if(b.notes.length>a.notes.length)out.push(`زوّد Progress Note #${b.notes.length}`);else if(JSON.stringify(a.notes)!==JSON.stringify(b.notes))out.push("عدّل Progress Note");
   return out}
 async function planSave(){const s=PL.s;s.notes=s.notes.filter(r=>r.date||r.note||(r.g||[]).some(Boolean));const diff=pfDiff(PL.orig,s);if(!diff.length)return setErr("مفيش حاجة اتغيرت");
   const me=meName(),at=Date.now(),ch={by:S.mySid||S.role,name:me,at,what:diff.slice(0,12).join(" · ")+(diff.length>12?` · و${diff.length-12} كمان`:"")};
-  await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,sel:s.sel,goals:s.goals,notes:s.notes,dx:s.dx,other:s.other,custom:s.custom||[],updatedAt:at,updatedBy:S.mySid||S.role,updatedName:me,...(PL.d.createdAt?{}:{createdAt:at,createdName:me}),changes:firebase.firestore.FieldValue.arrayUnion(ch)},{merge:true});
+  await S.db.doc("plans/"+PL.pid).set({pid:PL.pid,name:PL.name,sel:s.sel,goals:s.goals,notes:s.notes,dx:s.dx,other:s.other,custom:s.custom||[],hep:s.hep,updatedAt:at,updatedBy:S.mySid||S.role,updatedName:me,...(PL.d.createdAt?{}:{createdAt:at,createdName:me}),changes:firebase.firestore.FieldValue.arrayUnion(ch)},{merge:true});
   if(S.role!=="owner")alertOwner(`${me} عدّل البرنامج`,`${PL.name}: ${diff.length} تعديل`,3);
   toast("البرنامج اتحفظ ✓");if(S.role==="doctor"){closeSheet();S.tab=defaultTab();render();window.scrollTo(0,0)}else await sheetPlan(PL.pid,PL.name)}
 async function planComment(){const text=val("pl_c").trim();if(!text)return setErr("اكتب الكومنت الأول");const me=meName();
@@ -713,6 +717,56 @@ const GUIDE={
   ["البرنامج",["ملف العيان ← «📋 البرنامج العلاجي»: علّم على اللي العيان هياخده وحدد الجنب Rt/Lt.","«PDF / طباعة» بيطلع نفس الورقة."]]]};
 function sheetGuide(){const g=GUIDE[S.role]||GUIDE.doctor;const extra=S.role==="owner"?[["ريهام بتعمل إيه",GUIDE.secretary.flatMap(([,x])=>x).slice(0,4)]]:[];
   openSheet("إزاي أستخدم الأبلكيشن",[...g,...extra].map(([h,L])=>`<h3 style="margin:12px 0 6px">${esc(h)}</h3><ol style="margin:0;padding-inline-start:20px;display:grid;gap:6px">${L.map(x=>`<li>${esc(x)}</li>`).join("")}</ol>`).join("")+`<p class="sub" style="margin-top:14px">لو حاجة مش واضحة اسأل د. محي.</p>`)}
+/* home exercise program: the doctor ticks exercises + dose, the patient gets each one with a YouTube video.
+   Women: Ask Doctor Jo (a woman physio, one short video per exercise). Men: the owner pastes a male video per exercise in
+   «مكتبة الفيديوهات»; until then the link opens a YouTube search on Bob & Brad (two men physios) for that exercise. */
+const HEP_LIB=[
+ ["Neck",[["chin","Chin Tucks","7rnlAVhAK-8"],["cflex","Isometric Neck Flexion","4rK-m6GvNCk"],["cext","Isometric Neck Extension","iCiOE7pKVRk"],["crot","Isometric Neck Rotation","tbNtU66KzmE"],["utst","Upper Trapezius Stretch","-r0eoFS7_5Q"],["levst","Levator Scapula Stretch","GSoXPJRnR6E"],["thrrot","Thoracic Rotation (Quadruped)","snzLuyYgbVI"],["breath","Breathing Exercises","-7-CAFhJn78"],["tmj","TMJ Exercises","SbJZXG4fsd4"]]],
+ ["Shoulder",[["shiso","Shoulder Isometrics","qQjjc3UlKCY"],["sher","External Rotation (Band)","_UvmPNGtlPM"],["pys","Prone Y","Xgi0r1pYmvk"],["pws","Prone W","CgYUs74-j60"],["pis","Prone I","1nKcc5oeX9Q"],["hab","Horizontal Abduction (Band)","TJOkcqSMyMY"],["serr","Serratus Punch (Lying)","EA2DVgQ_J_U"],["serrb","Serratus Punch (Band)","Vn7ur-0O4CY"],["pecst","Chest Stretches","NePr1XKRTLU"],["rhst","Rhomboid Stretch","COdEWMyqWm8"]]],
+ ["Elbow / Wrist / Hand",[["supro","Supination / Pronation","gHxGA4ZDOMo"],["wflex","Wrist Flexion","1BlJgwvPqAE"],["wrom","Wrist Flexion / Extension","MD-ddObx9QA"],["wdev","Radial / Ulnar Deviation","Qtv7XHinNjg"],["tglide","Finger Tendon Glides","grbacaaEwjg"],["mng","Median Nerve Glide","f0RHZ6bnhxg"],["ung","Ulnar Nerve Glide","UY97v4WxrzI"],["rng","Radial Nerve Glide","88A5qz38E2s"]]],
+ ["Core / Back",[["bridge","Bridging","ytvP0oUDKYw"],["slbridge","Single Leg Bridge","9bl48SV62u4"],["plank","Plank","DoYPuzccR-M"],["splank","Side Plank","9dNL_mtObGQ"],["birddog","Bird Dog","kNH_caIpB5w"],["curlup","Diagonal Curl Up","f28DUxkF0rA"]]],
+ ["Hip",[["slr","Straight Leg Raise","Ka19yzAlIGY"],["habd","Side Lying Hip Abduction","EwBJKBa4PKU"],["clam","Clamshell","O2KPabIoPPk"],["pext","Prone Hip Extension","kxmIfSC9aUk"],["sext","Standing Hip Extension","i4rmRxPBmkY"]]],
+ ["Knee",[["qset","Quad Sets","au62CidApd0"],["laq","Seated Knee Extension","VuJZ6dqMf8M"],["kext","Knee Straightening","vhEaOeDotqE"],["hset","Hamstring Sets","NJv1hKZJsMY"],["hcurl","Standing Hamstring Curl","oWu8RxtWdGE"],["phcurl","Prone Hamstring Curl","lN6NUE2IpWI"],["squat","Squats","IaInMN_WZDM"],["csquat","Chair Squats","GIz1C3yfE1s"],["lunge","Lunges","YB0thmgIx8Q"]]],
+ ["Ankle / Foot",[["heel","Heel Raises","J3qQrxPEhHA"],["slheel","Single Leg Calf Raise (Step)","d6Cv1qKF_Jk"],["a4way","Ankle 4-Way (Band)","bSgoNvcZGG4"],["dflex","Dorsiflexion (Band)","5YUh4lOQ2pI"],["ever","Eversion (Band)","xfrncpP5ONQ"],["inver","Inversion (Band)","50YDq8_OA_w"],["towel","Toe Towel Crunch","yELCLF0_Kvg"]]],
+ ["Balance",[["slbal","Single Leg Balance","Dtgh2_LFkBQ"],["tandem","Tandem Stance","ra7tzlPxnsQ"]]],
+ ["Stretches",[["hamst","Hamstring Stretch","wr_8aak4Wbc"],["hamstr","Hamstring Stretch (Strap)","Il1L75v6gq0"],["calfst","Calf Stretch","i1eJqJ3v3lQ"],["solst","Soleus Stretch","RCjNN6JfSmE"],["quadst","Quad Stretch","W98_kVhZ_sM"],["hfst","Hip Flexor Stretch","tsGPYSQbZx4"],["pirst","Piriformis Stretch","-g0nuyTHMrI"]]]];
+const HEPI=Object.fromEntries(HEP_LIB.flatMap(([g,L])=>L.map(([id,n,f])=>[id,{id,n,f,g}])));
+function hepUrl(id,sex){const it=HEPI[id],ov=(S.hepLib||{})[id]||{};if(!it)return "";
+  if(sex==="m")return ov.m||`https://www.youtube.com/results?search_query=${encodeURIComponent(it.n+" exercise Bob and Brad")}`;
+  return ov.f||`https://youtu.be/${it.f}`}
+function hepSexDefault(pid){const g=S.patients?.[pid]?.gender;return g==="ذكر"?"m":g==="أنثى"?"f":""}
+function hepTab(){const h=PL.s.hep,on=Object.keys(h.items).filter(k=>h.items[k].on);
+  return `<div dir="rtl" style="text-align:right"><div class="bar" style="flex-wrap:wrap;gap:6px;align-items:center"><b>الفيديوهات:</b>${[["m","راجل 👨"],["f","ست 👩"]].map(([k,l])=>`<button class="btn sm ${h.sex===k?"primary":""}" data-act="hepSex" data-id="${k}">${l}</button>`).join("")}${S.role==="owner"?`<button class="btn sm ghost" data-act="hepLib">مكتبة الفيديوهات</button>`:""}</div>
+  ${h.sentAt?`<p class="sub" style="margin:4px 0">اتبعتت للعيان ${esc(fmtAt(h.sentAt))}${h.sentName?` · ${esc(h.sentName)}`:""}</p>`:""}</div>
+  ${HEP_LIB.map(([g,L])=>`<h4>${g}</h4><div class="pf-grid">${L.map(([id,n])=>{const v=h.items[id]||{};return `<div class="pf-it ${v.on?"on":""}"><label><input type="checkbox" data-hep="on" data-k="${id}" ${v.on?"checked":""}> ${esc(n)}</label>${v.on?`<input class="pf-sub" data-hep="dose" data-k="${id}" value="${esc(v.dose||"")}" placeholder="مثلًا 3×10 · مرتين في اليوم" dir="rtl">`:""}</div>`}).join("")}</div>`).join("")}
+  <label class="f" dir="rtl" style="text-align:right">ملاحظة للعيان<textarea data-hep="note" rows="2" dir="rtl" placeholder="مثلًا: لو الألم زاد وقف التمرين">${esc(h.note||"")}</textarea></label>
+  <div class="bar" dir="rtl" style="flex-wrap:wrap;gap:6px">${on.length?`<button class="btn teal" data-act="hepSend">ابعت للعيان واتساب (${on.length})</button><button class="btn" data-act="hepPdf">PDF</button>`:`<span class="sub">علّم على التمارين الأول.</span>`}</div>`}
+function hepInput(x){const h=PL.s.hep,f=x.dataset.hep;if(f==="note"){h.note=x.value;return true}const k=x.dataset.k;if(!k)return false;const v=h.items[k]=h.items[k]||{};
+  if(f==="on"){v.on=x.checked;if(!x.checked)delete h.items[k];return "redraw"}v[f]=x.value;return true}
+function hepMsg(){const h=PL.s.hep,sex=h.sex||"f",p=S.patients?.[PL.pid],first=(PL.name||"").trim().split(/\s+/)[0];
+  const t=sex==="m"?`أستاذ ${first}`:`أستاذة ${first}`;const L=HEP_LIB.flatMap(([,x])=>x).filter(([id])=>h.items[id]?.on);
+  return `أهلًا ${t} 👋\nدي تمارين البيت بتاعتك من Stride Clinic:\n\n`+L.map(([id,n],i)=>`${i+1}) ${n}${h.items[id].dose?` — ${h.items[id].dose}`:""}\n▶️ ${hepUrl(id,sex)}`).join("\n\n")+
+   `${h.note?`\n\n📝 ${h.note}`:""}\n\nلو حسيت بألم زيادة وقف التمرين وكلّمنا. ألف سلامة 🙏`}
+async function hepSend(){const h=PL.s.hep;if(!h.sex)return toast("اختار الفيديوهات راجل ولا ست الأول");const p=S.patients?.[PL.pid];const num_=p?(waNumber(p.phone)||waNumber(p.phone2)):"";
+  const url=`https://wa.me/${num_||""}?text=${encodeURIComponent(hepMsg())}`;window.open(url,"_blank","noopener");
+  h.sentAt=Date.now();h.sentName=meName();try{await S.db.doc("plans/"+PL.pid).set({hep:h,pid:PL.pid,name:PL.name},{merge:true});PL.orig.hep=JSON.parse(JSON.stringify(h))}catch(e){}drawPlan()}
+async function hepPdf(btn){const h=PL.s.hep;if(!h.sex)return toast("اختار الفيديوهات راجل ولا ست الأول");const label=btn?.textContent;if(btn){btn.disabled=true;btn.textContent="بيجهّز…"}
+  try{await loadScript("vendor/jspdf.umd.min.js");const {jsPDF}=window.jspdf;const d=new jsPDF({unit:"mm",format:"a4"});
+    const [fr,fb]=await Promise.all([b64("fonts/Amiri-Regular.ttf"),b64("fonts/Amiri-Bold.ttf")]);d.addFileToVFS("ar.ttf",fr);d.addFont("ar.ttf","ar","normal");d.addFileToVFS("arb.ttf",fb);d.addFont("arb.ttf","ar","bold");
+    let wm=null;try{wm=await imgData("icons/watermark.png")}catch(e){}const deco=()=>{if(wm){const w=110,hh=w*wm.h/wm.w;d.addImage(wm.d,"PNG",(210-w)/2,(297-hh)/2,w,hh,undefined,"FAST")}};deco();
+    d.setFont("ar","bold");d.setFontSize(16);d.text("تمارين البيت",200,18,{align:"right"});d.setFont("ar","normal");d.setFontSize(12);d.text(`${PL.name}  ·  ${dmy(today())}`,200,26,{align:"right"});
+    d.setFontSize(10);d.text("دوس على الكلمة الزرقا جنب كل تمرين وهيفتحلك الفيديو بتاعه",200,33,{align:"right"});let y=44;const L=HEP_LIB.flatMap(([,x])=>x).filter(([id])=>h.items[id]?.on);
+    L.forEach(([id,n],i)=>{if(y>270){d.addPage();deco();y=20}d.setDrawColor(200);d.roundedRect(10,y-6,190,14,2,2);d.setFont("helvetica","bold");d.setFontSize(12);d.text(`${i+1}. ${n}`,14,y);
+      if(h.items[id].dose){const ds=h.items[id].dose;if(/[؀-ۿ]/.test(ds)){d.setFont("ar","normal");d.setFontSize(11);d.text(ds,150,y+5,{align:"right"})}else{d.setFont("helvetica","normal");d.setFontSize(10);d.text(ds,14,y+5)}}
+      d.setTextColor(30,80,200);d.setFont("helvetica","bold");d.setFontSize(11);d.textWithLink("Video  >",178,y+2,{url:hepUrl(id,h.sex)});d.setTextColor(0);y+=17});
+    if(h.note){d.setFont("ar","normal");d.setFontSize(11);d.splitTextToSize(h.note,180).forEach((l,i)=>d.text(l,200,y+i*6,{align:"right"}));y+=8}
+    d.setFont("ar","normal");d.setFontSize(10);d.text("لو حسيت بألم زيادة وقف التمرين وكلّمنا",200,290,{align:"right"});d.setFont("helvetica","bold");d.text("Stride Clinic",10,290);
+    await shareBlob(d.output("blob"),`Home exercises - ${PL.name}.pdf`)}catch(e){console.warn("hep pdf",e);toast("مقدرتش أعمل الـ PDF، جرب تاني.")}finally{if(btn){btn.disabled=false;btn.textContent=label}}}
+function sheetHepLib(){const lib=S.hepLib||{};openSheet("مكتبة فيديوهات التمارين",`<p class="sub" style="margin:0">حط لينك يوتيوب لكل تمرين. الستات متحطلهم فيديوهات Ask Doctor Jo. الرجالة لو الخانة فاضية بيتبعتلهم بحث يوتيوب عن التمرين من Bob &amp; Brad، فالأحسن تحط لينك فيديو راجل بنفسك.</p>
+  ${HEP_LIB.map(([g,L])=>`<h4 style="margin:12px 0 4px" dir="ltr">${g}</h4>${L.map(([id,n,f])=>`<div class="pf-note" dir="ltr"><b>${esc(n)}</b><div class="pf-goals"><label class="f">👨 Men<input data-hl="m" data-k="${id}" value="${esc(lib[id]?.m||"")}" placeholder="https://youtu.be/…"></label><label class="f">👩 Women<input data-hl="f" data-k="${id}" value="${esc(lib[id]?.f||"")}" placeholder="https://youtu.be/${f}"></label></div></div>`).join("")}`).join("")}
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="hepLibSave" style="position:sticky;bottom:8px">حفظ المكتبة</button>`)}
+async function hepLibSave(){const o={};let bad=0;document.querySelectorAll("[data-hl]").forEach(x=>{const v=x.value.trim();if(!v)return;if(!/^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(v)){bad++;return}(o[x.dataset.k]=o[x.dataset.k]||{})[x.dataset.hl]=v});
+  if(bad)return setErr(`فيه ${bad} لينك مش لينك يوتيوب`);await S.db.doc("pub/hep").set(o);S.hepLib=o;toast("المكتبة اتحفظت");PL?sheetPlan(PL.pid,PL.name):closeSheet()}
 function lostRows(){const now=dnum(today()),t=today();const fut=new Set(Object.values(S.appts).filter(a=>a.date>=t&&!["cancelled","noshow"].includes(a.status)).map(a=>a.patientId));
   const out=[];for(const p of Object.values(S.patients)){if(p.payer||fut.has(p.id))continue;if(p.lostOff&&(!p.last||p.last<=p.lostOff))continue; /* hidden as "won't come back" until he shows up again */
     const idle=p.last?now-dnum(p.last):null,packs=p.packs||[];const open=packs.filter(k=>(k.used||0)<k.sessions&&!k.refund);
@@ -3308,6 +3362,11 @@ document.addEventListener("click",async e=>{
     case "pfCustom":{const [r,c]=id.split("|"),inp=document.getElementById(`pfc_${r||"ag"}_${c}`),n=(inp?.value||"").trim().replace(/[.|]/g," ");if(!n){toast("اكتب اسم الحاجة الأول");break}
       const k=c==="ag"?`ag.${n}`:c==="ex"?`${r}.ex.Other.${n}`:`${r}.${c}.${n}`;if(PFI[k]||PL.s.sel[k]){toast("موجودة في الفورم");break}
       PL.s.custom=[...(PL.s.custom||[]),{r:r||null,c,n}];PL.s.sel[k]={on:true};drawPlan();break}
+    case "hepSex":PL.s.hep.sex=id;drawPlan();break;
+    case "hepSend":hepSend();break;
+    case "hepPdf":hepPdf(t);break;
+    case "hepLib":sheetHepLib();break;
+    case "hepLibSave":guard(t,hepLibSave);break;
     case "pfTab":PL.tab=id;drawPlan();break;
     case "pfEdit":PL.edit=true;drawPlan();break;
     case "pfView":PL.edit=false;drawPlan();break;
