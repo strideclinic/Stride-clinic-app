@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="15 نوفمبر · 107";
+const APP_VERSION="15 نوفمبر · 108";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -522,7 +522,7 @@ function vReview(){
 function statusChip(s){return {pending:`<span class="chip c-warn">مستني المراجعة</span>`,approved:`<span class="chip c-ok">اتعتمد</span>`,edited:`<span class="chip c-teal">اتعتمد بتعديل</span>`,rejected:`<span class="chip c-bad">اترفض</span>`}[s]||""}
 /* ---------- views: patients ---------- */
 function vPatients(){
-  return `<div id="payerBox"></div><div class="bar"><input id="q" class="grow" placeholder="دوّر بالاسم أو الموبايل" value="${esc(S.ui.q)}" aria-label="بحث"><button class="btn primary" data-act="newPatient">+ مريض جديد</button></div><div class="bar"><button class="btn sm" data-act="quickAdd">إضافة سريعة للمرضى القدام</button><button class="btn sm" data-act="pasteList">لصق قايمة</button>${S.role==="owner"?`<button class="btn sm teal" data-act="reviewCounts">🔍 راجع عدد الجلسات</button>`:""}</div><div id="plist"></div>`;
+  return `<div id="payerBox"></div><div class="bar"><input id="q" class="grow" placeholder="دوّر بالاسم أو الموبايل" value="${esc(S.ui.q)}" aria-label="بحث"><button class="btn primary" data-act="newPatient">+ مريض جديد</button></div><div class="bar"><button class="btn sm" data-act="quickAdd">إضافة سريعة للمرضى القدام</button><button class="btn sm" data-act="pasteList">لصق قايمة</button><button class="btn" data-act="impPaper">من الورق</button>${S.role==="owner"?`<button class="btn sm teal" data-act="reviewCounts">🔍 راجع عدد الجلسات</button>`:""}</div><div id="plist"></div>`;
 }
 /* who owes money: late ones first, a polite WhatsApp nudge, and a note so nobody is nudged twice in a row */
 const INSTAPAY="01129577564";
@@ -2775,6 +2775,33 @@ async function savePaste(){
   for(let i=0;i<rows.length;i+=200){const b=S.db.batch();rows.slice(i,i+200).forEach(r=>{const ref=S.db.collection("patients").doc();b.set(ref,newPatientDoc(r.name,r.phone,"","",0));b.set(S.db.doc("pdir/"+ref.id),{name:r.name})});await b.commit()}
   closeSheet();toast(`اتضاف ${rows.length} مريض${dups?`، واتشال ${dups} متكرر`:""}`);
 }
+/* paper files → app: Claude reads photos of the exam sheets and Program Sheets and hands back a block of text;
+   pasting it here fills the exam fields and the program for many patients at once (match by phone, then by exact name; new ones are created) */
+const EXAM_KEYS=["age","gender","source","sourceDetail","examDate","complaint","history","findings","diagnosis","plan","notes"];
+let IMP=null;
+function impParse(t){t=(t||"").trim().replace(/^```(json)?/,"").replace(/```$/,"").trim();if(!t)return{rows:[]};let a;try{a=JSON.parse(t)}catch(e){return{err:"الكلام ده مش بالشكل اللي Claude بيطلّعه. انسخه كله من أول [ لحد آخر ]."}}
+  if(!Array.isArray(a))a=[a];const byPhone={},byName={};for(const p of Object.values(S.patients)){if(p.phone)byPhone[nd(p.phone).replace(/\D/g,"").slice(-10)]=p;if(p.phone2)byPhone[nd(p.phone2).replace(/\D/g,"").slice(-10)]=p;byName[(p.name||"").trim()]=p}
+  const rows=a.filter(x=>x&&x.name).map(x=>{const ph=nd(x.phone||"").replace(/\D/g,"").slice(-10);const p=(ph&&byPhone[ph])||byName[String(x.name).trim()]||null;
+    const exam={};for(const k of EXAM_KEYS)if(x[k]!=null&&String(x[k]).trim())exam[k]=String(x[k]).trim();if(exam.gender&&!/^(ذكر|أنثى)$/.test(exam.gender))exam.gender=/^(m|male|راجل)/i.test(exam.gender)?"ذكر":"أنثى";
+    if(exam.source&&!SOURCES.includes(exam.source)){exam.sourceDetail=[exam.source,exam.sourceDetail].filter(Boolean).join(" · ");exam.source="أخرى"}
+    const pr=x.program||null;const sel={};let bad=0;for(const [k,v] of Object.entries(pr?.sel||{})){if(PFI[k]||/^(up|low)\.(str|stretch|mob|neuro)\.|^(up|low)\.ex\.Other\.|^ag\./.test(k))sel[k]={on:true,...(v||{})};else bad++}
+    return{x,p,exam,prog:pr?{sel,dx:pr.dx||"",other:pr.other||"",goals:pr.goals||["","","",""],notes:pr.notes||[],custom:pr.custom||[]}:null,bad}});return{rows}}
+function sheetImport(){IMP=null;openSheet("دخّل الكشوفات والبرامج من الورق",`<ol style="margin:0;padding-inline-start:20px;display:grid;gap:4px" class="sub"><li>صوّر ورق الكشف والـProgram Sheet وابعته لـ Claude في الشات.</li><li>هو هيرجعلك كلام بيبدأ بـ <b dir="ltr">[</b> وبيخلص بـ <b dir="ltr">]</b>. انسخه كله.</li><li>الصقه هنا، راجع، ودوس «دخّلهم».</li></ol>
+  <textarea id="imp_t" dir="ltr" style="min-height:160px;font-family:monospace" placeholder='[{"name":"…","phone":"…","complaint":"…","program":{"sel":{…}}}]'></textarea>
+  <label class="seg" style="width:max-content"><span><input type="checkbox" id="imp_over" style="width:auto"> اكتب فوق اللي متسجل قبل كده</span></label>
+  <div id="imp_prev"></div><div class="err" id="formErr"></div><button class="btn primary" data-act="impSave">دخّلهم</button>`,()=>{const t=document.getElementById("imp_t");t.addEventListener("input",impPreview)})}
+function impPreview(){const r=impParse(val("imp_t")),el=document.getElementById("imp_prev");IMP=r;if(r.err){el.innerHTML=`<div class="note" style="border-color:var(--bad)">${esc(r.err)}</div>`;return}if(!r.rows.length){el.innerHTML="";return}
+  el.innerHTML=`<div class="note">${r.rows.length} ملف · <b>${r.rows.filter(x=>!x.p).length} جديد</b> · ${r.rows.filter(x=>x.p).length} موجود</div><div class="list">${r.rows.map(x=>`<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t"><b>${esc(x.x.name)}</b> ${x.p?`<span class="chip c-mute">موجود</span>`:`<span class="chip c-ok">جديد</span>`}</span><span class="end sub">${esc(x.x.phone||"")}</span>
+   <span class="m" style="grid-column:1/-1">${Object.keys(x.exam).length} خانة في الكشف${x.exam.diagnosis?` · ${esc(x.exam.diagnosis)}`:""}${x.prog?` · البرنامج: ${Object.keys(x.prog.sel).length} حاجة`:""}${x.bad?` · <b style="color:var(--bad)">${x.bad} حاجة مش مفهومة اتشالت</b>`:""}</span></div>`).join("")}</div>`}
+async function impSave(){const r=IMP||impParse(val("imp_t"));if(r.err)return setErr(r.err);if(!r.rows.length)return setErr("الصق الكلام الأول");const over=document.getElementById("imp_over").checked,me=meName(),at=Date.now();let nN=0,nU=0,nP=0;
+  for(let i=0;i<r.rows.length;i+=150){const b=S.db.batch();
+    for(const x of r.rows.slice(i,i+150)){let pid=x.p?.id;
+      if(!pid){const ref=S.db.collection("patients").doc();pid=ref.id;b.set(ref,{...newPatientDoc(String(x.x.name).trim(),x.x.phone||"",x.exam.source||"",x.exam.examDate||"",0),...x.exam});b.set(S.db.doc("pdir/"+pid),{name:String(x.x.name).trim()});nN++}
+      else{const up={};for(const [k,v] of Object.entries(x.exam))if(over||!String(x.p[k]||"").trim())up[k]=v;if(x.x.phone&&!x.p.phone)up.phone=nd(x.x.phone);if(Object.keys(up).length){b.update(S.db.doc("patients/"+pid),up);nU++}}
+      if(x.prog&&Object.keys(x.prog.sel).length){const ex=x.p?await S.db.doc("plans/"+pid).get().catch(()=>null):null;const has=ex?.exists&&Object.values(ex.data().sel||{}).some(v=>v.on);
+        if(!has||over){b.set(S.db.doc("plans/"+pid),{pid,name:String(x.x.name).trim(),...x.prog,hep:{items:{},sex:"",note:""},updatedAt:at,updatedBy:S.mySid||S.role,updatedName:me,createdAt:at,createdName:me,changes:firebase.firestore.FieldValue.arrayUnion({by:S.mySid||S.role,name:me,at,what:"اتدخّل من الورق"})},{merge:true});nP++}}}
+    await b.commit()}
+  audit("patient","دخّل ملفات من الورق",{info:`${nN} جديد · ${nU} اتحدّث · ${nP} برنامج`});closeSheet();toast(`اتدخّل: ${nN} مريض جديد · ${nU} اتحدّث · ${nP} برنامج`)}
 /* ---------- patient file ---------- */
 function reopenPatient(pid){const cur=document.querySelector(".sheet");setTimeout(()=>{if(cur&&cur.isConnected)sheetPatient(pid)},300)} // only if that same sheet is still open
 function packTitle(k){return /باكدج|باقة/.test(k.name||"")?k.name:`باكدج ${k.name}`}
@@ -3181,7 +3208,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -3415,6 +3442,8 @@ document.addEventListener("click",async e=>{
     case "quickAdd":sheetQuick();break;
     case "saveQuick":guard(t,saveQuick);break;
     case "pasteList":sheetPaste();break;
+    case "impPaper":sheetImport();break;
+    case "impSave":guard(t,impSave);break;
     case "savePaste":guard(t,savePaste);break;
     case "newPackType":sheetPackType(null);break;
     case "editPackType":sheetPackType(id);break;
