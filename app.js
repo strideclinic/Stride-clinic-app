@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="19 نوفمبر · 109";
+const APP_VERSION="19 نوفمبر · 110";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -141,7 +141,7 @@ function setupRoleSubs(){
   }
   if(S.role!=="owner")r.push(sub(c("pay").where("sid","==",S.mySid),o=>S.mypay=o)); // my own salary, published once the month is over
   else r.push(sub(c("pay").where("month","==",prevMonth(today().slice(0,7))),o=>S.payPub=o));
-  if(S.role==="owner"){r.push(sub(c("priv"),o=>{S.privMeta=o.meta||{};S.rent=o.rent||null;const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
+  if(S.role==="owner"){r.push(sub(c("priv"),o=>{S.privMeta=o.meta||{};S.rent=o.rent||null;S.reviewUrl=o.review?.url||"";const cl={};for(const [k,v] of Object.entries(o))if(k.startsWith("close_"))cl[k.slice(6)]=v;S.closes=cl}));r.push(sub(c("audit").where("t",">=",Date.now()-90*864e5),o=>S.audit=o));r.push(subDoc("priv/config",d=>S.config=d||{}));r.push(subDoc("priv/leaves",d=>S.leaves=d?.list||[]));r.push(subDoc("priv/warnings",d=>S.warnings=d?.list||[]));r.push(subDoc("priv/precomm",d=>S.precomm=d?.list||[]));r.push(subDoc("priv/installments",d=>S.inst=d?.list||[]));r.push(subDoc("priv/bonuses",d=>S.bonuses=d?.list||[]));r.push(subDoc("priv/adjust",d=>S.adjust=d||{}))}
 }
 let prunedA=false;
 function pruneAppts(){ // finished appointments older than 4 months: the visit itself is the lasting record
@@ -611,10 +611,11 @@ function pfProgress(){const s=PL.s;return `<div class="pf-goals">${[0,1,2,3].map
     <textarea data-pfn="note" data-i="${i}" rows="2" placeholder="Notes">${pfE(r.note||"")}</textarea></div>`).join("")||`<p class="sub">لسه مفيش Progress Note.</p>`}</div>
   <button class="btn sm teal" data-act="pfNoteAdd">+ زوّد Progress Note النهارده</button>`}
 function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).slice(-15).reverse();const tab=PL.tab,cnt=r=>Object.keys(s.sel).filter(k=>k.startsWith(r+".")&&s.sel[k].on).length;
-  const tabs=[["up",`Upper (${cnt("up")})`],["low",`Lower (${cnt("low")})`],["prog",`Progress Note (${s.notes.length})`],["hep",`تمارين البيت (${Object.values(s.hep.items).filter(v=>v.on).length})`],["cm",`كومنتات (${cm.length})`]];
+  const tabs=[["up",`Upper (${cnt("up")})`],["low",`Lower (${cnt("low")})`],["prog",`Progress Note (${s.notes.length})`],["hep",`تمارين البيت (${Object.values(s.hep.items).filter(v=>v.on).length})`],["trk",`التحسن (${(d.track||[]).length})`],["cm",`كومنتات (${cm.length})`]];
   let body="";if(tab==="up"||tab==="low")body=(PL.edit?pfRegionEdit(tab)+pfAgentsEdit():(pfRegionView(tab)+pfAgentsView())||`<p class="sub">مفيش حاجة متعلّم عليها هنا. دوس «عدّل الفورم».</p>`);
   else if(tab==="prog")body=pfProgress();
   else if(tab==="hep")body=hepTab();
+  else if(tab==="trk")body=trkTab();
   else body=`<div class="list">${cm.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t"><b>${esc(c.name||"")}</b> <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m" style="white-space:pre-wrap">${esc(c.text)}</span></div>`).join("")||`<p class="sub">مفيش كومنتات لسه.</p>`}</div>
     <label class="f">اكتب كومنت<textarea id="pl_c" rows="3" placeholder="مثلًا: العيان اتحسن في الثني، زودت التقوية"></textarea></label><button class="btn teal" data-act="planComment">ابعت الكومنت</button>
     ${ch.length?`<details style="margin-top:12px"><summary style="cursor:pointer" class="sub">التعديلات اللي حصلت (${(d.changes||[]).length})</summary><div class="list">${ch.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t">${esc(c.name)} <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m">${esc(c.what)}</span></div>`).join("")}</div></details>`:""}`;
@@ -626,7 +627,7 @@ function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).sli
   <div class="pf" id="pf_body" dir="ltr" style="text-align:left">${body}</div>
   ${tab==="up"||tab==="low"?`<label class="f">Other / ملاحظات<textarea id="pl_other" rows="2" ${PL.edit?"":"readonly"}>${pfE(s.other)}</textarea></label>`:""}
   <div class="err" id="formErr"></div>
-  ${tab!=="cm"?`<div class="bar" style="position:sticky;bottom:0;background:var(--bg,#f4f7fb);padding:8px 0">${(tab==="up"||tab==="low")&&!PL.edit?`<button class="btn" data-act="pfEdit">عدّل الفورم</button>`:""}${!PL.edit&&PL.d.updatedAt&&tab!=="hep"?`<button class="btn" data-act="planPdf">PDF / طباعة</button>`:""}<button class="btn primary" data-act="planSave">حفظ</button>${PL.edit&&(tab==="up"||tab==="low")?`<button class="btn" data-act="pfView">اعرض المختار بس</button>`:""}</div>`:""}`,
+  ${tab!=="cm"&&tab!=="trk"?`<div class="bar" style="position:sticky;bottom:0;background:var(--bg,#f4f7fb);padding:8px 0">${(tab==="up"||tab==="low")&&!PL.edit?`<button class="btn" data-act="pfEdit">عدّل الفورم</button>`:""}${!PL.edit&&PL.d.updatedAt&&tab!=="hep"?`<button class="btn" data-act="planPdf">PDF / طباعة</button>`:""}<button class="btn primary" data-act="planSave">حفظ</button>${PL.edit&&(tab==="up"||tab==="low")?`<button class="btn" data-act="pfView">اعرض المختار بس</button>`:""}</div>`:""}`,
   root=>{if(same){root.scrollTop=sc;if(root.parentElement)root.parentElement.scrollTop=sc2}root.addEventListener("input",pfInput);root.addEventListener("change",pfInput)})}
 function pfInput(e){const x=e.target,s=PL.s;if(x.dataset.hep){if(x.dataset.hep==="on"&&e.type!=="change")return;if(hepInput(x)==="redraw")drawPlan();return}if(x.id==="pl_dx"){s.dx=x.value;return}if(x.id==="pl_other"){s.other=x.value;return}
   if(x.dataset.pfg!=null){s.goals[+x.dataset.pfg]=x.value;return}
@@ -2096,7 +2097,7 @@ function apptRow(a,view,showDoc){
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
-  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(view==="doctor"?docLabel(kindOf(a)):kindOf(a))}</span> ${view==="doctor"?"":packMismatch(a)} ${view==="doctor"?"":renewChip(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
+  return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${apptChip(a)} ${waitChip(a)} <span class="chip c-teal">${esc(view==="doctor"?docLabel(kindOf(a)):kindOf(a))}</span> ${view==="doctor"?"":packMismatch(a)} ${view==="doctor"?"":renewChip(a)} ${trendChip(a)} ${a.confirmed?`<span class="chip c-ok">ريهام أكدت</span>`:""}</span>
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
@@ -2258,20 +2259,66 @@ async function deskStartGo(id,sid){
   if(!booked.includes(sid))audit("session","غيّر الدكتور وهو داخل",{target:a.patientName,date:a.date,before:booked.map(staffName).join(" و"),after:staffName(sid)});
   closeSheet();toast(`دخل مع ${staffName(sid)}`)}
 async function apptFinishByDesk(id){ptChanged(S.appts[id],"done");await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done"});toast("اتسجل إنها خلصت")}
-function apptEnd(id){ // doctor finishing: optional comment + photos, then stamp the end time
-  const a=S.appts[id];if(!a)return;entryAppt=a;
+async function apptEnd(id){ // doctor finishing: comment + progress (required) + photos, then stamp the end time
+  const a=S.appts[id];if(!a)return;entryAppt=a;if(a.patientId)await trkLoad([a.patientId]);
   openSheet("خلصت الجلسة",`<div class="note">${esc(a.patientName)} · ${esc(kindOf(a))}${a.start?` · بدأت ${esc(a.start)}${a.startBy&&a.startBy!==S.mySid?` مع ${esc(staffName(a.startBy))}`:""}`:""}</div>
-  <label class="f">كومنت (اختياري)<textarea id="e_note" placeholder="مثلاً الحالة اتحسنت، أو كملت الجلسة بدل د. سلمى"></textarea></label>
+  ${trackFields(a)}
+  <label class="f">كومنت على الحالة <b style="color:var(--bad)">*</b><textarea id="e_note" placeholder="مثلاً: الثني بقى أحسن، زودت تمارين التقوية"></textarea></label>
   <div class="sec-title"><span class="sub">صور (لحد ${MEDIA_MAX})</span><label class="btn sm">+ صورة<input type="file" id="e_file" accept="image/*" multiple hidden></label></div>
   <div class="photos" id="e_media"></div><div class="err" id="formErr"></div>
   <button class="btn primary" data-act="saveApptEnd" data-id="${id}">سجّل إنها خلصت</button>`,
   ()=>{entryMedia=[];drawEntryMedia(false);const f=document.getElementById("e_file");f.addEventListener("change",()=>addEntryMedia(f))});
 }
-async function saveApptEnd(id){if(lockBlock(S.appts[id]?.date))return;
-  ptChanged(S.appts[id],"done");
-  await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done",docNote:val("e_note").trim(),media:entryMedia.slice(0,MEDIA_MAX)});
+async function saveApptEnd(id){if(lockBlock(S.appts[id]?.date))return;const a=S.appts[id];
+  const note=val("e_note").trim(),tr=readTrack();if(tr.err)return setErr(tr.err);if(note.length<5)return setErr("لازم تكتب كومنت على الحالة قبل ما تسجّل إنها خلصت");
+  ptChanged(a,"done");
+  await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done",docNote:note,track:tr.v,media:entryMedia.slice(0,MEDIA_MAX)});
+  if(a.patientId)await S.db.doc("plans/"+a.patientId).set({pid:a.patientId,name:a.patientName||"",track:firebase.firestore.FieldValue.arrayUnion({aid:id,date:a.date,by:S.mySid,name:meName(),at:Date.now(),...tr.v,text:note,exam:a.kind==="exam"})},{merge:true}).catch(()=>{});
   entryAppt=null;closeSheet();toast("اتسجلت. ريهام هتأكدها.");
 }
+/* measuring progress every session: how the patient is today (better / same / worse), pain 0-10, and one range of motion */
+let TRKC={},TRKL={};
+async function trkLoad(pids,force){const need=[...new Set(pids)].filter(p=>p&&(force||!TRKC[p]||Date.now()-TRKC[p].at>5*60e3)&&!TRKL[p]);if(!need.length)return false;need.forEach(p=>TRKL[p]=1);
+  await Promise.all(need.map(p=>S.db.doc("plans/"+p).get().then(x=>{TRKC[p]={track:(x.exists?x.data().track:null)||[],at:Date.now()}}).catch(()=>{TRKC[p]={track:[],at:Date.now()}}).finally(()=>delete TRKL[p])));return true}
+/* is the patient getting better? looks at the last sessions the doctors scored */
+function trendOf(track){const T=(track||[]).filter(x=>!x.exam).sort((a,b)=>(a.date+a.at).localeCompare(b.date+b.at));if(T.length<3)return null;
+  const last3=T.slice(-3),first=T.find(x=>x.pain!=null),lp=T[T.length-1].pain,p3=T[T.length-3].pain;
+  const noBetter=last3.every(x=>x.st!=="better"),painStuck=lp==null||p3==null||lp>=p3;
+  if(noBetter&&painStuck)return{k:"bad",n:T.length,t:`مش بيتحسن آخر ${last3.length} جلسات`};
+  const drop=first&&lp!=null?first.pain-lp:0;
+  if(drop>=3||(first?.pain>0&&lp!=null&&lp<=first.pain/2)||T.slice(-2).every(x=>x.st==="better"))return{k:"good",n:T.length,t:first&&lp!=null&&drop>0?`بيتحسن · الوجع ${first.pain}←${lp}`:"بيتحسن"};
+  return{k:"mid",n:T.length}}
+function trendChip(a){if(S.role!=="owner"||!a.patientId)return "";const c=TRKC[a.patientId];if(!c)return "";const t=trendOf(c.track);if(!t||t.k==="mid")return "";
+  if(t.k==="bad")return `<button class="chip c-bad" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}" data-tab="trk" style="border:0;cursor:pointer">⚠️ ${esc(t.t)} · محتاج تشوفه</button>`;
+  const asked=S.patients[a.patientId]?.reviewAskedAt;return `<button class="chip c-ok" data-act="askReview" data-id="${a.patientId}" style="border:0;cursor:pointer">✅ ${esc(t.t)}${asked?" · اتطلب ريفيو":" · اطلب ريفيو ›"}</button>`}
+function reviewUrl(){return S.reviewUrl||""}
+function sheetReviewLink(pid){openSheet("لينك تقييم جوجل",`<p class="sub" style="margin:0">مرة واحدة بس: افتح Google Maps على المركز ← «Share a review» أو «اكتب مراجعة» ← انسخ اللينك والصقه هنا.</p>
+  <label class="f">اللينك<input id="rv_url" dir="ltr" value="${esc(reviewUrl())}" placeholder="https://g.page/r/..."></label><div class="err" id="formErr"></div><button class="btn primary" data-act="reviewLinkSave" data-id="${pid||""}">حفظ</button>`)}
+async function askReview(pid){const url=reviewUrl();if(!url)return sheetReviewLink(pid);const p=S.patients[pid];if(!p)return;const first=(p.name||"").trim().split(/\s+/)[0];const t=p.gender==="أنثى"?`أستاذة ${first}`:p.gender==="ذكر"?`أستاذ ${first}`:"يا فندم";
+  const msg=`أهلًا ${t} 🙏 مبسوطين جدًا إن حضرتك بتتحسن معانا في Stride Clinic. لو عندك دقيقة، تقييمك لينا على جوجل هيفرق معانا جدًا:\n${url}\nشكرًا لحضرتك ❤️`;
+  const n=waNumber(p.phone)||waNumber(p.phone2);window.open(`https://wa.me/${n||""}?text=${encodeURIComponent(msg)}`,"_blank","noopener");
+  await S.db.doc("patients/"+pid).update({reviewAskedAt:Date.now()}).catch(()=>{});p.reviewAskedAt=Date.now();render()}
+/* progress chart: pain (0-10) and range of motion over the sessions */
+function trkSvg(pts,max,unit,color,inv){if(pts.length<1)return "";const W=320,H=130,L=28,R=10,T=10,B=24,iw=W-L-R,ih=H-T-B,n=pts.length;const X=i=>L+(n===1?iw/2:i*iw/(n-1)),Y=v=>T+ih-(v/max)*ih;
+  const grid=[0,.25,.5,.75,1].map(f=>{const v=Math.round(max*f);return `<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-opacity=".12"/><text x="${L-4}" y="${Y(v)+3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">${v}</text>`}).join("");
+  const path=pts.map((p,i)=>`${i?"L":"M"}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;height:auto;color:var(--ink,#1c2434)" role="img" aria-label="${unit}">${grid}<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>${pts.map((p,i)=>`<circle cx="${X(i)}" cy="${Y(p.v)}" r="3.5" fill="${color}"/><text x="${X(i)}" y="${Y(p.v)-7}" font-size="9" text-anchor="middle" fill="currentColor">${p.v}</text>${n<=8||i===0||i===n-1?`<text x="${X(i)}" y="${H-8}" font-size="8" text-anchor="middle" fill="currentColor" opacity=".6">${esc(p.d.slice(8,10)+"/"+p.d.slice(5,7))}</text>`:""}`).join("")}</svg>`}
+function trkTab(){const T=(PL.d.track||[]).slice().sort((a,b)=>(a.date+a.at).localeCompare(b.date+b.at)),t=trendOf(T);
+  if(!T.length)return `<p class="sub" dir="rtl">لسه مفيش قياسات. كل ما الدكتور يدوس «خلصت» بيكتب الوجع وحالة العيان، والرسم بيطلع هنا لوحده.</p>`;
+  const pain=T.filter(x=>x.pain!=null).map(x=>({v:x.pain,d:x.date}));const romL=(T.filter(x=>x.romL).slice(-1)[0]||{}).romL;const rom=romL?T.filter(x=>x.romL===romL&&x.rom!=null).map(x=>({v:x.rom,d:x.date})):[];
+  const stc={better:"c-ok",same:"c-warn",worse:"c-bad"},stl=Object.fromEntries(TRK_ST);
+  return `<div dir="rtl" style="text-align:right">${t&&t.k!=="mid"?`<div class="note" style="border-color:${t.k==="bad"?"var(--bad)":"var(--ok)"}">${t.k==="bad"?"⚠️ ":"✅ "}${esc(t.t)}</div>`:""}
+  <h4>الوجع (من 10)</h4>${trkSvg(pain,10,"الوجع","#d64545")}
+  ${rom.length?`<h4 dir="ltr">${esc(romL)} (°)</h4>${trkSvg(rom,Math.max(20,Math.ceil((Math.max(...rom.map(x=>x.v))+10)/20)*20),"ROM","#2b6cb0")}`:""}
+  <div class="list">${T.slice().reverse().map(x=>`<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t">${esc(dmy(x.date))} · ${esc(x.name||"")}${x.exam?" · كشف":""}</span><span class="end">${x.st?`<span class="chip ${stc[x.st]}">${esc(stl[x.st])}</span>`:""}</span>
+   <span class="m" style="grid-column:1/-1">${x.pain!=null?`الوجع ${x.pain}/10`:""}${x.romL?` · ${esc(x.romL)} ${x.rom}°`:""}${x.text?` · ${esc(x.text)}`:""}</span></div>`).join("")}</div></div>`}
+const TRK_ST=[["better","أحسن 🟢"],["same","زي ما هو 🟡"],["worse","أوحش 🔴"]];
+function trackFields(a){const last=(TRKC[a.patientId]?.track||[]).filter(x=>x.romL).slice(-1)[0];
+  return `<div class="f"><span>العيان النهارده <b style="color:var(--bad)">*</b></span><div class="seg">${TRK_ST.map(([k,l])=>`<label><input type="radio" name="e_st" value="${k}"> ${l}</label>`).join("")}</div></div>
+  <div class="f"><span>الوجع من 10 <b style="color:var(--bad)">*</b> <span class="sub">(0 = مفيش وجع)</span></span><div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">${[0,1,2,3,4,5,6,7,8,9,10].map(n=>`<label class="btn sm" style="justify-content:center;gap:4px;padding:8px 0"><input type="radio" name="e_pain" value="${n}" style="width:auto;margin:0"> ${n}</label>`).join("")}</div></div>
+  <div class="grid2"><label class="f">مدى الحركة (اختياري)<input id="e_romL" dir="ltr" value="${esc(last?.romL||"")}" placeholder="Knee flexion"></label><label class="f">كام درجة<input id="e_rom" inputmode="numeric" placeholder="${last?.rom!=null?`آخر مرة ${last.rom}°`:"مثلاً 95"}"></label></div>`}
+function readTrack(){const st=radio("e_st"),pn=radio("e_pain");if(!st)return{err:"اختار العيان النهارده أحسن ولا زي ما هو ولا أوحش"};if(pn==null||pn==="")return{err:"اختار درجة الوجع من 0 لـ 10"};
+  const romL=val("e_romL").trim(),rs=val("e_rom").trim(),rom=rs===""?null:Math.round(num(rs));return{v:{st,pain:+pn,...(romL&&rom!=null?{romL,rom}:{})}}}
 function sheetApptConfirm(id){
   const a=S.appts[id];if(!a)return;const p=S.patients[a.patientId];const prov=provisionalCredit(a);
   const involved=[...new Set([a.startBy,a.endBy,...apptDocs(a)].filter(x=>x&&isDoc(x)))];
@@ -2300,7 +2347,9 @@ async function saveApptConfirm(id){
   (a.media||[]).forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));
   b.update(S.db.doc("appts/"+id),{confirmed:true,confirmedBy:S.mySid,confirmedAt:Date.now(),visitId:id,credit});
   await b.commit();closeSheet();toast("اتأكدت واتسجلت الجلسة");
+  if(!(a.docNote||"").trim()){const ds=[...new Set([a.endBy,a.startBy,credit.a,credit.b].filter(x=>x&&isDoc(x)))];alertOwner(`${ds.map(staffName).join(" و")||"الدكتور"} مكتبش كومنت`,`على جلسة ${a.patientName} (${dmy(a.date)})`,3)}
 }
+function cameAppt(a){return ["arrived","started","done"].includes(a.status)||!!S.visits[a.id]||!!a.confirmed}
 /* ---------- sessions of the day: what actually happened (came / cancelled, when, with whom, paid) ---------- */
 const SESS_STATUS=[["booked","مستني"],["arrived","وصل"],["started","جوه الجلسة"],["done","خلصت"],["noshow","محضرش"],["cancelled","كنسل"]];
 function lateMin(a){const b=mins(a.time),x=mins(a.arrived);return b!=null&&x!=null?x-b:null}
@@ -2339,7 +2388,7 @@ function statSheet(k){
   let title="",body="";
   if(k==="came"){title="اللي جم";
     const st=a=>a.status==="arrived"?`<span class="chip c-warn">مستني${waitMin(a)!=null?` من ${hm(waitMin(a))}`:""}</span>`:a.status==="started"?`<span class="chip c-acc">جوه دلوقتي${apptElapsed(a)!=null?` من ${hm(apptElapsed(a))}`:""}</span>`:`<span class="chip c-ok">خلص${a.end?` ${esc(hour12(a.end))}`:""}</span>`;
-    const list=appts.filter(a=>["arrived","started","done"].includes(a.status));
+    const list=appts.filter(cameAppt);
     const order={arrived:0,started:1,done:2};list.sort((a,b)=>order[a.status]-order[b.status]||(a.time||"").localeCompare(b.time||""));
     body=(list.length||loose.length)?`<div class="list">${list.map(a=>row(esc(a.patientName),st(a),esc([`ميعاده ${hour12(a.time)}`,docs(a),apptTimes(a)].filter(Boolean).join(" · ")))).join("")}${loose.map(v=>row(esc(v.patientName),`<span class="chip c-ok">اتسجلت</span>`,esc(visitDocs(v)))).join("")}</div>`:`<div class="empty"><b>محدش جه لسه</b></div>`;
     const c={arrived:list.filter(a=>a.status==="arrived").length,started:list.filter(a=>a.status==="started").length,done:list.filter(a=>a.status==="done").length+loose.length};
@@ -2367,7 +2416,8 @@ function sessionRow(a){
     +`<button class="btn sm ${needsRecord(a)?"teal":""}" data-act="openSession" data-id="${a.id}">${needsRecord(a)?"أكّد":"فتح"}</button>`;
   return `<div class="row stack" style="cursor:default"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} ${dup?`<span class="chip c-bad">حجز مكرر</span>`:""} ${apptChip(a)} ${waitChip(a)} ${lateChip(a)} ${payChip(a)}</span>
   <span class="end bar">${quick}</span>
-  <span class="m">${packMismatch(a)} ${[kindOf(a),docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
+  <span class="m">${packMismatch(a)} ${[kindOf(a),docs,a.status==="cancelled"&&a.cancelReason?a.cancelReason:""].filter(Boolean).map(esc).join(" · ")}${a.status==="done"&&!(a.docNote||"").trim()&&!v?` <span class="chip c-warn">الدكتور مكتبش كومنت</span>`:""}</span><span class="end m">${esc(apptTimes(a))}</span>
+  ${renewChip(a)||trendChip(a)?`<span class="m" style="grid-column:1/-1">${renewChip(a)} ${trendChip(a)}</span>`:""}</div>`;
 }
 let PENDBACK=false;
 function sheetPending(){const L=Object.values(S.appts).filter(needsRecord).sort((a,b)=>(a.date+(a.time||"")).localeCompare(b.date+(b.time||"")));
@@ -2381,7 +2431,8 @@ function vSessions(){
   const ps=Object.values(S.payments).filter(p=>p.date===d);
   let remain=0;const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta;
   new Set([...appts.filter(a=>!["noshow","cancelled"].includes(a.status)).map(a=>a.patientId),...loose.map(v=>v.patientId)]).forEach(pid=>{const p=S.patients[pid];if(p)remain+=Math.max(0,(p.charged||0)-(p.paid||0))});
-  const came=appts.filter(a=>["arrived","started","done"].includes(a.status)).length+loose.length;
+  const came=appts.filter(cameAppt).length+loose.length;
+  if(S.role==="owner")trkLoad(appts.map(a=>a.patientId)).then(ch=>{if(ch)render()});
   const missing=Object.values(S.appts).filter(needsRecord);
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span><button class="btn" data-act="newPay">+ دفعة</button><button class="btn primary" data-act="newWalkin">+ جلسة من غير ميعاد</button></div>
   ${lockNote(d)}${dupPanel()}
@@ -3218,7 +3269,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -3396,7 +3447,9 @@ document.addEventListener("click",async e=>{
     case "debts":sheetDebts();break;
     case "lost":sheetLost();break;
     case "guide":sheetGuide();break;
-    case "plan":sheetPlan(id,t.dataset.name);break;
+    case "plan":if(t.dataset.tab){PL={pid:id,tab:t.dataset.tab}}sheetPlan(id,t.dataset.name);break;
+    case "askReview":askReview(id);break;
+    case "reviewLinkSave":guard(t,async()=>{const u=val("rv_url").trim();if(!/^https?:\/\//.test(u))return setErr("الصق اللينك كامل");await S.db.doc("priv/review").set({url:u});S.reviewUrl=u;closeSheet();toast("اتحفظ");if(id)askReview(id)});break;
     case "planPdf":planPdf(t);break;
     case "pfCustom":{const [r,c]=id.split("|"),inp=document.getElementById(`pfc_${r||"ag"}_${c}`),n=(inp?.value||"").trim().replace(/[.|]/g," ");if(!n){toast("اكتب اسم الحاجة الأول");break}
       const k=c==="ag"?`ag.${n}`:c==="ex"?`${r}.ex.Other.${n}`:`${r}.${c}.${n}`;if(PFI[k]||PL.s.sel[k]){toast("موجودة في الفورم");break}
