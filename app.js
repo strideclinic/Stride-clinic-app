@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="15 نوفمبر · 108";
+const APP_VERSION="19 نوفمبر · 109";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1983,10 +1983,10 @@ function flushPatients(b,acc){
   if(Object.keys(a.use).length||Object.keys(a.pay).length)u.packs=(S.patients[pid]?.packs||[]).map(k=>{let x=k;if(a.use[k.id])x={...x,used:Math.max(0,(x.used||0)+a.use[k.id])};if(a.pay[k.id])x={...x,paid:(x.paid||0)+a.pay[k.id]};return x});
   b.update(S.db.doc("patients/"+pid),u)}}
 /* a كشف is not a session: it is counted apart, so the first session after it is session 1 */
-function isExamVisit(v,examIds){return !!v&&(v.kind==="exam"||(examIds?examIds.has(v.apptId||v.id):S.appts[v.apptId||v.id]?.kind==="exam")||(!v.packId&&/^\s*كشف|تقييم/.test(v.typeName||"")))}
+function isExamVisit(v,examIds){return !!v&&(v.kind==="exam"||(examIds?examIds.has(v.apptId||v.id):S.appts[v.apptId||v.id]?.kind==="exam")||/^\s*(كشف|تقييم)/.test(v.typeName||""))} /* a كشف is never a session, even when it was put on a package */
 function visitEffect(acc,v,sign){if(!v)return;const ex=isExamVisit(v),n=ex?{de:sign}:{dn:sign};
   if(v.payerId){const py=acc.__py||(acc.__py={});py[v.payerId]=(py[v.payerId]||0)+sign*(v.net||0);pp(acc,v.patientId,{...n,date:sign>0?v.date:null});return} // charged to the club, not the player
-  pp(acc,v.patientId,{dc:sign*(v.net||0),dp:sign*(v.paid||0),...n,date:sign>0?v.date:null,pack:v.packId,use:sign})}
+  pp(acc,v.patientId,{dc:sign*(v.net||0),dp:sign*(v.paid||0),...n,date:sign>0?v.date:null,pack:ex?null:v.packId,use:ex?0:sign})} /* the exam doesn't take a session from the package: the visit after it is session 1 */
 /* ---------- doctor entry ---------- */
 function sheetEntry(e,fromAppt){
   entryAppt=fromAppt||null;
@@ -2131,6 +2131,7 @@ function sheetAppt(id,pid){
   openSheet(id?"تعديل الحجز":"حجز جديد",`
   <label class="f">المريض${patientPicker("ap_pat",cur)}</label>${newPatientFields("ap")}
   <div class="seg"><label><input type="radio" name="ap_kind" value="exam" ${a.kind==="exam"?"checked":""}> كشف</label><label><input type="radio" name="ap_kind" value="session" ${a.kind!=="exam"?"checked":""}> جلسة</label></div>
+  ${id?"":`<p class="sub" id="ap_firstnote" hidden style="margin:0">أول زيارة ليه، فاتعلّمت «كشف». لو دي جلسة أولى من غير كشف اختار «جلسة».</p>`}
   <label class="f">نوع الجلسة<select id="ap_type">${typeOptions(a.kind==="exam"?a.typeId:defType(ds[0],a.typeId))}</select></label>
   <div class="note" id="ap_info"></div>
   <div class="grid2"><label class="f">الدكتور<select id="ap_doc"><option value="">اختار الدكتور</option>${docOpts(ds[0])}</select></label>
@@ -2147,7 +2148,7 @@ function sheetAppt(id,pid){
       if(!p){el.textContent=val("ap_pat").trim()?"مريض جديد.":"اختار المريض.";return}
       const k=radio("ap_kind")||"session",tid=val("ap_type");const pk=k==="exam"?null:packsFor(p.id,tid)[0];
       el.innerHTML=esc(withNo(sessionInfo(p.id,k,id,val("ap_date"),val("ap_time"),tid).label,Math.round(num(val("ap_no")))||null))+(k==="exam"?"":pk?" "+packMoneyChip(pk):tid?" · مفيش باكدج من النوع ده":" · اختار نوع الجلسة")+" · الحساب كله: "+patBalChip(p.id)};
-    ["ap_pat","ap_date","ap_time","ap_no"].forEach(x=>document.getElementById(x).addEventListener("input",upd));document.getElementById("ap_type").addEventListener("change",upd);document.querySelectorAll('input[name="ap_kind"]').forEach(x=>x.addEventListener("change",upd));upd()});
+    ["ap_pat","ap_date","ap_time","ap_no"].forEach(x=>document.getElementById(x).addEventListener("input",upd));document.getElementById("ap_type").addEventListener("change",upd);document.querySelectorAll('input[name="ap_kind"]').forEach(x=>x.addEventListener("change",upd));if(!id)autoExam("ap_kind","ap_pat","ap_firstnote",null);upd()});
 }
 async function saveAppt(id){
   const pv=val("ap_pat").trim(),doc=val("ap_doc"),doc2=val("ap_doc2"),date=val("ap_date"),time=val("ap_time"),dur=num(val("ap_dur"))||60,kind=radio("ap_kind")||"session";
@@ -2188,7 +2189,7 @@ async function sheetCountReview(){
     else if(x.tagExam.length)cnt.push({p,was:p.count||0,s:x.s,e:x.e,tag:x.tagExam,quiet:true});
     for(const k of p.packs||[]){const rec=(x.pk[k.id]||0)+(k.preUsed||0);if(rec>k.sessions)packs.push({p,k,rec,over:true});else if((k.used||0)<rec)packs.push({p,k,rec,low:true});else if((k.used||0)>rec&&!k.refund)packs.push({p,k,rec,high:true})}
     for(const kid of Object.keys(x.pk))if(!(p.packs||[]).some(k=>k.id===kid))lost.push({p,kid,n:x.pk[kid]})}
-  RV={cnt,packs,noType};RVALL=vs;const LP=lymphPlan(vs);
+  RV={cnt,packs,noType,examPack};RVALL=vs;const LP=lymphPlan(vs);
   const el=document.getElementById("rv_box");if(!el)return;const loud=cnt.filter(c=>!c.quiet);
   const sec=(t,rows)=>rows.length?`<h3 style="font-size:14px;margin:10px 0 4px">${t}</h3><div class="list">${rows.join("")}</div>`:"";
   el.outerHTML=`<div class="note">راجعت ${vs.length} جلسة وكشف لـ ${Object.keys(S.patients).length} مريض.${!loud.length&&!packs.length&&!noType.length&&!examPack.length&&!lost.length&&!orphan.length?" <b>كله مظبوط ✓</b>":""}</div>
@@ -2202,7 +2203,7 @@ async function sheetCountReview(){
   ${LP?`<div class="panel" style="border-color:var(--warn);gap:8px"><h3 style="margin:0;font-size:15px">أنواع الليمفيديما</h3><p class="sub" style="margin:0">«${esc(LP.sessT.name)}» هيبقى اسمه <b>جلسة ليمفيديما</b> (800)${LP.examT?"":"، وهيتعمل نوع جديد <b>كشف ليمفيديما</b> (600) بنفس نسب الدكاترة اللي بره"}. 
     ${LP.toSess.length?`${LP.toSess.length} جلسة بـ 800 كانت متسجلة كشف هترجع جلسة. `:""}${LP.visits.length?`${LP.visits.length} كشف بـ 600 هيتنقل لـ «كشف ليمفيديما»: ${LP.visits.slice(0,8).map(v=>esc(v.patientName)).join("، ")}${LP.visits.length>8?"…":""}. `:""}${LP.manual.length?`و${LP.manual.length} سطر بره السيستم بـ 600 (${LP.manual.map(e=>esc(e.patient)).join("، ")}). `:""}</p>
     <button class="btn primary" data-act="lymphFix">صلّح الليمفيديما</button></div>`:""}
-  ${cnt.length||packs.some(r=>r.low)||noType.some(v=>ourDoc(v.doctorId))?`<button class="btn primary" data-act="rvFix">صلّح العدد${packs.some(r=>r.low)?" والباكدجات الناقصة":""}${noType.some(v=>ourDoc(v.doctorId))?" ونوع الجلسات":""}</button><p class="sub" style="margin:0">الفلوس مش هتتغير، العدد بس. والتصليح بيتسجل في سجل التعديلات.</p>`:""}`;
+  ${cnt.length||examPack.length||packs.some(r=>r.low)||noType.some(v=>ourDoc(v.doctorId))?`<button class="btn primary" data-act="rvFix">صلّح العدد${examPack.length?" ورجّع الكشوفات للباكدجات":""}${packs.some(r=>r.low)?" والباكدجات الناقصة":""}${noType.some(v=>ourDoc(v.doctorId))?" ونوع الجلسات":""}</button><p class="sub" style="margin:0">الفلوس مش هتتغير، العدد بس. والتصليح بيتسجل في سجل التعديلات.</p>`:""}`;
 }
 let RVALL=null;
 function lymphPlan(all){if(!all){const m={};for(const v of RVALL||[])m[v.id]=v;Object.assign(m,S.visits);all=Object.values(m)} // everything read by the review + what's live now // "ليمفيديما / كشف" → «جلسة ليمفيديما» (800) and «كشف ليمفيديما» (600)
@@ -2232,6 +2233,9 @@ async function reviewFix(){
   if(!RV)return;const ops=[];const pt=physioId();
   for(const c of RV.cnt){ops.push(["patients/"+c.p.id,{count:c.s,exams:c.e}]);for(const id of c.tag)ops.push(["visits/"+id,{kind:"exam"}])}
   const byP={};for(const r of RV.packs)if(r.low)(byP[r.p.id]=byP[r.p.id]||{})[r.k.id]=r.rec;
+  /* an exam that took a session from a package: take it off the package and give the session back */
+  for(const v of RV.examPack||[]){ops.push(["visits/"+v.id,{packId:null,packName:firebase.firestore.FieldValue.delete(),kind:"exam"}]);const k=(S.patients[v.patientId]?.packs||[]).find(k=>k.id===v.packId);
+    if(k){const m=(byP[v.patientId]=byP[v.patientId]||{});const hi=RV.packs.find(r=>r.k.id===k.id&&r.high);if(hi){const cur=m[k.id]!=null?m[k.id]:(k.used||0);m[k.id]=Math.max(hi.rec,cur-1)}}} /* only when the package shows more used than its real sessions */
   for(const [pid,m] of Object.entries(byP))ops.push(["patients/"+pid,{packs:S.patients[pid].packs.map(k=>m[k.id]!=null?{...k,used:m[k.id]}:k)}]);
   if(pt)for(const v of RV.noType)if(ourDoc(v.doctorId))ops.push(["visits/"+v.id,{typeId:pt,typeName:typeName(pt)}]);
   for(let i=0;i<ops.length;i+=400){const b=S.db.batch();ops.slice(i,i+400).forEach(([p,d])=>b.update(S.db.doc(p),d));await b.commit()}
@@ -2464,12 +2468,20 @@ async function doCancel(id,reason){const a=S.appts[id],old=S.visits[id];if(lockB
   if(old){b.delete(S.db.doc("visits/"+id));visitEffect(acc,old,-1);flushPatients(b,acc)}
   await b.commit();audit("session",noshow?"سجّل إنه محضرش":"لغى جلسة",{target:a.patientName,date:a.date,info:[reason,old?`واتمسح تسجيلها (مدفوع ${money(old.paid||0)})`:""].filter(Boolean).join(" · "),del:!!old&&!!old.paid});
   if(old){delete S.live.visits[id];forget("visits",id)}closeSheet();toast(noshow?"اتسجل إنه محضرش":"اتلغى")}
+/* first visit = كشف: a new patient, or one with no exam, no session and no package yet, is booked as an exam; pick «جلسة» for a first session without an exam */
+function firstVisit(p,exceptId){if(!p)return true;if(num(p.exams)||p.examDate||num(p.count)||(p.packs||[]).length)return false;
+  return !Object.values(S.appts).some(a=>a.id!==exceptId&&a.patientId===p.id&&!["cancelled","noshow"].includes(a.status))}
+function autoExam(kindName,patId,noteId,apptId){let touched=false;document.querySelectorAll(`input[name="${kindName}"]`).forEach(x=>x.addEventListener("change",e=>{if(e.isTrusted)touched=true}));
+  const run=()=>{if(touched)return;const v=val(patId).trim();if(!v)return;const p=findPatient(v),first=firstVisit(p,apptId);const ex=document.querySelector(`input[name="${kindName}"][value="exam"]`),se=document.querySelector(`input[name="${kindName}"][value="session"]`);
+    if(first){if(ex&&!ex.checked){ex.checked=true;ex.dispatchEvent(new Event("change"))}}const n=document.getElementById(noteId);if(n)n.hidden=!first};
+  document.getElementById(patId).addEventListener("input",run);document.getElementById(patId).addEventListener("change",run);run()}
 function sheetWalkin(){
   openSheet("جلسة من غير ميعاد",`<label class="f">المريض${patientPicker("w_pat","")}</label>${newPatientFields("w")}
   <div class="seg"><label><input type="radio" name="w_kind" value="exam"> كشف</label><label><input type="radio" name="w_kind" value="session" checked> جلسة</label></div>
+  <p class="sub" id="w_firstnote" hidden style="margin:0">أول زيارة ليه، فاتعلّمت «كشف». لو دي جلسة أولى من غير كشف اختار «جلسة».</p>
   <div class="grid2"><label class="f">الدكتور<select id="w_doc"><option value="">اختار الدكتور</option>${workerOpts().map(([k,n])=>`<option value="${k}">${esc(n)}</option>`).join("")}</select></label>
   <label class="f">نوع الجلسة<select id="w_type">${typeOptions("")}</select></label><label class="f">الساعة<input type="time" id="w_time" value="${S.ui.date===today()?nowHM():""}"></label></div>
-  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveWalkin">كمّل</button>`,()=>watchNewPatient("w","w_pat"));
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="saveWalkin">كمّل</button>`,()=>{watchNewPatient("w","w_pat");autoExam("w_kind","w_pat","w_firstnote",null)});
 }
 async function saveWalkin(){
   const pv=val("w_pat").trim(),doc=val("w_doc"),time=val("w_time"),kind=radio("w_kind")||"session",date=S.ui.date;if(lockBlock(date))return;
