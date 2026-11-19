@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="19 نوفمبر · 112";
+const APP_VERSION="19 نوفمبر · 113";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -442,6 +442,27 @@ function revenue(month){
   const raw=mo.clinic-vin.t+E.moved,tgt=S.adjust?.[month]?.target,adj=tgt!=null?Math.round(num(tgt)-raw):0; // the owner set the month's real total by hand
   return{raw,adj,cash:mo.cash-vin.cash,insta:mo.insta-vin.insta,collected:raw+adj,fromExt:E.moved,extShareCenter:E.shareCenter,vaultIn:vin.t,charged:charged+manual,sessions,unpaid,manual};
 }
+/* compare the day-by-day numbers sent on WhatsApp with what the app has, to find a gap fast */
+function waParse(t,m){t=nd(t).replace(/\[[^\]]*\]/g," ");const y=m.slice(0,4),mm=+m.slice(5,7);const out={days:{},ext:[]};
+  const re=/(\d{1,2})\s*\/\s*(\d{1,2})(?!\d)/g;let x;const hits=[];while((x=re.exec(t)))if(+x[2]===mm&&+x[1]>=1&&+x[1]<=31)hits.push({i:x.index,end:re.lastIndex,d:+x[1]});
+  hits.forEach((h,k)=>{const seg=t.slice(h.end,k+1<hits.length?hits[k+1].i:t.length);const ds=`${y}-${String(mm).padStart(2,"0")}-${String(h.d).padStart(2,"0")}`;
+    let rest=seg;const extM=seg.match(/(د\.?\s*\S+[^\n]*?(نص الشهر|الفترة|حصة|حصه)[^\d\n]*)\s*\n?\s*([\d,.]+)/);if(extM){out.ext.push({label:extM[1].trim(),v:num(extM[3].replace(/,/g,""))});rest=seg.replace(extM[0]," ")}
+    const n=rest.match(/(\d[\d,.]*)/);out.days[ds]=(out.days[ds]||0)+(/لا يوجد|مفيش|ولا حاجة/.test(rest)&&!n?0:n?num(n[1].replace(/,/g,"")):0)});
+  const tail=hits.length?t.slice(0,hits[0].i):t;const em=[...tail.matchAll(/(د\.?\s*\S+[^\n]*?)\s*\n?\s*([\d,.]{3,})/g)];em.forEach(e=>out.ext.push({label:e[1].trim(),v:num(e[2].replace(/,/g,""))}));
+  return out}
+function sheetWaCompare(m){openSheet(`قارن بأرقام الواتساب · ${monthLabel(m)}`,`<p class="sub" style="margin:0">في الواتساب: علّم على رسايل الإيراد كلها ← نسخ (Copy) ← الصقها هنا. السيستم بيطلّع اليوم اللي فيه فرق.</p>
+  <label class="f">رسايل الواتساب<textarea id="wa_t" rows="6" style="width:100%;box-sizing:border-box;min-width:0" placeholder="الاحد ١/١١&#10;٣٦٠٠&#10;الاتنين ٢/١١&#10;٨٥٠٠ …"></textarea></label><div id="wa_out" style="min-width:0;max-width:100%"></div>`,()=>{const t=document.getElementById("wa_t");const run=()=>{document.getElementById("wa_out").innerHTML=waCompareHtml(m,t.value)};t.addEventListener("input",run);run()})}
+function waCompareHtml(m,txt){if(!txt.trim())return "";const money=v=>Math.round(v||0).toLocaleString("en-US"); /* plain numbers so 4 columns fit a phone */const P=waParse(txt,m);const app={};
+  for(let d=1;d<=31;d++){const ds=`${m}-${String(d).padStart(2,"0")}`;if(!ds.startsWith(m)||isNaN(dnum(ds)))continue;const mo=dayMoney(x=>x===ds),vin=vaultIn(x=>x===ds);const v=Math.round(mo.clinic-vin.t);if(v||P.days[ds]!=null)app[ds]=v}
+  const days=[...new Set([...Object.keys(app),...Object.keys(P.days)])].sort();let tw=0,ta=0;
+  const rows=days.map(ds=>{const w=P.days[ds],a=app[ds]||0;if(w!=null)tw+=w;ta+=a;const diff=w==null?null:Math.round(a-w);
+    return `<tr${diff?` style="background:rgba(214,69,69,.10)"`:w==null&&a?` style="background:rgba(230,160,40,.12)"`:""}><td>${["الحد","الاتنين","التلات","الأربع","الخميس","الجمعة","السبت"][new Date(ds+"T12:00").getDay()]} ${+ds.slice(8)}/${+ds.slice(5,7)}</td><td class="money">${w==null?"<span class='sub'>مش مكتوب</span>":money(w)}</td><td class="money">${money(a)}</td><td class="money" style="color:${diff?"var(--bad)":"var(--ok)"}">${diff==null?"—":diff?(diff>0?"زيادة ":"ناقص ")+money(Math.abs(diff)):"✓"}</td></tr>`}).join("");
+  const E=extCenter(m),ew=P.ext.reduce((t,e)=>t+e.v,0);tw+=ew;ta+=E.moved;
+  const extRows=`<tr><td style="word-break:break-word">حصة الدكاترة اللي بره${P.ext.length?`<br><span class="sub">${esc(P.ext.map(e=>`${e.label}: ${money(e.v)}`).join(" · "))}</span>`:""}${Object.keys(E.by).length?`<br><span class="sub">في الأبلكيشن: ${esc(Object.entries(E.by).map(([id,v])=>`${extById(id)?.name||"دكتور"} ${money(v)}`).join(" · "))}</span>`:""}</td><td class="money">${money(ew)}</td><td class="money">${money(E.moved)}</td><td class="money" style="color:${Math.round(E.moved-ew)?"var(--bad)":"var(--ok)"}">${Math.round(E.moved-ew)?(E.moved>ew?"زيادة ":"ناقص ")+money(Math.abs(Math.round(E.moved-ew))):"✓"}</td></tr>`;
+  const R=revenue(m),adj=R.adj?`<p class="sub">الأبلكيشن فيه تعديل يدوي للشهر ده بـ ${money(R.adj)}، فالإجمالي اللي في التقرير ${money(R.collected)}.</p>`:"";
+  return `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;table-layout:fixed;min-width:0"><colgroup><col style="width:31%"><col style="width:23%"><col style="width:23%"><col style="width:23%"></colgroup><style>#wa_out td,#wa_out th{padding:6px 3px;white-space:normal;text-align:center}#wa_out td:first-child,#wa_out th:first-child{text-align:start}</style><tr><th style="text-align:start">اليوم</th><th>واتساب</th><th>الأبلكيشن</th><th>الفرق</th></tr>${rows}${extRows}
+   <tr style="font-weight:800;border-top:2px solid var(--line)"><td>الإجمالي</td><td class="money">${money(tw)}</td><td class="money">${money(ta)}</td><td class="money" style="color:${Math.round(ta-tw)?"var(--bad)":"var(--ok)"}">${Math.round(ta-tw)?(ta>tw?"زيادة ":"ناقص ")+money(Math.abs(Math.round(ta-tw))):"✓"}</td></tr></table></div>${adj}
+   <p class="sub">«زيادة» يعني الأبلكيشن أكتر من الواتساب، و«ناقص» يعني أقل. افتح اليوم ده في «جلسات اليوم» عشان تشوف تفاصيله.</p>`}
 function expByCat(month){const o={};let t=0;for(const x of Object.values(S.expenses))if((x.date||"").startsWith(month)&&!(x.ext&&extById(x.ext))){ /* a refund from an outside doctor's vault isn't the clinic's expense */o[x.category]=(o[x.category]||0)+(x.amount||0);t+=x.amount||0}
   let rent=Object.entries(o).filter(([k])=>/إيجار|ايجار/.test(k)).reduce((a,[,v])=>a+v,0),rentAuto=false;
   if(!rent&&S.role==="owner"){rent=rentOf(month);if(rent){rentAuto=true;t+=rent}} /* the monthly rent counts by itself unless a rent expense was entered by hand */
@@ -1719,7 +1740,7 @@ function vReports(){
   const thisM=today().slice(0,7),lockBar=!owner?"":isLocked(m+"-01")?`<div class="note">🔒 الشهر ده مقفول${S.lock?.at?` من ${esc(new Date(S.lock.at).toLocaleDateString("ar-EG-u-nu-latn"))}`:""}. <button class="btn sm" data-act="unlockMonth" data-m="${m}" data-confirm>افتح الشهر</button></div>`
     :m<thisM?`<div class="note" style="border-color:var(--warn)">شهر ${esc(monthLabel(m))} لسه مفتوح. بعد ما تقبّض المرتبات اقفله، عشان محدش يعدّل فيه. <button class="btn sm teal" data-act="lockMonth" data-m="${m}" data-confirm>قفّل شهر ${esc(monthLabel(m))}</button></div>`
     :m===thisM&&+today().slice(8)<=10&&!isLocked(prevMonth(m)+"-01")?`<div class="note">بعد ما تقبّض مرتبات شهر ${esc(monthLabel(prevMonth(m)))} متنساش تقفله. <button class="btn sm teal" data-act="lockMonth" data-m="${prevMonth(m)}" data-confirm>قفّل شهر ${esc(monthLabel(prevMonth(m)))}</button></div>`:"";
-  const top=`<div class="bar"><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
+  const top=`<div class="bar"><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
   if(!owner){
     const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
     const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta,dv=vaultIn(x=>x===d);
@@ -3292,7 +3313,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -3469,6 +3490,7 @@ document.addEventListener("click",async e=>{
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "debts":sheetDebts();break;
     case "lost":sheetLost();break;
+    case "waCompare":sheetWaCompare(id);break;
     case "guide":sheetGuide();break;
     case "plan":if(t.dataset.tab){PL={pid:id,tab:t.dataset.tab}}sheetPlan(id,t.dataset.name);break;
     case "askReview":askReview(id);break;
