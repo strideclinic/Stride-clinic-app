@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="19 نوفمبر · 111";
+const APP_VERSION="19 نوفمبر · 112";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -2299,13 +2299,14 @@ async function askReview(pid){const url=reviewUrl();if(!url)return sheetReviewLi
   const n=waNumber(p.phone)||waNumber(p.phone2);window.open(`https://wa.me/${n||""}?text=${encodeURIComponent(msg)}`,"_blank","noopener");
   await S.db.doc("patients/"+pid).update({reviewAskedAt:Date.now()}).catch(()=>{});p.reviewAskedAt=Date.now();render()}
 /* progress chart: pain (0-10) and range of motion over the sessions */
-function trkSvg(pts,max,unit,color,inv){if(pts.length<1)return "";const W=320,H=130,L=28,R=10,T=10,B=24,iw=W-L-R,ih=H-T-B,n=pts.length;const X=i=>L+(n===1?iw/2:i*iw/(n-1)),Y=v=>T+ih-(v/max)*ih;
+function trkSvg(pts,max,unit,color,inv){if(pts.length<1)return "";const tg=pts.some(p=>p.tag),W=320,H=tg?146:130,L=tg?40:28,R=tg?24:10,T=10,B=tg?40:24,iw=W-L-R,ih=H-T-B,n=pts.length;const X=i=>L+(n===1?iw/2:i*iw/(n-1)),Y=v=>T+ih-(v/max)*ih;
   const grid=[0,.25,.5,.75,1].map(f=>{const v=Math.round(max*f);return `<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-opacity=".12"/><text x="${L-4}" y="${Y(v)+3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">${v}</text>`}).join("");
   const path=pts.map((p,i)=>`${i?"L":"M"}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;height:auto;color:var(--ink,#1c2434)" role="img" aria-label="${unit}">${grid}<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>${pts.map((p,i)=>`<circle cx="${X(i)}" cy="${Y(p.v)}" r="3.5" fill="${color}"/><text x="${X(i)}" y="${Y(p.v)-7}" font-size="9" text-anchor="middle" fill="currentColor">${p.v}</text>${n<=8||i===0||i===n-1?`<text x="${X(i)}" y="${H-8}" font-size="8" text-anchor="middle" fill="currentColor" opacity=".6">${esc(p.d.slice(8,10)+"/"+p.d.slice(5,7))}</text>`:""}`).join("")}</svg>`}
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;height:auto;color:var(--ink,#1c2434)" role="img" aria-label="${unit}">${grid}<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>${pts.map((p,i)=>`<circle cx="${X(i)}" cy="${Y(p.v)}" r="3.5" fill="${color}"/><text x="${X(i)}" y="${Y(p.v)-7}" font-size="9" text-anchor="middle" fill="currentColor">${p.v}</text>${n<=8||i===0||i===n-1?`<text x="${X(i)}" y="${H-8}" font-size="8" text-anchor="middle" fill="currentColor" opacity=".6">${esc(p.d.slice(8,10)+"/"+p.d.slice(5,7))}</text>`:""}${p.tag?`<text x="${X(i)}" y="${H-22}" font-size="10" text-anchor="middle">${p.tag}</text>`:""}`).join("")}</svg>${tg?`<p class="sub" style="margin:0">${Object.entries(PWI).map(([k,e])=>`${e} ${PWL[k]}`).join(" · ")} · ↔ الوجع اتنقل</p>`:""}`}
+const PWI={rest:"🪑",move:"🏃",morning:"🌅",evening:"🌙",work:"💼",prayer:"🕌"};
 function trkTab(){const T=(PL.d.track||[]).slice().sort((a,b)=>(a.date+a.at).localeCompare(b.date+b.at)),t=trendOf(T);
   if(!T.length)return `<p class="sub" dir="rtl">لسه مفيش قياسات. كل ما الدكتور يدوس «خلصت» بيكتب الوجع وحالة العيان، والرسم بيطلع هنا لوحده.</p>`;
-  const pain=T.filter(x=>x.pain!=null).map(x=>({v:x.pain,d:x.date}));const romL=(T.filter(x=>x.romL).slice(-1)[0]||{}).romL;const rom=romL?T.filter(x=>x.romL===romL&&x.rom!=null).map(x=>({v:x.rom,d:x.date})):[];
+  const pain=T.filter(x=>x.pain!=null).map(x=>({v:x.pain,d:x.date,tag:[...(x.when||[]).map(w=>PWI[w]),x.loc==="moved"?"↔":""].join("")}));const romL=(T.filter(x=>x.romL).slice(-1)[0]||{}).romL;const rom=romL?T.filter(x=>x.romL===romL&&x.rom!=null).map(x=>({v:x.rom,d:x.date})):[];
   const stc={better:"c-ok",same:"c-warn",worse:"c-bad"},stl=Object.fromEntries(TRK_ST);
   return `<div dir="rtl" style="text-align:right">${t&&t.k!=="mid"?`<div class="note" style="border-color:${t.k==="bad"?"var(--bad)":"var(--ok)"}">${t.k==="bad"?"⚠️ ":"✅ "}${esc(t.t)}</div>`:""}
   <h4>الوجع (من 10)</h4>${trkSvg(pain,10,"الوجع","#d64545")}
@@ -2871,7 +2872,7 @@ function impParse(t){t=(t||"").trim().replace(/^```(json)?/,"").replace(/```$/,"
     if(exam.source&&!SOURCES.includes(exam.source)){exam.sourceDetail=[exam.source,exam.sourceDetail].filter(Boolean).join(" · ");exam.source="أخرى"}
     const pr=x.program||null;const sel={};let bad=0;for(const [k,v] of Object.entries(pr?.sel||{})){if(PFI[k]||/^(up|low)\.(str|stretch|mob|neuro)\.|^(up|low)\.ex\.Other\.|^ag\./.test(k))sel[k]={on:true,...(v||{})};else bad++}
     return{x,p,exam,prog:pr?{sel,dx:pr.dx||"",other:pr.other||"",goals:pr.goals||["","","",""],notes:pr.notes||[],custom:pr.custom||[]}:null,bad}});return{rows}}
-function sheetImport(){IMP=null;openSheet("دخّل الكشوفات والبرامج من الورق",`<ol style="margin:0;padding-inline-start:20px;display:grid;gap:4px" class="sub"><li>صوّر ورق الكشف والـProgram Sheet وابعته لـ Claude في الشات.</li><li>هو هيرجعلك كلام بيبدأ بـ <b dir="ltr">[</b> وبيخلص بـ <b dir="ltr">]</b>. انسخه كله.</li><li>الصقه هنا، راجع، ودوس «دخّلهم».</li></ol>
+function sheetImport(){IMP=null;openSheet("دخّل الكشوفات والبرامج من الورق",`<ol style="margin:0;padding-inline-start:20px;display:grid;gap:4px" class="sub"><li>صوّر ورق الكشف والـProgram Sheet وابعته لـ Claude في الشات.</li><li>${S.role==="owner"?`أو افتح <a href="https://claude.ai/artifact/De6EYEgrhambwPLGCfozds" target="_blank" rel="noopener">مساعد Stride</a> وارفع الصور فيه. `:""}هو هيرجعلك كلام بيبدأ بـ <b dir="ltr">[</b> وبيخلص بـ <b dir="ltr">]</b>. انسخه كله.</li><li>الصقه هنا، راجع، ودوس «دخّلهم».</li></ol>
   <textarea id="imp_t" dir="ltr" style="min-height:160px;font-family:monospace" placeholder='[{"name":"…","phone":"…","complaint":"…","program":{"sel":{…}}}]'></textarea>
   <label class="seg" style="width:max-content"><span><input type="checkbox" id="imp_over" style="width:auto"> اكتب فوق اللي متسجل قبل كده</span></label>
   <div id="imp_prev"></div><div class="err" id="formErr"></div><button class="btn primary" data-act="impSave">دخّلهم</button>`,()=>{const t=document.getElementById("imp_t");t.addEventListener("input",impPreview)})}
