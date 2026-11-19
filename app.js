@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="19 نوفمبر · 110";
+const APP_VERSION="19 نوفمبر · 111";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -2267,7 +2267,7 @@ async function apptEnd(id){ // doctor finishing: comment + progress (required) +
   <div class="sec-title"><span class="sub">صور (لحد ${MEDIA_MAX})</span><label class="btn sm">+ صورة<input type="file" id="e_file" accept="image/*" multiple hidden></label></div>
   <div class="photos" id="e_media"></div><div class="err" id="formErr"></div>
   <button class="btn primary" data-act="saveApptEnd" data-id="${id}">سجّل إنها خلصت</button>`,
-  ()=>{entryMedia=[];drawEntryMedia(false);const f=document.getElementById("e_file");f.addEventListener("change",()=>addEntryMedia(f))});
+  ()=>{entryMedia=[];drawEntryMedia(false);const f=document.getElementById("e_file");f.addEventListener("change",()=>addEntryMedia(f));wirePainPattern()});
 }
 async function saveApptEnd(id){if(lockBlock(S.appts[id]?.date))return;const a=S.appts[id];
   const note=val("e_note").trim(),tr=readTrack();if(tr.err)return setErr(tr.err);if(note.length<5)return setErr("لازم تكتب كومنت على الحالة قبل ما تسجّل إنها خلصت");
@@ -2309,16 +2309,38 @@ function trkTab(){const T=(PL.d.track||[]).slice().sort((a,b)=>(a.date+a.at).loc
   const stc={better:"c-ok",same:"c-warn",worse:"c-bad"},stl=Object.fromEntries(TRK_ST);
   return `<div dir="rtl" style="text-align:right">${t&&t.k!=="mid"?`<div class="note" style="border-color:${t.k==="bad"?"var(--bad)":"var(--ok)"}">${t.k==="bad"?"⚠️ ":"✅ "}${esc(t.t)}</div>`:""}
   <h4>الوجع (من 10)</h4>${trkSvg(pain,10,"الوجع","#d64545")}
+  ${painSummary(T)}
+  ${T.some(x=>x.prayOk!=null)?`<h4>صلوات من غير وجع (من 5)</h4>${trkSvg(T.filter(x=>x.prayOk!=null).map(x=>({v:x.prayOk,d:x.date})),5,"الصلاة","#2f9e5b")}`:""}
   ${rom.length?`<h4 dir="ltr">${esc(romL)} (°)</h4>${trkSvg(rom,Math.max(20,Math.ceil((Math.max(...rom.map(x=>x.v))+10)/20)*20),"ROM","#2b6cb0")}`:""}
   <div class="list">${T.slice().reverse().map(x=>`<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t">${esc(dmy(x.date))} · ${esc(x.name||"")}${x.exam?" · كشف":""}</span><span class="end">${x.st?`<span class="chip ${stc[x.st]}">${esc(stl[x.st])}</span>`:""}</span>
-   <span class="m" style="grid-column:1/-1">${x.pain!=null?`الوجع ${x.pain}/10`:""}${x.romL?` · ${esc(x.romL)} ${x.rom}°`:""}${x.text?` · ${esc(x.text)}`:""}</span></div>`).join("")}</div></div>`}
+   <span class="m" style="grid-column:1/-1">${x.pain!=null?`الوجع ${x.pain}/10`:""}${x.romL?` · ${esc(x.romL)} ${x.rom}°`:""}${x.when?` · بيوجعه: ${esc(x.when.map(w=>PWL[w]).join("، "))}${x.moveTxt?` (${esc(x.moveTxt)})`:""}`:""}${x.prayOk!=null?` · صلّى ${x.prayOk}/5 من غير وجع`:""}${x.prayRom?` · ${PRL[x.prayRom]}`:""}${x.loc==="moved"?` · <b>الوجع اتنقل${x.locTxt?`: ${esc(x.locTxt)}`:""}</b>`:""}${x.text?` · ${esc(x.text)}`:""}</span></div>`).join("")}</div></div>`}
+const PWL={rest:"في الثبات",move:"مع الحركة",morning:"الصبح",evening:"بالليل",work:"وقت الشغل",prayer:"في الصلاة"},PRL={full:"صلّى بمدى كامل",partial:"صلّى بمدى جزئي",no:"صلّى على كرسي"};
+function painSummary(T){const L=T.filter(x=>x.when).slice(-5);if(!L.length&&!T.some(x=>x.loc==="moved"))return "";const c={};L.forEach(x=>x.when.forEach(w=>c[w]=(c[w]||0)+1));
+  const mv=[...new Set(L.map(x=>x.moveTxt).filter(Boolean))],moved=T.filter(x=>x.loc==="moved");
+  return `<div class="note">${L.length?`<b>الوجع بيظهر (آخر ${L.length} جلسات):</b> ${Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,n])=>`${PWL[k]} ×${n}`).join(" · ")}${mv.length?`<br>الحركة: ${esc(mv.join("، "))}`:""}`:""}${moved.length?`<br><b>الوجع اتنقل ${moved.length} مرة</b>: ${esc(moved.map(x=>`${dmy(x.date)}${x.locTxt?` (${x.locTxt})`:""}`).join("، "))}`:""}</div>`}
 const TRK_ST=[["better","أحسن 🟢"],["same","زي ما هو 🟡"],["worse","أوحش 🔴"]];
 function trackFields(a){const last=(TRKC[a.patientId]?.track||[]).filter(x=>x.romL).slice(-1)[0];
   return `<div class="f"><span>العيان النهارده <b style="color:var(--bad)">*</b></span><div class="seg">${TRK_ST.map(([k,l])=>`<label><input type="radio" name="e_st" value="${k}"> ${l}</label>`).join("")}</div></div>
   <div class="f"><span>الوجع من 10 <b style="color:var(--bad)">*</b> <span class="sub">(0 = مفيش وجع)</span></span><div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">${[0,1,2,3,4,5,6,7,8,9,10].map(n=>`<label class="btn sm" style="justify-content:center;gap:4px;padding:8px 0"><input type="radio" name="e_pain" value="${n}" style="width:auto;margin:0"> ${n}</label>`).join("")}</div></div>
-  <div class="grid2"><label class="f">مدى الحركة (اختياري)<input id="e_romL" dir="ltr" value="${esc(last?.romL||"")}" placeholder="Knee flexion"></label><label class="f">كام درجة<input id="e_rom" inputmode="numeric" placeholder="${last?.rom!=null?`آخر مرة ${last.rom}°`:"مثلاً 95"}"></label></div>`}
+  <div class="grid2"><label class="f">مدى الحركة (اختياري)<input id="e_romL" dir="ltr" value="${esc(last?.romL||"")}" placeholder="Knee flexion"></label><label class="f">كام درجة<input id="e_rom" inputmode="numeric" placeholder="${last?.rom!=null?`آخر مرة ${last.rom}°`:"مثلاً 95"}"></label></div>
+  ${painPatternFields(a)}`}
+/* when / how the pain shows up: at rest, with a movement, morning, night, at work, in prayer (+ how many prayers without pain and with full range), and whether it moved */
+const PWHEN=[["rest","في الثبات"],["move","مع حركة معيّنة"],["morning","الصبح"],["evening","بالليل"],["work","وقت الشغل"],["prayer","في الصلاة"]];
+function painPatternFields(a){const T=(TRKC[a.patientId]?.track||[]),lw=T.slice().reverse().find(x=>x.when)||{},pray=T.some(x=>x.prayOk!=null);
+  return `<details ${lw.when||pray?"open":""} style="margin:6px 0"><summary style="cursor:pointer;font-weight:700">الوجع بيظهر إمتى؟ <span class="sub">(اختياري)</span></summary>
+  <div class="pf-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">${PWHEN.map(([k,l])=>`<label class="btn sm" style="justify-content:flex-start;gap:6px"><input type="checkbox" name="e_when" value="${k}" ${(lw.when||[]).includes(k)?"checked":""} style="width:auto;margin:0"> ${l}</label>`).join("")}</div>
+  <label class="f" id="e_moveBox" ${(lw.when||[]).includes("move")?"":"hidden"}>أنهي حركة؟<input id="e_move" value="${esc(lw.moveTxt||"")}" placeholder="مثلاً: ثني الركبة · الطلوع على السلم · رفع الدراع"></label>
+  <div id="e_prayBox" ${(lw.when||[]).includes("prayer")||pray?"":"hidden"}><div class="grid2"><label class="f">صلّى كام صلاة من غير وجع؟<select id="e_prayOk"><option value="">—</option>${[0,1,2,3,4,5].map(n=>`<option>${n}</option>`).join("")}</select></label>
+   <label class="f">صلّى بمدى حركي كامل؟ (ركوع/سجود)<select id="e_prayRom"><option value="">—</option><option value="full">أيوه، كامل</option><option value="partial">جزئي</option><option value="no">لأ (على كرسي)</option></select></label></div></div>
+  <div class="f"><span>مكان الوجع</span><div class="seg"><label><input type="radio" name="e_loc" value="same"> زي ما هو</label><label><input type="radio" name="e_loc" value="moved"> اتنقل</label></div></div>
+  <label class="f" id="e_locBox" hidden>اتنقل فين؟<input id="e_locTxt" placeholder="مثلاً: من الركبة للسمانة"></label></details>`}
+function wirePainPattern(){const sh=document.querySelector("#sheetRoot .sheet");if(!sh)return;sh.addEventListener("change",e=>{const x=e.target;if(x.name==="e_when"){const on=[...document.querySelectorAll('input[name="e_when"]:checked')].map(i=>i.value);
+  document.getElementById("e_moveBox").hidden=!on.includes("move");if(on.includes("prayer"))document.getElementById("e_prayBox").hidden=false}if(x.name==="e_loc")document.getElementById("e_locBox").hidden=x.value!=="moved"})}
 function readTrack(){const st=radio("e_st"),pn=radio("e_pain");if(!st)return{err:"اختار العيان النهارده أحسن ولا زي ما هو ولا أوحش"};if(pn==null||pn==="")return{err:"اختار درجة الوجع من 0 لـ 10"};
-  const romL=val("e_romL").trim(),rs=val("e_rom").trim(),rom=rs===""?null:Math.round(num(rs));return{v:{st,pain:+pn,...(romL&&rom!=null?{romL,rom}:{})}}}
+  const romL=val("e_romL").trim(),rs=val("e_rom").trim(),rom=rs===""?null:Math.round(num(rs));
+  const when=[...document.querySelectorAll('input[name="e_when"]:checked')].map(i=>i.value),moveTxt=when.includes("move")?val("e_move").trim():"",po=val("e_prayOk"),pr=val("e_prayRom"),loc=radio("e_loc"),locTxt=loc==="moved"?val("e_locTxt").trim():"";
+  if(when.includes("move")&&!moveTxt)return{err:"اكتب أنهي حركة بتوجعه"};if(loc==="moved"&&!locTxt)return{err:"اكتب الوجع اتنقل فين"};
+  return{v:{st,pain:+pn,...(romL&&rom!=null?{romL,rom}:{}),...(when.length?{when}:{}),...(moveTxt?{moveTxt}:{}),...(po!==""?{prayOk:+po}:{}),...(pr?{prayRom:pr}:{}),...(loc?{loc}:{}),...(locTxt?{locTxt}:{})}}}
 function sheetApptConfirm(id){
   const a=S.appts[id];if(!a)return;const p=S.patients[a.patientId];const prov=provisionalCredit(a);
   const involved=[...new Set([a.startBy,a.endBy,...apptDocs(a)].filter(x=>x&&isDoc(x)))];
