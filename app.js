@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="20 نوفمبر · 115";
+const APP_VERSION="20 نوفمبر · 116";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -507,6 +507,32 @@ function sheetDayReport(ds){const C=dayClass(ds),n=v=>Math.round(v||0).toLocaleS
 function dayRepText(ds){const C=dayClass(ds),n=v=>Math.round(v||0).toLocaleString("en-US");const ex=C.vis.filter(v=>isExamVisit(v)).length;
   return [`تقرير ${dayShort(ds)}`,`دخل المركز: ${n(C.clinic)} (كاش ${n(C.cash)} · InstaPay ${n(C.insta)})`,...DCAT.filter(([k])=>C.cats[k].t).map(([k,l])=>`- ${l}: ${n(C.cats[k].t)}`),`جلسات: ${C.vis.length-ex} · كشوفات: ${ex}`,
     ...(Object.keys(C.vault).length?[`خزنة الدكاترة اللي بره: ${Object.entries(C.vault).map(([id,v])=>`${extById(id)?.name||"دكتور"} ${n(v)}`).join(" · ")}`]:[]),`مصروفات: ${n(C.expT)}`,`صافي اليوم: ${n(C.clinic-C.expT)}`].join("\n")}
+/* «تقرير الإيراد اليومي»: its own page — each day of the month: cash, InstaPay, total; month totals; PDF and WhatsApp */
+function sheetDailyRev(m){const L=dailyRows(m),E=extCenter(m),R=revenue(m),n=v=>Math.round(v||0).toLocaleString("en-US");
+  const tc=L.reduce((a,r)=>a+r.cash,0),ti=L.reduce((a,r)=>a+r.insta,0),tt=L.reduce((a,r)=>a+r.t,0);const pm=prevMonth(m),nm=prevMonth(m,-1);
+  openSheet("تقرير الإيراد اليومي",`<div class="bar" style="justify-content:space-between"><button class="btn sm" data-act="dailyRev" data-id="${pm}">‹ الشهر اللي قبله</button><b>${esc(monthLabel(m))}</b>${m<today().slice(0,7)?`<button class="btn sm" data-act="dailyRev" data-id="${nm}">اللي بعده ›</button>`:"<span></span>"}</div>
+  <div style="overflow-x:auto"><table class="daytbl" style="width:100%;min-width:0;table-layout:fixed;border-collapse:collapse;font-size:15px;font-variant-numeric:tabular-nums"><colgroup><col style="width:31%"><col style="width:23%"><col style="width:23%"><col style="width:23%"></colgroup>
+  <tr><th style="text-align:start">اليوم</th><th>كاش</th><th>InstaPay</th><th>الإجمالي</th></tr>
+  ${L.map(r=>`<tr data-act="dayRep" data-id="${r.ds}" style="cursor:pointer${r.ds===today()?";font-weight:700":""}"><td style="text-align:start">${esc(dayShort(r.ds))}</td><td>${r.cash?n(r.cash):"—"}</td><td>${r.insta?n(r.insta):"—"}</td><td><b>${r.t?n(r.t):"لا يوجد"}</b></td></tr>`).join("")}
+  <tr style="border-top:2px solid var(--line);font-weight:800"><td style="text-align:start">مجموع الأيام</td><td>${n(tc)}</td><td>${n(ti)}</td><td>${n(tt)}</td></tr>
+  ${E.moved?`<tr><td style="text-align:start" colspan="3">+ حصة المركز من الدكاترة اللي بره</td><td><b>${n(E.moved)}</b></td></tr>`:""}${R.adj?`<tr><td style="text-align:start" colspan="3">+ تعديل يدوي</td><td><b>${n(R.adj)}</b></td></tr>`:""}
+  <tr style="font-weight:800"><td style="text-align:start" colspan="3">دخل الشهر</td><td>${n(tt+E.moved+(R.adj||0))}</td></tr></table></div>
+  <style>.daytbl td,.daytbl th{padding:8px 4px;text-align:center;border-bottom:1px solid var(--line)}</style>
+  <p class="sub" style="margin:0">دوس على أي يوم يفتح تفاصيله.</p>
+  <div class="bar"><button class="btn" data-act="dailyRevPdf" data-id="${m}">PDF</button><button class="btn" data-act="dailyRevWa" data-id="${m}">ابعت واتساب</button></div>`)}
+function dailyRevText(m){const L=dailyRows(m),E=extCenter(m),R=revenue(m),n=v=>Math.round(v||0).toLocaleString("en-US");
+  return [`إيراد ${monthLabel(m)}`,"",...L.map(r=>`${dayShort(r.ds)}: ${r.t?n(r.t):"لا يوجد"}${r.cash&&r.insta?` (كاش ${n(r.cash)} · InstaPay ${n(r.insta)})`:r.insta?" (InstaPay)":""}`),"",`كاش: ${n(L.reduce((a,r)=>a+r.cash,0))} · InstaPay: ${n(L.reduce((a,r)=>a+r.insta,0))}`,...(E.moved?[`حصة الدكاترة اللي بره: ${n(E.moved)}`]:[]),`دخل الشهر: ${n(R.collected)}`].join("\n")}
+async function dailyRevPdf(m,btn){const label=btn?.textContent;if(btn){btn.disabled=true;btn.textContent="بيجهّز…"}
+  try{await loadScript("vendor/jspdf.umd.min.js");const {jsPDF}=window.jspdf;const d=new jsPDF({unit:"mm",format:"a4"});const [fr,fb]=await Promise.all([b64("fonts/Amiri-Regular.ttf"),b64("fonts/Amiri-Bold.ttf")]);
+    d.addFileToVFS("ar.ttf",fr);d.addFont("ar.ttf","ar","normal");d.addFileToVFS("arb.ttf",fb);d.addFont("arb.ttf","ar","bold");let wm=null;try{wm=await imgData("icons/watermark.png")}catch(e){}
+    const deco=()=>{if(wm){const w=110,h=w*wm.h/wm.w;d.addImage(wm.d,"PNG",(210-w)/2,(297-h)/2,w,h,undefined,"FAST")}};deco();
+    const L=dailyRows(m),E=extCenter(m),R=revenue(m),n=v=>Math.round(v||0).toLocaleString("en-US");const X=[196,130,90,50];
+    d.setFont("ar","bold");d.setFontSize(16);d.text(`تقرير الإيراد اليومي · ${monthLabel(m)}`,196,18,{align:"right"});
+    let y=30;const row=(c,b,fill)=>{if(y>280){d.addPage();deco();y=20}if(fill){d.setFillColor(232,236,244);d.rect(14,y-5,182,7.5,"F")}d.setFont("ar",b?"bold":"normal");d.setFontSize(11);c.forEach((t,i)=>d.text(String(t),X[i],y,{align:"right"}));d.setDrawColor(220);d.line(14,y+2.5,196,y+2.5);y+=7.5};
+    row(["اليوم","كاش","InstaPay","الإجمالي"],1,1);L.forEach(r=>row([dayShort(r.ds),r.cash?n(r.cash):"-",r.insta?n(r.insta):"-",r.t?n(r.t):"لا يوجد"]));
+    const tc=L.reduce((a,r)=>a+r.cash,0),ti=L.reduce((a,r)=>a+r.insta,0),tt=L.reduce((a,r)=>a+r.t,0);row(["مجموع الأيام",n(tc),n(ti),n(tt)],1,1);
+    if(E.moved)row(["حصة الدكاترة اللي بره","","",n(E.moved)]);if(R.adj)row(["تعديل يدوي","","",n(R.adj)]);row(["دخل الشهر","","",n(tt+E.moved+(R.adj||0))],1,1);
+    d.setFont("helvetica","bold");d.setFontSize(9);d.text("Stride Clinic",14,290);await shareBlob(d.output("blob"),`Daily revenue ${m}.pdf`)}catch(e){console.warn(e);toast("مقدرتش أعمل الـ PDF، جرب تاني.")}finally{if(btn){btn.disabled=false;btn.textContent=label}}}
 function dayWaText(ds){const r=dailyRows(ds.slice(0,7)).find(x=>x.ds===ds);return `${dayShort(ds)}\n${r&&r.t?Math.round(r.t):"لا يوجد"}`}
 function sheetWaCompare(m){openSheet(`قارن بأرقام الواتساب · ${monthLabel(m)}`,`<p class="sub" style="margin:0">في الواتساب: علّم على رسايل الإيراد كلها ← نسخ (Copy) ← الصقها هنا. السيستم بيطلّع اليوم اللي فيه فرق.</p>
   <label class="f">رسايل الواتساب<textarea id="wa_t" rows="6" style="width:100%;box-sizing:border-box;min-width:0" placeholder="الاحد ١/١١&#10;٣٦٠٠&#10;الاتنين ٢/١١&#10;٨٥٠٠ …"></textarea></label><div id="wa_out" style="min-width:0;max-width:100%"></div>`,()=>{const t=document.getElementById("wa_t");const run=()=>{document.getElementById("wa_out").innerHTML=waCompareHtml(m,t.value)};t.addEventListener("input",run);run()})}
@@ -1798,7 +1824,7 @@ function vReports(){
   const thisM=today().slice(0,7),lockBar=!owner?"":isLocked(m+"-01")?`<div class="note">🔒 الشهر ده مقفول${S.lock?.at?` من ${esc(new Date(S.lock.at).toLocaleDateString("ar-EG-u-nu-latn"))}`:""}. <button class="btn sm" data-act="unlockMonth" data-m="${m}" data-confirm>افتح الشهر</button></div>`
     :m<thisM?`<div class="note" style="border-color:var(--warn)">شهر ${esc(monthLabel(m))} لسه مفتوح. بعد ما تقبّض المرتبات اقفله، عشان محدش يعدّل فيه. <button class="btn sm teal" data-act="lockMonth" data-m="${m}" data-confirm>قفّل شهر ${esc(monthLabel(m))}</button></div>`
     :m===thisM&&+today().slice(8)<=10&&!isLocked(prevMonth(m)+"-01")?`<div class="note">بعد ما تقبّض مرتبات شهر ${esc(monthLabel(prevMonth(m)))} متنساش تقفله. <button class="btn sm teal" data-act="lockMonth" data-m="${prevMonth(m)}" data-confirm>قفّل شهر ${esc(monthLabel(prevMonth(m)))}</button></div>`:"";
-  const top=`<div class="bar"><button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
+  const top=`<div class="bar"><button class="btn sm primary" data-act="dailyRev" data-id="${m}">تقرير الإيراد اليومي</button><button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
   if(!owner){
     const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
     const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta,dv=vaultIn(x=>x===d);
@@ -3371,7 +3397,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -3551,6 +3577,9 @@ document.addEventListener("click",async e=>{
     case "waCompare":sheetWaCompare(id);break;
     case "openDay":closeSheet();S.ui.date=id;S.tab="sessions";render();window.scrollTo(0,0);break;
     case "dayRep":sheetDayReport(id);break;
+    case "dailyRev":sheetDailyRev(id);break;
+    case "dailyRevPdf":dailyRevPdf(id,t);break;
+    case "dailyRevWa":window.open(`https://wa.me/?text=${encodeURIComponent(dailyRevText(id))}`,"_blank","noopener");break;
     case "dayRepWa":window.open(`https://wa.me/?text=${encodeURIComponent(dayRepText(id))}`,"_blank","noopener");break;
     case "dayWa":window.open(`https://wa.me/?text=${encodeURIComponent(dayWaText(id))}`,"_blank","noopener");break;
     case "dayCopy":{const L=dailyRows(id),E=extCenter(id),R=revenue(id);const txt=L.map(r=>`${dayShort(r.ds)}\n${r.t?Math.round(r.t):"لا يوجد"}`).join("\n\n")+(E.moved?`\n\nحصة الدكاترة اللي بره\n${Math.round(E.moved)}`:"")+`\n\nالإجمالي\n${Math.round(R.collected)}`;
