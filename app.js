@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="20 نوفمبر · 117";
+const APP_VERSION="21 نوفمبر · 118";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1706,6 +1706,25 @@ function expenseTips(m,rv,ex,pr,flags){
   if(!tips.length)tips.push(rv.collected?"مفيش حاجة ملفتة في مصروفات الشهر ده.":"سجّل الجلسات والمصروفات الأول عشان الاقتراحات تطلع.");
   return tips;
 }
+/* «عدد الجلسات»: every recorded visit of the month — on a package or single — with exams apart, by day, by doctor and by type */
+async function sheetSessCount(m){await ensureMonth(m).catch(()=>{});const V=Object.values(S.visits).filter(v=>(v.date||"").startsWith(m)&&!["cancelled","noshow"].includes(v.status));
+  const kind=v=>isExamVisit(v)?"exam":v.packId?"pack":"single";const T={pack:0,single:0,exam:0},byDay={},byDoc={},byType={};
+  for(const v of V){const k=kind(v);T[k]++;const d=(byDay[v.date]=byDay[v.date]||{pack:0,single:0,exam:0});d[k]++;
+    const ds=[v.doctorId,v.doctor2Id].filter(Boolean);const share=ds.length>1?.5:1;for(const id of (ds.length?ds:["—"])){const o=(byDoc[id]=byDoc[id]||{pack:0,single:0,exam:0});o[k]+=share}
+    if(k!=="exam"){const t=v.typeName||"من غير نوع";byType[t]=(byType[t]||0)+1}}
+  const pend=Object.values(S.appts).filter(a=>(a.date||"").startsWith(m)&&needsRecord(a)).length,n=x=>Number.isInteger(x)?x:x.toFixed(1);
+  const days=Object.keys(byDay).sort(),sess=T.pack+T.single;
+  openSheet(`عدد الجلسات · ${monthLabel(m)}`,`<style>.sct td,.sct th{padding:7px 4px;text-align:center;border-bottom:1px solid var(--line);white-space:normal}.sct td:first-child,.sct th:first-child{text-align:start}.sck{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.sck div{border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}.sck b{display:block;font-size:24px}</style>
+  <div class="bar" style="justify-content:space-between"><button class="btn sm" data-act="sessCount" data-id="${prevMonth(m)}">‹ اللي قبله</button><b>${esc(monthLabel(m))}</b>${m<today().slice(0,7)?`<button class="btn sm" data-act="sessCount" data-id="${prevMonth(m,-1)}">اللي بعده ›</button>`:"<span></span>"}</div>
+  <div class="sck"><div style="grid-column:1/-1"><span class="sub">إجمالي الجلسات (من غير الكشوفات)</span><b>${sess}</b></div><div><span class="sub">جوه باكدج</span><b>${T.pack}</b></div><div><span class="sub">منفردة</span><b>${T.single}</b></div><div style="grid-column:1/-1"><span class="sub">كشوفات (مش محسوبة جلسات)</span><b>${T.exam}</b></div></div>
+  ${pend?`<div class="note" style="border-color:var(--warn)">فيه ${pend} جلسة خلصت ولسه مستنية تأكيد ريهام، ومش محسوبة هنا لحد ما تتأكد.</div>`:""}
+  <h3 style="margin:12px 0 4px">كل يوم</h3><div style="overflow-x:auto"><table class="sct" style="width:100%;min-width:0;table-layout:fixed;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums"><colgroup><col style="width:31%"><col style="width:17%"><col style="width:17%"><col style="width:17%"><col style="width:18%"></colgroup>
+  <tr><th>اليوم</th><th>باكدج</th><th>منفردة</th><th>الجلسات</th><th>كشف</th></tr>
+  ${days.map(ds=>{const d=byDay[ds];return `<tr><td>${esc(dayShort(ds))}</td><td>${d.pack||"—"}</td><td>${d.single||"—"}</td><td><b>${d.pack+d.single}</b></td><td>${d.exam||"—"}</td></tr>`}).join("")||`<tr><td colspan="5" class="sub">مفيش جلسات متسجلة الشهر ده.</td></tr>`}
+  <tr style="font-weight:800;border-top:2px solid var(--line)"><td>الإجمالي</td><td>${T.pack}</td><td>${T.single}</td><td>${sess}</td><td>${T.exam}</td></tr></table></div>
+  <h3 style="margin:12px 0 4px">كل دكتور</h3><div class="list">${Object.entries(byDoc).sort((a,b)=>(b[1].pack+b[1].single)-(a[1].pack+a[1].single)).map(([id,o])=>`<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t">${esc(id==="—"?"من غير دكتور":staffName(id)||extById(id)?.name||id)}</span><span class="end"><b>${n(o.pack+o.single)}</b> جلسة</span><span class="m" style="grid-column:1/-1">باكدج ${n(o.pack)} · منفردة ${n(o.single)}${o.exam?` · كشف ${n(o.exam)}`:""}</span></div>`).join("")}</div>
+  <p class="sub" style="margin:4px 0 0">الجلسة اللي اشتغل فيها دكتورين بتتحسب نص لكل واحد.</p>
+  ${Object.keys(byType).length?`<h3 style="margin:12px 0 4px">نوع الجلسة</h3><div class="list">${Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,c])=>`<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t">${esc(t)}</span><span class="end"><b>${c}</b></span></div>`).join("")}</div>`:""}`)}
 /* «تحليل المصروفات»: every item this month against its last-3-months average, share of income, 6-month trend, and what to do */
 function expMonth(m){const rv=revenue(m),ex=expByCat(m),pr=payroll(m),sal=pr.reduce((s,x)=>s+x.total,0),inst=instOf(m).reduce((t,x)=>t+num(x.p.monthly),0);
   const tot=Math.round(sal+ex.t);return{m,rv,ex,pr,sal:Math.round(sal),inst:Math.round(inst),tot,inc:Math.round(rv.collected),net:Math.round(rv.collected-tot)}}
@@ -1859,7 +1878,7 @@ function vReports(){
   const thisM=today().slice(0,7),lockBar=!owner?"":isLocked(m+"-01")?`<div class="note">🔒 الشهر ده مقفول${S.lock?.at?` من ${esc(new Date(S.lock.at).toLocaleDateString("ar-EG-u-nu-latn"))}`:""}. <button class="btn sm" data-act="unlockMonth" data-m="${m}" data-confirm>افتح الشهر</button></div>`
     :m<thisM?`<div class="note" style="border-color:var(--warn)">شهر ${esc(monthLabel(m))} لسه مفتوح. بعد ما تقبّض المرتبات اقفله، عشان محدش يعدّل فيه. <button class="btn sm teal" data-act="lockMonth" data-m="${m}" data-confirm>قفّل شهر ${esc(monthLabel(m))}</button></div>`
     :m===thisM&&+today().slice(8)<=10&&!isLocked(prevMonth(m)+"-01")?`<div class="note">بعد ما تقبّض مرتبات شهر ${esc(monthLabel(prevMonth(m)))} متنساش تقفله. <button class="btn sm teal" data-act="lockMonth" data-m="${prevMonth(m)}" data-confirm>قفّل شهر ${esc(monthLabel(prevMonth(m)))}</button></div>`:"";
-  const top=`<div class="bar"><button class="btn sm primary" data-act="dailyRev" data-id="${m}">تقرير الإيراد اليومي</button><button class="btn sm" data-act="expAna" data-id="${m}">تحليل المصروفات</button><button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
+  const top=`<div class="bar"><button class="btn sm primary" data-act="dailyRev" data-id="${m}">تقرير الإيراد اليومي</button><button class="btn sm" data-act="expAna" data-id="${m}">تحليل المصروفات</button><button class="btn sm" data-act="sessCount" data-id="${m}">عدد الجلسات</button><button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
   if(!owner){
     const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
     const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta,dv=vaultIn(x=>x===d);
@@ -3432,7 +3451,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["expAna","dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["sessCount","expAna","dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -3614,6 +3633,7 @@ document.addEventListener("click",async e=>{
     case "dayRep":sheetDayReport(id);break;
     case "dailyRev":sheetDailyRev(id);break;
     case "expAna":sheetExpAnalysis(id);break;
+    case "sessCount":sheetSessCount(id);break;
     case "dailyRevPdf":dailyRevPdf(id,t);break;
     case "dailyRevWa":window.open(`https://wa.me/?text=${encodeURIComponent(dailyRevText(id))}`,"_blank","noopener");break;
     case "dayRepWa":window.open(`https://wa.me/?text=${encodeURIComponent(dayRepText(id))}`,"_blank","noopener");break;
