@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="20 نوفمبر · 116";
+const APP_VERSION="20 نوفمبر · 117";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1706,6 +1706,41 @@ function expenseTips(m,rv,ex,pr,flags){
   if(!tips.length)tips.push(rv.collected?"مفيش حاجة ملفتة في مصروفات الشهر ده.":"سجّل الجلسات والمصروفات الأول عشان الاقتراحات تطلع.");
   return tips;
 }
+/* «تحليل المصروفات»: every item this month against its last-3-months average, share of income, 6-month trend, and what to do */
+function expMonth(m){const rv=revenue(m),ex=expByCat(m),pr=payroll(m),sal=pr.reduce((s,x)=>s+x.total,0),inst=instOf(m).reduce((t,x)=>t+num(x.p.monthly),0);
+  const tot=Math.round(sal+ex.t);return{m,rv,ex,pr,sal:Math.round(sal),inst:Math.round(inst),tot,inc:Math.round(rv.collected),net:Math.round(rv.collected-tot)}}
+async function sheetExpAnalysis(m){openSheet("تحليل المصروفات",`<div class="empty"><b>بيحمّل الشهور اللي فاتت…</b></div>`);
+  const months=[5,4,3,2,1,0].map(n=>prevMonth(m,n));try{await Promise.all(months.map(x=>ensureMonth(x)))}catch(e){}
+  const H0=months.map(expMonth),cur=H0[H0.length-1],real=x=>x.inc>0||x.ex.t>0; /* months before the system started have no records: leave them out */
+  const H=H0.filter((x,i)=>i===H0.length-1||real(x)),prev=H0.slice(2,5).filter(real),n=v=>Math.round(v||0).toLocaleString("en-US");
+  const isCur=m===today().slice(0,7),dIn=+today().slice(8),dM=new Date(+m.slice(0,4),+m.slice(5,7),0).getDate();
+  /* items: salaries, rent, each expense category */
+  const items={"المرتبات والأوفر تايم والنسب":[cur.sal,prev.map(x=>x.sal)],"الإيجار":[cur.ex.rent,prev.map(x=>x.ex.rent)]};
+  const cats=new Set([...Object.keys(cur.ex.o),...prev.flatMap(x=>Object.keys(x.ex.o))]);for(const c of cats){if(/إيجار|ايجار/.test(c))continue;items[c]=[cur.ex.o[c]||0,prev.map(x=>x.ex.o[c]||0)]}
+  const rows=Object.entries(items).map(([k,[c,L]])=>{const avg=L.length?L.reduce((a,b)=>a+b,0)/L.length:0,ch=avg?Math.round((c-avg)/avg*100):null,share=cur.inc?Math.round(c*100/cur.inc):null;
+    const flag=avg&&c>avg*1.25&&c-avg>=300;return{k,c,avg,ch,share,flag}}).filter(r=>r.c||r.avg).sort((a,b)=>b.c-a.c);
+  const ratio=cur.inc?Math.round(cur.tot*100/cur.inc):null,avgRatio=prev.filter(x=>x.inc).length?Math.round(prev.filter(x=>x.inc).reduce((a,x)=>a+x.tot*100/x.inc,0)/prev.filter(x=>x.inc).length):null;
+  const vc=ratio==null?"c-mute":ratio<=50?"c-ok":ratio<=70?"c-warn":"c-bad",vt=ratio==null?"مفيش دخل متسجل":ratio<=50?"المصروفات تمام":ratio<=70?"محتاجة متابعة":"المصروفات عالية";
+  const max=Math.max(1,...H.map(x=>Math.max(x.inc,x.tot)));const W=320,Hh=150,B=22,bw=W/H.length;
+  const chart=`<svg viewBox="0 0 ${W} ${Hh}" style="width:100%;max-width:560px;height:auto;color:var(--ink,#1c2434)" role="img" aria-label="الدخل والمصروفات آخر 6 شهور">${H.map((x,i)=>{const x0=i*bw+bw*.18,w=bw*.3,hi=(Hh-B-14)*x.inc/max,he=(Hh-B-14)*x.tot/max;
+    return `<rect x="${x0}" y="${Hh-B-hi}" width="${w}" height="${hi}" rx="2" fill="#2f9e5b"/><rect x="${x0+w+2}" y="${Hh-B-he}" width="${w}" height="${he}" rx="2" fill="#d64545"/><text x="${i*bw+bw/2}" y="${Hh-6}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".7">${esc(monthLabel(x.m).split(" ")[0])}</text>`}).join("")}</svg>
+    <p class="sub" style="margin:0"><span style="color:#2f9e5b">■</span> دخل المركز · <span style="color:#d64545">■</span> المصروفات (مرتبات + إيجار + مصروفات)</p>`;
+  const flags=rows.filter(r=>r.flag&&r.k!=="المرتبات والأوفر تايم والنسب").map(r=>({c:r.k,cur:r.c,avg:r.avg}));
+  const tips=expenseTips(m,cur.rv,cur.ex,cur.pr,flags);
+  openSheet(`تحليل المصروفات · ${monthLabel(m)}`,`<style>.eat td,.eat th{padding:7px 4px;text-align:center;border-bottom:1px solid var(--line);white-space:normal}.eat td:first-child,.eat th:first-child{text-align:start}</style>
+  <div class="bar" style="justify-content:space-between"><button class="btn sm" data-act="expAna" data-id="${prevMonth(m)}">‹ اللي قبله</button><b>${esc(monthLabel(m))}</b>${m<today().slice(0,7)?`<button class="btn sm" data-act="expAna" data-id="${prevMonth(m,-1)}">اللي بعده ›</button>`:"<span></span>"}</div>
+  <div class="note" style="display:grid;gap:4px"><div style="display:flex;justify-content:space-between;align-items:center"><b>${vt}</b><span class="chip ${vc}">${ratio==null?"—":ratio+"% من الدخل"}</span></div>
+   <span>الدخل ${n(cur.inc)} · المصروفات ${n(cur.tot)} · الصافي <b style="color:${cur.net<0?"var(--bad)":"var(--ok)"}">${n(cur.net)}</b>${cur.inst?` · وبعد قسط الأجهزة ${n(cur.net-cur.inst)}`:""}</span>
+   ${avgRatio!=null?`<span class="sub">متوسط آخر 3 شهور: المصروفات ${avgRatio}% من الدخل.</span>`:""}${isCur?`<span class="sub">الشهر لسه ماشي (${dIn} من ${dM} يوم): المرتبات والإيجار محسوبين للشهر كله، والدخل لحد النهارده.</span>`:""}</div>
+  <h3 style="margin:10px 0 4px">آخر 6 شهور</h3>${chart}
+  <h3 style="margin:12px 0 4px">كل بند</h3><div style="overflow-x:auto"><table class="eat" style="width:100%;min-width:0;table-layout:fixed;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums"><colgroup><col style="width:38%"><col style="width:21%"><col style="width:21%"><col style="width:20%"></colgroup>
+  <tr><th>البند</th><th>الشهر ده</th><th>المتوسط</th><th>التغيير</th></tr>
+  ${rows.map(r=>`<tr${r.flag?` style="background:rgba(214,69,69,.10)"`:""}><td style="word-break:break-word">${r.flag?"⚠️ ":""}${esc(r.k)}${r.share!=null?`<br><span class="sub">${r.share}% من الدخل</span>`:""}</td><td><b>${n(r.c)}</b></td><td>${r.avg?n(r.avg):"—"}</td><td style="color:${r.ch>10?"var(--bad)":r.ch<-10?"var(--ok)":"inherit"}">${r.ch==null?"—":r.ch===0?"زي ما هو":(r.ch>0?"زاد ":"قل ")+Math.abs(r.ch)+"%"}</td></tr>`).join("")}
+  <tr style="font-weight:800;border-top:2px solid var(--line)"><td>الإجمالي${ratio!=null?`<br><span class="sub">${ratio}% من الدخل</span>`:""}</td><td>${n(cur.tot)}</td><td>${prev.length?n(prev.reduce((a,x)=>a+x.tot,0)/prev.length):"—"}</td><td></td></tr></table></div>
+  <p class="sub" style="margin:0">المتوسط = متوسط آخر 3 شهور${prev.length<3?` (متاح ${prev.length} بس، لأن السيستم بدأ قريب)`:""}.</p>
+  ${cur.inst?`<p class="sub">قسط الأجهزة ${n(cur.inst)} مش داخل في الجدول، بيتخصم بعد الصافي.</p>`:""}
+  <h3 style="margin:12px 0 4px">تقلل منين؟</h3><ul class="tips" style="margin:0;padding-inline-start:20px;display:grid;gap:6px">${tips.map(t=>`<li>${esc(t)}</li>`).join("")}</ul>
+  <p class="sub">⚠️ يعني البند زاد أكتر من 25% (و300 ج على الأقل) عن متوسط آخر 3 شهور.</p>`)}
 function discountsIn(m){
   const rows=[];
   for(const v of Object.values(S.visits))if(v.discount&&(v.date||"").startsWith(m))rows.push({date:v.date,patient:v.patientName,what:`جلسة ${v.typeName||""}`,amount:v.discount,reason:v.discountReason||"—",by:v.by});
@@ -1824,7 +1859,7 @@ function vReports(){
   const thisM=today().slice(0,7),lockBar=!owner?"":isLocked(m+"-01")?`<div class="note">🔒 الشهر ده مقفول${S.lock?.at?` من ${esc(new Date(S.lock.at).toLocaleDateString("ar-EG-u-nu-latn"))}`:""}. <button class="btn sm" data-act="unlockMonth" data-m="${m}" data-confirm>افتح الشهر</button></div>`
     :m<thisM?`<div class="note" style="border-color:var(--warn)">شهر ${esc(monthLabel(m))} لسه مفتوح. بعد ما تقبّض المرتبات اقفله، عشان محدش يعدّل فيه. <button class="btn sm teal" data-act="lockMonth" data-m="${m}" data-confirm>قفّل شهر ${esc(monthLabel(m))}</button></div>`
     :m===thisM&&+today().slice(8)<=10&&!isLocked(prevMonth(m)+"-01")?`<div class="note">بعد ما تقبّض مرتبات شهر ${esc(monthLabel(prevMonth(m)))} متنساش تقفله. <button class="btn sm teal" data-act="lockMonth" data-m="${prevMonth(m)}" data-confirm>قفّل شهر ${esc(monthLabel(prevMonth(m)))}</button></div>`:"";
-  const top=`<div class="bar"><button class="btn sm primary" data-act="dailyRev" data-id="${m}">تقرير الإيراد اليومي</button><button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
+  const top=`<div class="bar"><button class="btn sm primary" data-act="dailyRev" data-id="${m}">تقرير الإيراد اليومي</button><button class="btn sm" data-act="expAna" data-id="${m}">تحليل المصروفات</button><button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
   if(!owner){
     const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
     const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta,dv=vaultIn(x=>x===d);
@@ -3397,7 +3432,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["expAna","dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -3578,6 +3613,7 @@ document.addEventListener("click",async e=>{
     case "openDay":closeSheet();S.ui.date=id;S.tab="sessions";render();window.scrollTo(0,0);break;
     case "dayRep":sheetDayReport(id);break;
     case "dailyRev":sheetDailyRev(id);break;
+    case "expAna":sheetExpAnalysis(id);break;
     case "dailyRevPdf":dailyRevPdf(id,t);break;
     case "dailyRevWa":window.open(`https://wa.me/?text=${encodeURIComponent(dailyRevText(id))}`,"_blank","noopener");break;
     case "dayRepWa":window.open(`https://wa.me/?text=${encodeURIComponent(dayRepText(id))}`,"_blank","noopener");break;
