@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="21 نوفمبر · 118";
+const APP_VERSION="21 نوفمبر · 119";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -2260,8 +2260,33 @@ function apptRow(a,view,showDoc){
   <span class="end bar">${view==="doctor"?doctorBtns:adminBtns}</span>
   <span class="m">${[showDoc?docs:"",a.typeName||"",a.note||"",credit].filter(Boolean).map(esc).join(" · ")}</span><span class="end m">${esc(apptTimes(a))}</span></div>`;
 }
+/* all doctors' appointments side by side for the day: one column per doctor, time down the side; tap a free slot to book it */
+const BSLOT=30,BPX=44;
+function apptBoard(d){const docs=workerOpts().map(([k,n])=>({k,n:n.replace(" (من بره)","")}));const wd=new Date(d+"T12:00").getDay();
+  const A=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin&&shownAppt(a)&&!["cancelled","noshow"].includes(a.status));
+  const mins=t=>{const m=/^(\d{1,2}):(\d{2})/.exec(t||"");return m?+m[1]*60+ +m[2]:null};
+  const times=A.map(a=>mins(a.time)).filter(x=>x!=null);let st=Math.min(12*60,...times),en=Math.max(22*60,...A.map(a=>(mins(a.time)??0)+(a.duration||60)));st=Math.floor(st/60)*60;en=Math.ceil(en/60)*60;
+  const rows=(en-st)/BSLOT,H=rows*BPX;const off=s=>{if(S.role!=="owner")return false;const w=cfg().workDays[s];return Array.isArray(w)&&!w.includes(wd)};
+  const used=new Set(A.flatMap(a=>apptDocs(a)));const cols=docs.filter(x=>used.has(x.k)||!exts().some(e=>e.id===x.k)); /* our doctors always; outside doctors only on days they have bookings */
+  const nowM=d===today()?new Date().getHours()*60+new Date().getMinutes():null;
+  const stc={booked:"var(--acc2,#e8edf9)",arrived:"#fdf0d5",started:"#dff3e7",done:"#e6e9ef"};
+  const col=x=>{const mine=A.filter(a=>apptDocs(a).includes(x.k));return `<div class="bcol${off(x.k)?" off":""}" style="height:${H}px">
+    ${Array.from({length:rows},(_,i)=>`<button class="bslot" data-act="boardBook" data-id="${x.k}" data-t="${String(Math.floor((st+i*BSLOT)/60)).padStart(2,"0")}:${String((st+i*BSLOT)%60).padStart(2,"0")}" style="top:${i*BPX}px" aria-label="احجز ${esc(x.n)} ${String(Math.floor((st+i*BSLOT)/60)).padStart(2,"0")}:${String((st+i*BSLOT)%60).padStart(2,"0")}"></button>`).join("")}
+    ${mine.map(a=>{const t=mins(a.time);if(t==null)return "";const top=(t-st)/BSLOT*BPX,h=Math.max(BPX-4,(a.duration||60)/BSLOT*BPX-4);
+      return `<button class="bappt" data-act="editAppt" data-id="${a.id}" style="top:${top+2}px;height:${h}px;background:${stc[a.status]||stc.booked}"><b>${esc(a.patientName||"—")}</b><span>${esc(a.time)}${a.kind==="exam"?" · كشف":""}${apptDocs(a).length>1?" · مشترك":""}</span></button>`}).join("")}
+    ${nowM!=null&&nowM>=st&&nowM<=en?`<div class="bnow" style="top:${(nowM-st)/BSLOT*BPX}px"></div>`:""}</div>`};
+  return `<style>.bwrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card,#fff)}.bgrid{display:grid;grid-template-columns:52px repeat(${cols.length},minmax(118px,1fr));min-width:${52+cols.length*118}px}
+   .bhead{position:sticky;top:0;z-index:3;background:var(--card,#fff);border-bottom:1px solid var(--line);padding:8px 4px;text-align:center;font-weight:700;font-size:14px}.bhead small{display:block;font-weight:400;color:var(--mute,#5b6784)}
+   .btime{position:relative;border-inline-end:1px solid var(--line)}.btime span{position:absolute;inset-inline:0;text-align:center;font-size:11px;color:var(--mute,#5b6784);transform:translateY(-6px)}
+   .bcol{position:relative;border-inline-end:1px solid var(--line)}.bcol.off{background:repeating-linear-gradient(45deg,transparent 0 8px,rgba(120,130,150,.08) 8px 16px)}
+   .bslot{position:absolute;inset-inline:0;height:${BPX}px;border:0;border-bottom:1px dashed var(--line);background:transparent;cursor:pointer;padding:0}.bslot:hover,.bslot:focus-visible{background:rgba(43,63,134,.08);outline:none}
+   .bappt{position:absolute;inset-inline:3px;border:1px solid rgba(43,63,134,.25);border-radius:8px;padding:4px 6px;text-align:start;display:flex;flex-direction:column;gap:1px;overflow:hidden;cursor:pointer;z-index:2;font:inherit;color:#16203a}
+   .bappt b{font-size:13px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bappt span{font-size:11px;opacity:.75}.bnow{position:absolute;inset-inline:0;height:2px;background:#d64545;z-index:4}</style>
+  <div class="bwrap"><div class="bgrid"><div class="bhead">الساعة</div>${cols.map(x=>{const c=A.filter(a=>apptDocs(a).includes(x.k)).length;return `<div class="bhead">${esc(x.n)}<small>${off(x.k)?"مش يوم شغله":c?`${c} حجز`:"فاضي"}</small></div>`}).join("")}
+   <div class="btime" style="height:${H}px">${Array.from({length:rows+1},(_,i)=>(st+i*BSLOT)%60===0?`<span style="top:${i*BPX}px">${((Math.floor((st+i*BSLOT)/60)+11)%12)+1}${Math.floor((st+i*BSLOT)/60)<12?"ص":"م"}</span>`:"").join("")}</div>${cols.map(col).join("")}</div></div>
+  <p class="sub" style="margin:0">دوس على مكان فاضي عشان تحجز فيه للدكتور ده، أو على حجز عشان تفتحه.${S.role==="owner"?" العمود المخطط يعني اليوم ده مش يوم شغل الدكتور.":""}</p>`}
 function vAppts(){
-  const d=S.ui.date;ensureMonth(d.slice(0,7));
+  const d=S.ui.date;ensureMonth(d.slice(0,7));if(!S.ui.apptView){try{S.ui.apptView=localStorage.getItem("apptView")||""}catch(e){}}const board=(S.ui.apptView||(S.role==="owner"?"board":"list"))==="board";
   const list=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));setTimeout(()=>syncLabels(list),0);
   const active=list.filter(a=>!["cancelled","noshow"].includes(a.status));
   const byDoc={};active.forEach(a=>{const k=apptDocs(a)[0]||"—";(byDoc[k]=byDoc[k]||[]).push(a)});
@@ -2269,10 +2294,12 @@ function vAppts(){
   ${(()=>{const due=active.filter(a=>a.status==="booked"&&a.date>=today());if(!due.length)return "";const done=due.filter(a=>a.remindedAt).length;
     return `<div class="note">تذكيرات اليوم ده: اتبعت <b>${done}</b> من <b>${due.length}</b>${done<due.length?". دوس «تذكير واتساب» جنب كل حجز، والرسالة بتبقى جاهزة.":"."}</div>`})()}
   ${lockNote(d)}${dupPanel()}
+  <div class="seg" style="width:max-content"><button class="btn sm ${board?"primary":""}" data-act="apptView" data-id="board">جدول الدكاترة</button><button class="btn sm ${board?"":"primary"}" data-act="apptView" data-id="list">لستة</button></div>
+  ${board?apptBoard(d)+cancelledList(list,"admin"):`
   <p class="sub" style="margin:0">هنا الحجز بس. اللي حصل فعلاً (جه، كنسل، دفع، دخل إمتى) بيتسجل في «جلسات اليوم».</p>
   <div class="stats"><div class="stat"><div class="k">محجوز اليوم ده</div><div class="v num">${active.length}</div></div>${Object.entries(byDoc).map(([sid,arr])=>`<div class="stat"><div class="k">${esc(staffName(sid))}</div><div class="v num">${arr.length}</div></div>`).join("")}</div>
   ${active.length?Object.entries(byDoc).map(([sid,arr])=>`<div class="panel"><h2>${esc(staffName(sid))} <span class="sub">${arr.length} حجز</span></h2><div class="list">${arr.map(a=>apptRow(a,"admin",apptDocs(a).length>1)).join("")}</div></div>`).join(""):`<div class="empty"><b>مفيش حجوزات اليوم ده</b>اضغط «+ حجز» واختار المريض والدكتور والساعة.</div>`}
-  ${cancelledList(list,"admin")}`;
+  ${cancelledList(list,"admin")}`}`;
 }
 function vMyAppts(){
   const d=S.ui.date;const all=Object.values(S.appts).filter(a=>a.date===d&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
@@ -2283,8 +2310,8 @@ function vMyAppts(){
   ${list.length?`<div class="list">${list.map(a=>apptRow(a,"doctor",apptDocs(a).length>1)).join("")}</div>`:all.length?"":`<div class="empty"><b>مفيش مواعيد ليك اليوم ده</b>المواعيد بتسجلها ريهام وبتظهرلك هنا.</div>`}
   ${cancelledList(all,"doctor")}`;
 }
-function sheetAppt(id,pid){
-  const a=id?S.appts[id]:{date:S.ui.date,time:"",duration:60,status:"booked",kind:"session",...(pid?{patientId:pid}:{})};if(!a)return;apptWarned=false;apptDupWarned=false;
+function sheetAppt(id,pid,pre){
+  const a=id?S.appts[id]:{date:S.ui.date,time:pre?.time||"",duration:60,status:"booked",kind:"session",...(pid?{patientId:pid}:{}),...(pre?.doc?{doctors:[pre.doc],doctorSid:pre.doc}:{})};if(!a)return;apptWarned=false;apptDupWarned=false;
   const cur=a.patientId&&S.patients[a.patientId]?pLabel(S.patients[a.patientId]):(a.patientName||"");
   const docOpts=sel=>workerOpts().map(([k,n])=>`<option value="${k}" ${sel===k?"selected":""}>${esc(n)}</option>`).join("");
   const ds=apptDocs(a);
@@ -3487,6 +3514,8 @@ document.addEventListener("click",async e=>{
     case "testAlert":if(S.role==="owner"){const n=S.notify;if(n?.topic)fetch("https://ntfy.sh/",{method:"POST",body:JSON.stringify({topic:n.topic,title:"Stride Clinic",message:"الإشعارات شغالة. هيوصلك تنبيه هنا لو حد سجل حضور من بره المركز.",priority:3})}).then(r=>toast(r.ok?"اتبعت. بص على موبايلك.":"مااتبعتش، جرب تاني.")).catch(()=>toast("مااتبعتش. اتأكد من النت."))}break;
     case "copyTopic":{const tp=S.notify?.topic||"";navigator.clipboard?.writeText(tp).then(()=>toast("اتنسخ")).catch(()=>{const el=document.getElementById("ntfyTopic");const r=document.createRange();r.selectNodeContents(el);const sel=getSelection();sel.removeAllRanges();sel.addRange(r)})}break;
     case "newAppt":sheetAppt(null);break;
+    case "apptView":S.ui.apptView=id;try{localStorage.setItem("apptView",id)}catch(e){}render();break;
+    case "boardBook":sheetAppt(null,null,{time:t.dataset.t,doc:id});break;
     case "editAppt":sheetAppt(id);break;
     case "saveAppt":guard(t,()=>saveAppt(id));break;
     case "apptConfirm":sheetApptConfirm(id);break;
