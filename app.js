@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="21 نوفمبر · 119";
+const APP_VERSION="21 نوفمبر · 120";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -314,7 +314,7 @@ function countedNote(r){const e=effIn(r),a=mins(r.in);return r&&e!=null&&a!=null
 function attMinutes(rec){const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
 function fixedRow(f){f=f||{id:randId(),name:"",amount:"",from:prevMonth(today().slice(0,7))};return `<div class="grid2 fxrow" data-fx="${f.id}"><label class="f">الاسم<input class="fx_name" value="${esc(f.name||"")}" placeholder="د. تامر"></label><label class="f">المرتب الشهري<input class="fx_amt" inputmode="decimal" value="${f.amount??""}" placeholder="3500"></label><label class="f">من شهر<input type="month" class="fx_from" value="${f.from||prevMonth(today().slice(0,7))}"></label><button class="btn sm danger" data-act="delFixed" style="align-self:end">شيله</button></div>`}
 function defBonus(){const o={};for(const s of Object.values(S.staff||{}))if(s.role==="doctor"&&/سلم|حبيب/.test(s.name||""))o[s.id]=150;return o}
-function cfg(){const c=S.config||{};return{payDetail:c.payDetail||Object.fromEntries(Object.keys(c.commission||{}).map(k=>[k,true])),fixed:c.fixed||[],bonus:c.bonus||defBonus(),salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},docStart:c.docStart||"15:00",secStart:c.secStart||"14:30",secLead:c.secLead??30,otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7}}
+function cfg(){const c=S.config||{};return{payDetail:c.payDetail||Object.fromEntries(Object.keys(c.commission||{}).map(k=>[k,true])),fixed:c.fixed||[],bonus:c.bonus||defBonus(),salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},docStart:c.docStart||"15:00",secStart:c.secStart||"14:30",secLead:c.secLead??30,otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7,shifts:c.shifts||{}}}
 const WEEK=[[6,"س","السبت"],[0,"ح","الحد"],[1,"ن","الاتنين"],[2,"ث","التلات"],[3,"ر","الأربع"],[4,"خ","الخميس"],[5,"ج","الجمعة"]]; // getDay(): 0 = Sunday … 6 = Saturday
 function guessDays(s){const n=s.name||"";if(s.role==="secretary")return [6,0,1,2,3,4];if(/سلم|محمد/.test(n))return [6,1,3];if(/حبيب/.test(n))return [0,2,4];return null}
 function workDaysOf(s){const w=cfg().workDays[s.id];return Array.isArray(w)?w:guessDays(s)} // the weekly schedule the salary is for
@@ -911,8 +911,9 @@ function vAtt(){
   const tempNote=S.role!=="owner"?`<div class="note">صلاحية مؤقتة: تسجيل الحضور من ${esc(S.backfill.from)} لحد ${esc(S.backfill.to)}، ومتاحة لحد ${tsDate(S.backfill.until).toLocaleString("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",hour:"numeric",minute:"2-digit"})}.${inBackfill(d)?"":" <b>اليوم ده بره الفترة.</b>"}</div>`:"";
   const st=activeStaff();
   const rows=st.map(s=>{const r=S.att[d+"_"+s.id];const w=r?attMinutes(r):null;const ot=w!=null&&w>base?w-base:0;
-    return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span></span>
-    <span class="end">${attChip(r,w,ot,base)}</span>
+    const sh=shiftOf(s.id,new Date(d+"T12:00").getDay()),late=shiftLate(r,s.id,d);
+    return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span>${sh?` <span class="sub">${t12(sh.from)}–${t12(sh.to)}</span>`:` <span class="sub">مش يوم شغله</span>`}</span>
+    <span class="end">${late?`<span class="chip c-warn">اتأخر ${hm(late)}</span> `:""}${attChip(r,w,ot,base)}</span>
     <span class="m">${r?`حضور ${esc(r.in||"—")}${countedNote(r)} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
   const PR=payroll(m); // same numbers as the payroll: overtime is counted on the month, a short day is made up first
   const sum=st.map(s=>{let days=0,plus=0,minus=0;for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(m)){const w=attMinutes(r);if(w==null)continue;days++;w>base?plus+=w-base:minus+=base-w}
@@ -923,9 +924,31 @@ function vAtt(){
   const fixHtml=(dl.length?`<div class="panel" style="border-color:var(--warn)"><h2>خصم ${esc(staffName(dl[0].sid))} يوم 12/10</h2><p class="sub" style="margin:0">هيتشال خالص: من غير خصم، ومش هيتعد من إجازاتها، ومش مطلوب تعوّض ساعاته.</p><button class="btn teal" data-act="dropDeduct" data-id="${dl[0].sid}" data-confirm>شيل الخصم</button></div>`:"")+(fixR.length?`<div class="panel" style="border-color:var(--warn)"><h2>انصراف ${esc(staffName(fixR[0].staffId))} بدري في أكتوبر</h2><div class="list">${fixR.map(r=>`<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(r.date))}</span><span class="end"><button class="btn sm teal" data-act="attTo10" data-id="${r.date}_${r.staffId}" data-confirm>خليها مشيت 10:00</button></span><span class="m">حضور ${esc(r.in||"—")} · انصراف ${esc(r.out)}</span><span></span></div>`).join("")}</div></div>`:"");
   return `${tempNote}${fixHtml}<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
   ${st.length?`<div class="list">${rows}</div>`:`<div class="empty"><b>مفيش فريق متسجل</b>ضيف الدكاترة والسكرتارية من الإعدادات.</div>`}
+  ${shiftPanel()}
   <div class="panel"><h2>ملخص ${esc(monthLabel(m))}</h2><p class="sub" style="margin:0">اليوم الأساسي ${cfg().hoursBase} ساعات. الأوفر تايم بيتحسب على الشهر: الأول يكمّل ساعات أيام جدوله لحد النهارده (اليوم اللي خرج فيه بدري بيتعوّض من الزيادة)، واللي يفضل بعد كده هو الأوفر تايم، بدقيقة ونص في المرتب. ده نفس الرقم اللي في المرتبات.</p>
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>أيام متسجلة</th><th>زيادة الأيام</th><th>أوفر تايم الشهر</th></tr></thead><tbody>${sum}</tbody></table></div></div>`;
 }
+/* weekly attendance schedule: each person's days and hours (from–to); the days also drive the payroll's working days */
+const WD=[[6,"السبت"],[0,"الحد"],[1,"الاتنين"],[2,"التلات"],[3,"الأربع"],[4,"الخميس"],[5,"الجمعة"]];
+function shiftOf(sid,dow){const c=cfg(),sh=c.shifts[sid];if(sh&&Object.keys(sh).length)return sh[dow]||null;const s=S.staff[sid];const w=s?workDaysOf(s):null;if(!w||!w.includes(dow))return null;
+  const st=s.role==="secretary"?c.secStart:c.docStart;const [h,m]=st.split(":").map(Number);const e=h*60+m+c.hoursBase*60;return{from:st,to:`${String(Math.floor(e/60)%24).padStart(2,"0")}:${String(e%60).padStart(2,"0")}`,guess:true}}
+function t12(t){if(!t)return "";const [h,m]=t.split(":").map(Number);return `${((h+11)%12)+1}${m?":"+String(m).padStart(2,"0"):""}${h<12?"ص":"م"}`}
+function shiftPanel(){if(S.role!=="owner")return "";const st=activeStaff();
+  return `<div class="panel"><div class="sec-title"><h2>مواعيد الحضور</h2></div><p class="sub" style="margin:0">مواعيد كل واحد في الأسبوع. دوس على أي حد عشان تعدّل أيامه وساعاته.</p>
+  <div class="list">${st.map(s=>{const L=WD.map(([d,l])=>[l,shiftOf(s.id,d)]).filter(([,x])=>x);const g=L.some(([,x])=>x.guess);
+    return `<button class="row" data-act="editShift" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span></span><span class="end sub">${L.length} أيام</span>
+    <span class="m">${L.length?L.map(([l,x])=>`${l} ${t12(x.from)}–${t12(x.to)}`).join(" · "):"مفيش مواعيد متسجلة"}${g?` <span class="chip c-warn">محتاج تأكيد</span>`:""}</span></button>`}).join("")}</div></div>`}
+function sheetShift(sid){const s=S.staff[sid];if(!s)return;
+  openSheet(`مواعيد ${s.name}`,`<p class="sub" style="margin:0">علّم على أيام شغله واكتب الساعات. «طبّق على كل الأيام» بينسخ أول يوم متعلّم على الباقي.</p>
+  <div style="display:grid;gap:8px">${WD.map(([d,l])=>{const x=shiftOf(sid,d);return `<div style="display:grid;grid-template-columns:96px 1fr 1fr;gap:8px;align-items:center">
+    <label style="display:flex;gap:6px;align-items:center;font-weight:600"><input type="checkbox" id="sh_on_${d}" ${x?"checked":""} style="width:auto"> ${l}</label>
+    <input type="time" id="sh_f_${d}" value="${x?.from||""}" aria-label="من"><input type="time" id="sh_t_${d}" value="${x?.to||""}" aria-label="لحد"></div>`}).join("")}</div>
+  <div class="bar"><button class="btn sm" data-act="shiftCopy">طبّق على كل الأيام المتعلّمة</button></div><div class="err" id="formErr"></div><button class="btn primary" data-act="saveShift" data-sid="${sid}">حفظ</button>`)}
+async function saveShift(sid){const o={};for(const [d,l] of WD){if(!document.getElementById("sh_on_"+d).checked)continue;const f=val("sh_f_"+d),t=val("sh_t_"+d);if(!f||!t)return setErr(`اكتب الساعات يوم ${l}`);o[d]={from:f,to:t}}
+  const c=cfg(),shifts={...c.shifts,[sid]:o},workDays={...c.workDays,[sid]:Object.keys(o).map(Number)};
+  await S.db.doc("priv/config").set({shifts,workDays},{merge:true});audit("staff","مواعيد الحضور",{target:staffName(sid),info:WD.filter(([d])=>o[d]).map(([d,l])=>`${l} ${o[d].from}-${o[d].to}`).join(" · ")||"مفيش أيام"});closeSheet();toast("المواعيد اتحفظت")}
+/* late arrival against the schedule */
+function shiftLate(r,sid,d){const x=shiftOf(sid,new Date(d+"T12:00").getDay());if(!x||!r?.in)return 0;const a=mins(r.in),b=mins(x.from);return a!=null&&b!=null&&a-b>10?a-b:0}
 function locNote(r){const parts=[];if(r.inLoc)parts.push(`حضور على بعد ${r.inLoc.d}م`);if(r.outLoc)parts.push(`انصراف على بعد ${r.outLoc.d}م`);return parts.length?` · ${parts.join("، ")}`:""}
 function attChip(r,w,ot,base){if(!r)return `<span class="chip c-mute">غايب / مش متسجل</span>`;if(ot)return `<span class="chip c-acc">أوفر تايم ${hm(ot)}</span>`;if(w!=null&&w<base)return `<span class="chip c-warn">ناقص ${hm(base-w)}</span>`;return `<span class="chip c-ok">${w!=null?"تمام":"لسه مقفلش"}</span>`}
 /* ---------- views: my attendance (doctor) ---------- */
@@ -2266,11 +2289,12 @@ function apptBoard(d){const docs=workerOpts().map(([k,n])=>({k,n:n.replace(" (م
   const A=Object.values(S.appts).filter(a=>a.date===d&&!a.walkin&&shownAppt(a)&&!["cancelled","noshow"].includes(a.status));
   const mins=t=>{const m=/^(\d{1,2}):(\d{2})/.exec(t||"");return m?+m[1]*60+ +m[2]:null};
   const times=A.map(a=>mins(a.time)).filter(x=>x!=null);let st=Math.min(12*60,...times),en=Math.max(22*60,...A.map(a=>(mins(a.time)??0)+(a.duration||60)));st=Math.floor(st/60)*60;en=Math.ceil(en/60)*60;
-  const rows=(en-st)/BSLOT,H=rows*BPX;const off=s=>{if(S.role!=="owner")return false;const w=cfg().workDays[s];return Array.isArray(w)&&!w.includes(wd)};
+  const rows=(en-st)/BSLOT,H=rows*BPX;const off=s=>{if(S.role!=="owner"||!S.staff[s])return false;return !shiftOf(s,wd)};
+  const outside=s=>{if(S.role!=="owner"||!S.staff[s])return "";const x=shiftOf(s,wd);if(!x||x.guess)return "";const f=mins(x.from),t=mins(x.to);if(f==null||t==null)return "";const sh=(a,b)=>b>a?`<div class="boff" style="top:${(a-st)/BSLOT*BPX}px;height:${(b-a)/BSLOT*BPX}px"></div>`:"";return sh(st,Math.min(f,en))+sh(Math.max(t,st),en)};
   const used=new Set(A.flatMap(a=>apptDocs(a)));const cols=docs.filter(x=>used.has(x.k)||!exts().some(e=>e.id===x.k)); /* our doctors always; outside doctors only on days they have bookings */
   const nowM=d===today()?new Date().getHours()*60+new Date().getMinutes():null;
   const stc={booked:"var(--acc2,#e8edf9)",arrived:"#fdf0d5",started:"#dff3e7",done:"#e6e9ef"};
-  const col=x=>{const mine=A.filter(a=>apptDocs(a).includes(x.k));return `<div class="bcol${off(x.k)?" off":""}" style="height:${H}px">
+  const col=x=>{const mine=A.filter(a=>apptDocs(a).includes(x.k));return `<div class="bcol${off(x.k)?" off":""}" style="height:${H}px">${outside(x.k)}
     ${Array.from({length:rows},(_,i)=>`<button class="bslot" data-act="boardBook" data-id="${x.k}" data-t="${String(Math.floor((st+i*BSLOT)/60)).padStart(2,"0")}:${String((st+i*BSLOT)%60).padStart(2,"0")}" style="top:${i*BPX}px" aria-label="احجز ${esc(x.n)} ${String(Math.floor((st+i*BSLOT)/60)).padStart(2,"0")}:${String((st+i*BSLOT)%60).padStart(2,"0")}"></button>`).join("")}
     ${mine.map(a=>{const t=mins(a.time);if(t==null)return "";const top=(t-st)/BSLOT*BPX,h=Math.max(BPX-4,(a.duration||60)/BSLOT*BPX-4);
       return `<button class="bappt" data-act="editAppt" data-id="${a.id}" style="top:${top+2}px;height:${h}px;background:${stc[a.status]||stc.booked}"><b>${esc(a.patientName||"—")}</b><span>${esc(a.time)}${a.kind==="exam"?" · كشف":""}${apptDocs(a).length>1?" · مشترك":""}</span></button>`}).join("")}
@@ -2278,11 +2302,11 @@ function apptBoard(d){const docs=workerOpts().map(([k,n])=>({k,n:n.replace(" (م
   return `<style>.bwrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card,#fff)}.bgrid{display:grid;grid-template-columns:52px repeat(${cols.length},minmax(118px,1fr));min-width:${52+cols.length*118}px}
    .bhead{position:sticky;top:0;z-index:3;background:var(--card,#fff);border-bottom:1px solid var(--line);padding:8px 4px;text-align:center;font-weight:700;font-size:14px}.bhead small{display:block;font-weight:400;color:var(--mute,#5b6784)}
    .btime{position:relative;border-inline-end:1px solid var(--line)}.btime span{position:absolute;inset-inline:0;text-align:center;font-size:11px;color:var(--mute,#5b6784);transform:translateY(-6px)}
-   .bcol{position:relative;border-inline-end:1px solid var(--line)}.bcol.off{background:repeating-linear-gradient(45deg,transparent 0 8px,rgba(120,130,150,.08) 8px 16px)}
+   .bcol{position:relative;border-inline-end:1px solid var(--line)}.bcol.off,.boff{background:repeating-linear-gradient(45deg,transparent 0 8px,rgba(120,130,150,.10) 8px 16px)}.boff{position:absolute;inset-inline:0;pointer-events:none;z-index:1}
    .bslot{position:absolute;inset-inline:0;height:${BPX}px;border:0;border-bottom:1px dashed var(--line);background:transparent;cursor:pointer;padding:0}.bslot:hover,.bslot:focus-visible{background:rgba(43,63,134,.08);outline:none}
    .bappt{position:absolute;inset-inline:3px;border:1px solid rgba(43,63,134,.25);border-radius:8px;padding:4px 6px;text-align:start;display:flex;flex-direction:column;gap:1px;overflow:hidden;cursor:pointer;z-index:2;font:inherit;color:#16203a}
    .bappt b{font-size:13px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bappt span{font-size:11px;opacity:.75}.bnow{position:absolute;inset-inline:0;height:2px;background:#d64545;z-index:4}</style>
-  <div class="bwrap"><div class="bgrid"><div class="bhead">الساعة</div>${cols.map(x=>{const c=A.filter(a=>apptDocs(a).includes(x.k)).length;return `<div class="bhead">${esc(x.n)}<small>${off(x.k)?"مش يوم شغله":c?`${c} حجز`:"فاضي"}</small></div>`}).join("")}
+  <div class="bwrap"><div class="bgrid"><div class="bhead">الساعة</div>${cols.map(x=>{const c=A.filter(a=>apptDocs(a).includes(x.k)).length;const sh=S.role==="owner"&&S.staff[x.k]?shiftOf(x.k,wd):null;return `<div class="bhead">${esc(x.n)}<small>${off(x.k)?"مش يوم شغله":`${sh&&!sh.guess?`${t12(sh.from)}–${t12(sh.to)} · `:""}${c?`${c} حجز`:"فاضي"}`}</small></div>`}).join("")}
    <div class="btime" style="height:${H}px">${Array.from({length:rows+1},(_,i)=>(st+i*BSLOT)%60===0?`<span style="top:${i*BPX}px">${((Math.floor((st+i*BSLOT)/60)+11)%12)+1}${Math.floor((st+i*BSLOT)/60)<12?"ص":"م"}</span>`:"").join("")}</div>${cols.map(col).join("")}</div></div>
   <p class="sub" style="margin:0">دوس على مكان فاضي عشان تحجز فيه للدكتور ده، أو على حجز عشان تفتحه.${S.role==="owner"?" العمود المخطط يعني اليوم ده مش يوم شغل الدكتور.":""}</p>`}
 function vAppts(){
@@ -3478,7 +3502,7 @@ document.addEventListener("change",e=>{
   if(id==="auWho"||id==="auKind"){S.ui[id]=e.target.value;e.target.blur();render()}
   if(e.target.dataset.act==="srcScope"){S.ui.srcAll=e.target.value==="all";e.target.blur();render()}
 });
-const OWNER_ACTS=new Set(["sessCount","expAna","dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
+const OWNER_ACTS=new Set(["editShift","saveShift","shiftCopy","sessCount","expAna","dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
 const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
@@ -3576,6 +3600,9 @@ document.addEventListener("click",async e=>{
     case "delPatient":guard(t,()=>delPatient(id));break;
     case "zoom":t.classList.toggle("big");break;
     case "editAtt":sheetAtt(t.dataset.sid);break;
+    case "editShift":sheetShift(t.dataset.sid);break;
+    case "saveShift":guard(t,()=>saveShift(t.dataset.sid));break;
+    case "shiftCopy":{const f=WD.find(([d])=>document.getElementById("sh_on_"+d).checked);if(!f){toast("علّم على يوم الأول");break}const a=val("sh_f_"+f[0]),b=val("sh_t_"+f[0]);WD.forEach(([d])=>{if(document.getElementById("sh_on_"+d).checked){document.getElementById("sh_f_"+d).value=a;document.getElementById("sh_t_"+d).value=b}});break}
     case "nowIn":document.getElementById("a_in").value=nowHM();break;
     case "nowOut":document.getElementById("a_out").value=nowHM();break;
     case "saveAtt":guard(t,async()=>{const sid=t.dataset.sid,d=S.ui.attDate;if(lockBlock(d))return;const i=val("a_in"),o=val("a_out");if(!i&&!o)return setErr("سجّل الحضور أو الانصراف");if(i&&o&&mins(o)<=mins(i))return setErr("الانصراف لازم يكون بعد الحضور");const body={date:d,staffId:sid,in:i,out:o,note:val("a_note").trim(),by:S.mySid};const was=S.att[`${d}_${sid}`];await db.doc(`att/${d}_${sid}`).set(body);
