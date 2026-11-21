@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="21 نوفمبر · 120";
+const APP_VERSION="21 نوفمبر · 121";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -2275,7 +2275,7 @@ function cancelledList(list,view){ // cancelled / no-show at the end, so the day
   return `<h3 style="font-size:14px;margin:14px 0 6px">اتلغوا أو محضروش (${off.length})</h3><div class="list">${off.map(a=>`<div class="row stack" style="cursor:default;opacity:.85"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} <span class="chip ${a.status==="noshow"?"c-warn":"c-bad"}">${esc(cancelWho(a))}</span></span>
     <span class="end bar">${view==="admin"?`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`:""}</span><span class="m">${esc([kindOf(a),apptDocs(a).length>1||view==="admin"?apptDocs(a).map(staffName).join(" + "):""].filter(Boolean).join(" · "))}</span><span></span></div>`).join("")}</div>`}
 function apptRow(a,view,showDoc){
-  const doctorBtns=(a.patientId?`<button class="btn sm" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">البرنامج</button>`:"")+(a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"");
+  const doctorBtns=(a.patientId?`<button class="btn sm" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">البرنامج</button>${trendChip(a)}`:"")+(a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"");
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
@@ -2327,6 +2327,7 @@ function vAppts(){
 }
 function vMyAppts(){
   const d=S.ui.date;const all=Object.values(S.appts).filter(a=>a.date===d&&apptDocs(a).includes(S.mySid)&&shownAppt(a)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  trkLoad(all.map(a=>a.patientId)).then(ch=>{if(ch)render()});
   const list=all.filter(a=>!["cancelled","noshow"].includes(a.status)),off=all.length-list.length;
   return `<div class="bar">${dayNav("day","dayPick",d)}<span class="sub grow">${esc(dayLabel(d))}${d===today()?" · النهارده":""}</span></div>
   <p class="sub" style="margin:0">دوس «بدأت» أول ما المريض يدخل، و«خلصت» في آخر الجلسة. لو حد تاني من الدكاترة كمّل الجلسة، هو اللي يدوس «خلصت» من عنده.</p>
@@ -2498,8 +2499,9 @@ function trendOf(track){const T=(track||[]).filter(x=>!x.exam).sort((a,b)=>(a.da
   const drop=first&&lp!=null?first.pain-lp:0;
   if(drop>=3||(first?.pain>0&&lp!=null&&lp<=first.pain/2)||T.slice(-2).every(x=>x.st==="better"))return{k:"good",n:T.length,t:first&&lp!=null&&drop>0?`بيتحسن · الوجع ${first.pain}←${lp}`:"بيتحسن"};
   return{k:"mid",n:T.length}}
-function trendChip(a){if(S.role!=="owner"||!a.patientId)return "";const c=TRKC[a.patientId];if(!c)return "";const t=trendOf(c.track);if(!t||t.k==="mid")return "";
+function trendChip(a){if(!a.patientId||!(S.role==="owner"||S.role==="doctor"))return "";const c=TRKC[a.patientId];if(!c)return "";const t=trendOf(c.track);if(!t||t.k==="mid")return "";
   if(t.k==="bad")return `<button class="chip c-bad" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}" data-tab="trk" style="border:0;cursor:pointer">⚠️ ${esc(t.t)} · محتاج تشوفه</button>`;
+  if(S.role!=="owner")return `<button class="chip c-ok" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}" data-tab="trk" style="border:0;cursor:pointer">✅ ${esc(t.t)}</button>`;
   const asked=S.patients[a.patientId]?.reviewAskedAt;return `<button class="chip c-ok" data-act="askReview" data-id="${a.patientId}" style="border:0;cursor:pointer">✅ ${esc(t.t)}${asked?" · اتطلب ريفيو":" · اطلب ريفيو ›"}</button>`}
 function reviewUrl(){return S.reviewUrl||""}
 function sheetReviewLink(pid){openSheet("لينك تقييم جوجل",`<p class="sub" style="margin:0">مرة واحدة بس: افتح Google Maps على المركز ← «Share a review» أو «اكتب مراجعة» ← انسخ اللينك والصقه هنا.</p>
@@ -2514,11 +2516,19 @@ function trkSvg(pts,max,unit,color,inv){if(pts.length<1)return "";const tg=pts.s
   const path=pts.map((p,i)=>`${i?"L":"M"}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;height:auto;color:var(--ink,#1c2434)" role="img" aria-label="${unit}">${grid}<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>${pts.map((p,i)=>`<circle cx="${X(i)}" cy="${Y(p.v)}" r="3.5" fill="${color}"/><text x="${X(i)}" y="${Y(p.v)-7}" font-size="9" text-anchor="middle" fill="currentColor">${p.v}</text>${n<=8||i===0||i===n-1?`<text x="${X(i)}" y="${H-8}" font-size="8" text-anchor="middle" fill="currentColor" opacity=".6">${esc(p.d.slice(8,10)+"/"+p.d.slice(5,7))}</text>`:""}${p.tag?`<text x="${X(i)}" y="${H-22}" font-size="10" text-anchor="middle">${p.tag}</text>`:""}`).join("")}</svg>${tg?`<p class="sub" style="margin:0">${Object.entries(PWI).map(([k,e])=>`${e} ${PWL[k]}`).join(" · ")} · ↔ الوجع اتنقل</p>`:""}`}
 const PWI={rest:"🪑",move:"🏃",morning:"🌅",evening:"🌙",work:"💼",prayer:"🕌"};
+function sheetTrackAdd(pid,name){openSheet(`سجّل التحسن · ${name||""}`,`${trackFields({patientId:pid})}
+  <label class="f">ملاحظة <b style="color:var(--bad)">*</b><textarea id="e_note" placeholder="مثلًا: إعادة تقييم بعد 6 جلسات، الثني بقى 110°"></textarea></label>
+  <div class="err" id="formErr"></div><button class="btn primary" data-act="trackSave" data-id="${pid}" data-name="${esc(name||"")}">حفظ</button>`,()=>wirePainPattern())}
+async function trackSave(pid,name){const tr=readTrack();if(tr.err)return setErr(tr.err);const note=val("e_note").trim();if(note.length<3)return setErr("اكتب ملاحظة");const me=meName();
+  await S.db.doc("plans/"+pid).set({pid,name:name||"",track:firebase.firestore.FieldValue.arrayUnion({aid:"m"+Date.now(),date:today(),by:S.mySid||S.role,name:me,at:Date.now(),...tr.v,text:note,manual:true})},{merge:true});
+  delete TRKC[pid];if(S.role!=="owner")alertOwner(`${me} سجّل تحسن`,`${name||""}: ${TRK_ST.find(x=>x[0]===tr.v.st)?.[1]||""} · الوجع ${tr.v.pain}/10`,3);
+  toast("اتسجل ✓");PL={pid,tab:"trk"};sheetPlan(pid,name)}
 function trkTab(){const T=(PL.d.track||[]).slice().sort((a,b)=>(a.date+a.at).localeCompare(b.date+b.at)),t=trendOf(T);
-  if(!T.length)return `<p class="sub" dir="rtl">لسه مفيش قياسات. كل ما الدكتور يدوس «خلصت» بيكتب الوجع وحالة العيان، والرسم بيطلع هنا لوحده.</p>`;
+  const add=`<button class="btn sm teal" data-act="trackAdd" data-id="${PL.pid}" data-name="${esc(PL.name)}">+ سجّل التحسن</button>`;
+  if(!T.length)return `<div dir="rtl" style="text-align:right;display:grid;gap:8px"><p class="sub">لسه مفيش قياسات. كل ما الدكتور يدوس «خلصت» بيكتب الوجع وحالة العيان، أو سجّل دلوقتي.</p>${add}</div>`;
   const pain=T.filter(x=>x.pain!=null).map(x=>({v:x.pain,d:x.date,tag:[...(x.when||[]).map(w=>PWI[w]),x.loc==="moved"?"↔":""].join("")}));const romL=(T.filter(x=>x.romL).slice(-1)[0]||{}).romL;const rom=romL?T.filter(x=>x.romL===romL&&x.rom!=null).map(x=>({v:x.rom,d:x.date})):[];
   const stc={better:"c-ok",same:"c-warn",worse:"c-bad"},stl=Object.fromEntries(TRK_ST);
-  return `<div dir="rtl" style="text-align:right">${t&&t.k!=="mid"?`<div class="note" style="border-color:${t.k==="bad"?"var(--bad)":"var(--ok)"}">${t.k==="bad"?"⚠️ ":"✅ "}${esc(t.t)}</div>`:""}
+  return `<div dir="rtl" style="text-align:right"><div class="bar" style="margin-bottom:6px">${add}</div>${t&&t.k!=="mid"?`<div class="note" style="border-color:${t.k==="bad"?"var(--bad)":"var(--ok)"}">${t.k==="bad"?"⚠️ ":"✅ "}${esc(t.t)}</div>`:""}
   <h4>الوجع (من 10)</h4>${trkSvg(pain,10,"الوجع","#d64545")}
   ${painSummary(T)}
   ${T.some(x=>x.prayOk!=null)?`<h4>صلوات من غير وجع (من 5)</h4>${trkSvg(T.filter(x=>x.prayOk!=null).map(x=>({v:x.prayOk,d:x.date})),5,"الصلاة","#2f9e5b")}`:""}
@@ -3699,6 +3709,8 @@ document.addEventListener("click",async e=>{
     case "guide":sheetGuide();break;
     case "plan":if(t.dataset.tab){PL={pid:id,tab:t.dataset.tab}}sheetPlan(id,t.dataset.name);break;
     case "askReview":askReview(id);break;
+    case "trackAdd":sheetTrackAdd(id,t.dataset.name);break;
+    case "trackSave":guard(t,()=>trackSave(id,t.dataset.name));break;
     case "reviewLinkSave":guard(t,async()=>{const u=val("rv_url").trim();if(!/^https?:\/\//.test(u))return setErr("الصق اللينك كامل");await S.db.doc("priv/review").set({url:u});S.reviewUrl=u;closeSheet();toast("اتحفظ");if(id)askReview(id)});break;
     case "planPdf":planPdf(t);break;
     case "pfCustom":{const [r,c]=id.split("|"),inp=document.getElementById(`pfc_${r||"ag"}_${c}`),n=(inp?.value||"").trim().replace(/[.|]/g," ");if(!n){toast("اكتب اسم الحاجة الأول");break}
