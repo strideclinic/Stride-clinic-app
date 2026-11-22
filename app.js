@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="22 نوفمبر · 122";
+const APP_VERSION="22 نوفمبر · 123";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -3163,7 +3163,7 @@ function sheetPatient(id){
   <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm teal" data-act="newInvoice" data-id="${id}">فاتورة جلسات</button><button class="btn sm teal" data-act="newReport" data-id="${id}">تقرير</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
   <button class="btn" data-act="plan" data-id="${id}" style="width:100%;display:flex;justify-content:space-between"><span>📋 البرنامج العلاجي</span><b>›</b></button>
-  ${isAdmin()?`<div id="pt_acct"></div>`:""}${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
+  ${isAdmin()?payerHint(p)+`<div id="pt_acct"></div>`:""}${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
   <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("phone2","موبايل تاني (اختياري)","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
   <label class="f">النوع<select id="pt_gender"><option value="">—</option><option ${p.gender==="ذكر"?"selected":""}>ذكر</option><option ${p.gender==="أنثى"?"selected":""}>أنثى</option></select></label>
   <label class="f">عرف المركز منين<select id="pt_source">${sourceOptions(p.source)}</select></label>
@@ -3265,12 +3265,23 @@ async function savePatient(id){
   if(!body.name)return setErr("اكتب اسم المريض");
   const dupP=phoneTaken(body.phone,id)||phoneTaken(body.phone2,id);if(dupP)return setErr(`الرقم ده متسجل لـ ${dupP.name}. افتح ملفه بدل ما يبقى ليه ملفين.`);
   const dupN=!id?sameName(body.name):[];if(dupN.length&&!patWarned){patWarned=true;return setErr(`فيه ملف بنفس الاسم: ${dupN.map(pLabel).join("، ")}. لو هو نفس الشخص اقفل وافتح ملفه، لو شخص تاني دوس حفظ تاني.`)}patWarned=false;const isNew=!id;
+  const wasPayer=id?(S.patients[id]?.payer||""):"";
   const b=S.db.batch();
   if(id)b.update(S.db.doc("patients/"+id),body);else{const ref=S.db.collection("patients").doc();b.set(ref,{...body,createdAt:Date.now(),charged:0,paid:0,count:0});id=ref.id}
   if(S.pdir[id]?.name!==body.name)b.set(S.db.doc("pdir/"+id),{name:body.name});
   await b.commit();toast("اتحفظ الملف");
+  if(id&&!isNew&&body.payer&&body.payer!==wasPayer){const r=await toPayer(id,body.payer);if(r.n)toast(`اتحفظ · ${r.n} جلسة اتحوّلت على ${payerById(body.payer)?.name||"الجهة"}${r.skip?` · ${r.skip} مدفوعة سبتها`:""}`)}
   if(isNew)reopenPatient(id);else closeSheet(); // back to the list; a brand-new file stays open to add its package or photo
 }
+/* move a patient's unpaid single sessions to the club (its price, charged to the club's invoice, not to the patient) */
+async function toPayer(pid,payerId){const P=payerById(payerId);if(!P)return{n:0,skip:0};
+  let vs=[];try{vs=(await S.db.collection("visits").where("patientId","==",pid).get()).docs.map(rowOf)}catch(e){vs=Object.values(S.visits).filter(v=>v.patientId===pid)}
+  const C=vs.filter(v=>!v.payerId&&!v.packId&&!isExamVisit(v)),go=C.filter(v=>!num(v.paid)&&!isLocked(v.date)),skip=C.length-go.length;if(!go.length)return{n:0,skip};
+  const b=S.db.batch(),acc={};for(const v of go){visitEffect(acc,v,-1);const nv={...v,payerId:P.id,payerName:P.name,price:P.price,discount:0,net:P.price,paid:0};visitEffect(acc,nv,1);
+    b.update(S.db.doc("visits/"+v.id),{payerId:P.id,payerName:P.name,price:P.price,discount:0,net:P.price,paid:0})}
+  flushPatients(b,acc);await b.commit();audit("money","حوّل جلسات على جهة",{target:S.patients[pid]?.name,info:`${go.length} جلسة على ${P.name} بـ ${money(P.price)}`});return{n:go.length,skip}}
+function payerHint(p){if(!p||p.payer||!payers().length)return "";const P=payerFor(p.name)||payers().find(x=>(p.name||"").includes((x.suffix||x.name||"").trim()));if(!P)return "";
+  return `<div class="note" style="border-color:var(--warn)">الاسم فيه «${esc(P.suffix||P.name)}» بس الملف مش متسجل على ${esc(P.name)}، فالجلسات بتتحسب عليه هو. <button class="btn sm teal" data-act="payerMove" data-id="${p.id}" data-p="${P.id}">حوّله على ${esc(P.name)} (${money(P.price)} للجلسة)</button></div>`}
 async function delPatient(id){
   const ph=await S.db.collection("photos").where("patientId","==",id).get();
   const b=S.db.batch();ph.docs.forEach(d=>b.delete(d.ref));b.delete(S.db.doc("patients/"+id));b.delete(S.db.doc("pdir/"+id));await b.commit();closeSheet();toast("الملف اتمسح");
@@ -3517,7 +3528,7 @@ document.addEventListener("change",e=>{
 });
 const OWNER_ACTS=new Set(["editShift","saveShift","shiftCopy","sessCount","expAna","dailyRev","dailyRevPdf","dailyRevWa","dayRep","dayRepWa","dayWa","dayCopy","openDay","waCompare","askReview","reviewLinkSave","rentEdit","rentSave","rentOk","setGeo","toggleGeo","saveCfg","backup","setupAlerts","toggleAlerts","testAlert","setBackfill","stopBackfill","delStaff","lockMonth","unlockMonth","mStat","tagPack","reviewCounts","rvFix","rvPack","lymphFix","mennaFix","mennaMove","mennaAdd","mennaClose","hadeerSave","extMerge","preComm","pcRead","pcSave","attTo10","dropDeduct","newInst","saveInst","payInst","unpayInst","delInst","extUnpayPeriod","octReset","addBonus","saveBonus","delBonus","monthReport","setAdjust","clearAdjust","addFixed","delFixed","pubPay","bkLater","restoreMerge","restoreExact","drawerOpen","okDup","delDupAppt","doImport","hideImport","moveOwner","absence","saveLeave","warnings","saveWarning","delWarning","newExt","editExt","saveExt","extUnpay","addRate","rmRate","extManual","saveExtManual","delExtManual","settleExtManual","extPaste","saveExtPaste"]);
 const ATT_ACTS=new Set(["editAtt","saveAtt","delAtt"]);
-const ADMIN_ACTS=new Set(["impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
+const ADMIN_ACTS=new Set(["payerMove","impPaper","impSave","lost","lostRemind","lostBook","lostOff","debts","debtSort","debtRemind","acctLink","acctFix","pendList","pendOpen","quickArrive","quickCancel","doCancel","openSession","saveSession","newWalkin","saveWalkin","newAppt","editAppt","saveAppt","apptConfirm","saveApptConfirm","apptArrive","apptFinish","apptNoShow","apptCancel","sellPack","saveSellPack","cancelPack","doCancelPack","refundPack","saveRefund","discount","saveDiscount","quickAdd","saveQuick","pasteList","savePaste","newPackType","editPackType","savePackType","delPackType","newVisit","editVisit","saveVisit","delVisit","newPay","payFor","payPack","statList","newPayerType","editPayerType","savePayerType","payerPay","savePayerPay","payerBill","payerPreview","payerIssue","payerOldBill","remind","newRate","editRate","saveRate","delRate","editPackUse","savePackUse","newInvoice","newReport","openReport","rpSave","rpDel","extPeriod","extPay","extPayAll","editPay","savePay","delPay","review","reviewDone","approve","reject","newPatient","openPatient","savePatient","delPatient","newExp","editExp","saveExp","delExp","newStaff","editStaff","saveStaff","makeLogin","saveLogin","newType","editType","saveType","delType"]);
 document.addEventListener("click",async e=>{
   const t=e.target.closest("[data-act]");if(!t)return;const a=t.dataset.act,id=t.dataset.id;
   if(a==="bgClose"){if(e.target===t)closeSheet();return}
@@ -3697,6 +3708,7 @@ document.addEventListener("click",async e=>{
     case "delDupAppt":guard(t,()=>delDupAppt(id));break;
     case "debts":sheetDebts();break;
     case "lost":sheetLost();break;
+    case "payerMove":guard(t,async()=>{await S.db.doc("patients/"+id).update({payer:t.dataset.p});S.patients[id].payer=t.dataset.p;const r=await toPayer(id,t.dataset.p);toast(`اتحوّل على ${payerById(t.dataset.p)?.name}${r.n?` · ${r.n} جلسة`:""}${r.skip?` · ${r.skip} مدفوعة سبتها`:""}`);reopenPatient(id)});break;
     case "waCompare":sheetWaCompare(id);break;
     case "openDay":closeSheet();S.ui.date=id;S.tab="sessions";render();window.scrollTo(0,0);break;
     case "dayRep":sheetDayReport(id);break;
