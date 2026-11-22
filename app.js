@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="21 نوفمبر · 121";
+const APP_VERSION="22 نوفمبر · 122";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -293,6 +293,9 @@ function pendingEntries(){return Object.values(S.log).filter(e=>e.status==="pend
 function reviewedEntries(){return Object.values(S.log).filter(e=>e.status!=="pending").sort((a,b)=>(b.review?.at||0)-(a.review?.at||0))}
 function myEntriesList(){return Object.values(S.log).filter(e=>e.doctorSid===S.mySid)}
 function myFresh(){const seen=num(ls("seen_"+S.mySid)||0);return myEntriesList().filter(e=>e.review?.at>seen).length}
+/* the list shows the package the patient is on (as in his file): «باكدج: خلص 12 من 14»; no package → sessions recorded */
+function patCountTxt(p){const P=p?.packs||[];const k=P.find(k=>(k.used||0)<k.sessions&&!k.refund)||P.slice().sort((a,b)=>(a.date||"").localeCompare(b.date||"")).pop();
+  if(k)return `باكدج: خلص ${Math.min(k.used||0,k.sessions)} من ${k.sessions}`;const n=doneCount(p);return n?`خلص ${n} جلسة`:""}
 function doneCount(p){return (p?.count||0)+(p?.packs||[]).reduce((s,k)=>s+(k.preUsed||0),0)} // sessions done: recorded here + done on packages before the system
 function balances(){const b={};for(const p of Object.values(S.patients))if(p.count||p.charged||p.paid)b[p.id]={charged:p.charged||0,paid:p.paid||0,count:p.count||0};return b}
 function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات</span>`;const d=Math.round(x.charged-x.paid);
@@ -901,7 +904,7 @@ function renderPatientList(){
   const shown=ps.slice(0,200);
   const dr=isAdmin()?debtRows():[],lr=isAdmin()?lostRows():[];
   el.innerHTML=(dr.length?`<button class="btn" data-act="debts" style="width:100%;margin-bottom:10px;justify-content:space-between;display:flex"><span>💰 عليهم فلوس (${dr.length})${dr.some(r=>r.late)?` · <b style="color:var(--bad)">${dr.filter(r=>r.late).length} متأخرين</b>`:""}</span><b>${money(dr.reduce((t,r)=>t+r.due,0))} ›</b></button>`:"")+(lr.length?`<button class="btn" data-act="lost" style="width:100%;margin-bottom:10px;justify-content:space-between;display:flex"><span>📞 اختفوا (${lr.length})${lr.some(r=>r.why==="left")?` · <b style="color:var(--bad)">${lr.filter(r=>r.why==="left").length} فاضلهم جلسات</b>`:""}</span><b>›</b></button>`:"")+(Object.keys(S.patients).length?`<div class="stats" style="margin-bottom:12px"><div class="stat"><div class="k">عدد الملفات</div><div class="v num">${Object.keys(S.patients).length}</div></div><div class="stat"><div class="k">إجمالي اللي على الحالات</div><div class="v money">${money(owe)}</div></div></div>`:"")+
-  (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${p.payer&&payerById(p.payer)?`<span class="chip c-acc">${esc(payerById(p.payer).name)}</span>`:balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${(n=>n?`خلص ${n} جلسة`:"")(doneCount(p))}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
+  (shown.length?`<div class="list">${shown.map(p=>`<button class="row" data-act="openPatient" data-id="${p.id}"><span class="t">${esc(p.name)}</span><span class="end">${p.payer&&payerById(p.payer)?`<span class="chip c-acc">${esc(payerById(p.payer).name)}</span>`:balChip(b[p.id])}</span><span class="m">${esc(p.phone||"بدون موبايل")}${p.diagnosis?" · "+esc(p.diagnosis):""}${(()=>{const l=(p.packs||[]).reduce((s,k)=>s+Math.max(0,k.sessions-(k.used||0)),0);return l?` · باكدج: فاضل ${l}`:""})()}</span><span class="end m">${patCountTxt(p)}</span></button>`).join("")}</div>${ps.length>shown.length?`<p class="sub">بيظهر أول 200. اكتب في البحث عشان توصل للباقي.</p>`:""}`
   :`<div class="empty"><b>${q?"مفيش مريض بالاسم ده":"لسه مفيش ملفات مرضى"}</b>${q?"جرب جزء من الاسم أو رقم الموبايل.":"اضغط «+ مريض جديد» واملا شيت الكشف، وصوّر الورقة كمان عشان لو ضاعت."}</div>`);
 }
 /* ---------- views: attendance (admin) ---------- */
