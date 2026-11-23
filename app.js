@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="23 نوفمبر · 124";
+const APP_VERSION="23 نوفمبر · 125";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -2278,7 +2278,8 @@ function cancelledList(list,view){ // cancelled / no-show at the end, so the day
   return `<h3 style="font-size:14px;margin:14px 0 6px">اتلغوا أو محضروش (${off.length})</h3><div class="list">${off.map(a=>`<div class="row stack" style="cursor:default;opacity:.85"><span class="t">${esc(a.time||"")} · ${esc(a.patientName)} <span class="chip ${a.status==="noshow"?"c-warn":"c-bad"}">${esc(cancelWho(a))}</span></span>
     <span class="end bar">${view==="admin"?`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`:""}</span><span class="m">${esc([kindOf(a),apptDocs(a).length>1||view==="admin"?apptDocs(a).map(staffName).join(" + "):""].filter(Boolean).join(" · "))}</span><span></span></div>`).join("")}</div>`}
 function apptRow(a,view,showDoc){
-  const doctorBtns=(a.patientId?`<button class="btn sm" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">البرنامج</button>${trendChip(a)}`:"")+(a.confirmed?"":a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:"");
+  const noNote=!(a.docNote||"").trim()&&!["cancelled","noshow"].includes(a.status)&&a.date<=today();
+  const doctorBtns=(a.patientId?`<button class="btn sm" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">البرنامج</button>${trendChip(a)}`:"")+(!a.confirmed&&a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:!a.confirmed&&["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:noNote&&(a.confirmed||a.status==="done"||a.date<today())?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">اكتب الكومنت والقياس</button>`:"");
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
@@ -2488,9 +2489,12 @@ async function saveApptEnd(id){if(lockBlock(S.appts[id]?.date))return;const a=S.
   ptChanged(a,"done");
   let saved=!a.patientId;if(a.patientId){try{await S.db.doc("plans/"+a.patientId).set({pid:a.patientId,name:a.patientName||"",track:firebase.firestore.FieldValue.arrayUnion({aid:id,date:a.date,by:S.mySid,name:meName(),at:Date.now(),...tr.v,text:note,exam:a.kind==="exam"})},{merge:true});saved=true;delete TRKC[a.patientId]}catch(e){console.warn("track",e)}}
   const sum=`[${TRK_ST.find(x=>x[0]===tr.v.st)?.[1]||""} · الوجع ${tr.v.pain}/10${tr.v.romL?` · ${tr.v.romL} ${tr.v.rom}°`:""}]`;
-  await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done",docNote:saved?note:`${note} ${sum}`,media:entryMedia.slice(0,MEDIA_MAX)}); /* if the program couldn't be written, the scores stay in the note */
+  /* the doctor is never stuck: a session Reham already confirmed, or one already marked done, only gets the note; if the appointment can't take it, the program keeps it */
+  const cur=S.appts[id]||a,body=cur.status==="done"&&cur.endAt?{docNote:saved?note:`${note} ${sum}`,media:entryMedia.slice(0,MEDIA_MAX)}:{endAt:TSV(),endBy:S.mySid,status:"done",docNote:saved?note:`${note} ${sum}`,media:entryMedia.slice(0,MEDIA_MAX)};
+  let apptOk=false;if(!cur.confirmed){try{await S.db.doc("appts/"+id).update(body);apptOk=true}catch(e){if(!saved)throw e;console.warn("appt note",e)}}
   if(!saved)alertOwner("قياس التحسن متسجلش","قوانين Firebase محتاجة تتحدّث (Publish) عشان قياسات الدكاترة تتحفظ في البرنامج",4);
-  entryAppt=null;closeSheet();toast("اتسجلت. ريهام هتأكدها.");
+  if(!apptOk&&saved&&!(cur.docNote||"").trim())alertOwner(`${meName()} كتب كومنت`,`على ${a.patientName||""} (${dmy(a.date)}) · اتحفظ في البرنامج`,2);
+  entryAppt=null;closeSheet();toast(apptOk?"اتسجلت. ريهام هتأكدها.":"اتسجل الكومنت والقياس ✓");
 }
 /* measuring progress every session: how the patient is today (better / same / worse), pain 0-10, and one range of motion */
 let TRKC={},TRKL={};

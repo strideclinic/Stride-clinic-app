@@ -112,7 +112,7 @@ service cloud.firestore {
     function apptDoctorUpdate() {
       let ch = request.resource.data.diff(resource.data).affectedKeys();
       return isStaff() && mySid() in resource.data.doctors
-        && resource.data.get('confirmed', false) == false
+        && (resource.data.get('confirmed', false) == false || ch.hasOnly(['docNote', 'media']))  // after Reham confirms, the doctor can still write the comment
         && ch.hasOnly(['startAt', 'startBy', 'endAt', 'endBy', 'status', 'docNote', 'media'])
         && (!ch.hasAny(['startAt']) || (request.resource.data.startAt == request.time && request.resource.data.startBy == mySid()))
         && (!ch.hasAny(['endAt']) || (request.resource.data.endAt == request.time && request.resource.data.endBy == mySid()));
