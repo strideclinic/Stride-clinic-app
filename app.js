@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="22 نوفمبر · 123";
+const APP_VERSION="23 نوفمبر · 124";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -198,7 +198,7 @@ function render(){
   tabs.innerHTML=tl.map(([k,l,b])=>`<button class="tab" role="tab" data-act="tab" data-k="${k}" aria-selected="${S.tab===k}">${l}${b?`<span class="badge">${b}</span>`:""}</button>`).join("");
   tabs.hidden=false;
   const fn={sessions:vSessions,appts:vAppts,myappts:vMyAppts,visits:vVisits,review:vReview,patients:vPatients,att:vAtt,reports:vReports,ext:vExt,audit:vAudit,settings:vSettings,mine:vMine,myatt:vMyAtt,mypay:vMyPay}[S.tab];
-  main.innerHTML=(fn?backupNag()+drawerNag()+rentNag():"")+(fn?fn():"");
+  main.innerHTML=(fn?rulesNag()+backupNag()+drawerNag()+rentNag():"")+(fn?fn():"");
   if(S.tab==="patients")renderPatientList();
 }
 /* ---------- setup & login ---------- */
@@ -2486,8 +2486,10 @@ async function apptEnd(id){ // doctor finishing: comment + progress (required) +
 async function saveApptEnd(id){if(lockBlock(S.appts[id]?.date))return;const a=S.appts[id];
   const note=val("e_note").trim(),tr=readTrack();if(tr.err)return setErr(tr.err);if(note.length<5)return setErr("لازم تكتب كومنت على الحالة قبل ما تسجّل إنها خلصت");
   ptChanged(a,"done");
-  await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done",docNote:note,track:tr.v,media:entryMedia.slice(0,MEDIA_MAX)});
-  if(a.patientId)await S.db.doc("plans/"+a.patientId).set({pid:a.patientId,name:a.patientName||"",track:firebase.firestore.FieldValue.arrayUnion({aid:id,date:a.date,by:S.mySid,name:meName(),at:Date.now(),...tr.v,text:note,exam:a.kind==="exam"})},{merge:true}).catch(()=>{});
+  let saved=!a.patientId;if(a.patientId){try{await S.db.doc("plans/"+a.patientId).set({pid:a.patientId,name:a.patientName||"",track:firebase.firestore.FieldValue.arrayUnion({aid:id,date:a.date,by:S.mySid,name:meName(),at:Date.now(),...tr.v,text:note,exam:a.kind==="exam"})},{merge:true});saved=true;delete TRKC[a.patientId]}catch(e){console.warn("track",e)}}
+  const sum=`[${TRK_ST.find(x=>x[0]===tr.v.st)?.[1]||""} · الوجع ${tr.v.pain}/10${tr.v.romL?` · ${tr.v.romL} ${tr.v.rom}°`:""}]`;
+  await S.db.doc("appts/"+id).update({endAt:TSV(),endBy:S.mySid,status:"done",docNote:saved?note:`${note} ${sum}`,media:entryMedia.slice(0,MEDIA_MAX)}); /* if the program couldn't be written, the scores stay in the note */
+  if(!saved)alertOwner("قياس التحسن متسجلش","قوانين Firebase محتاجة تتحدّث (Publish) عشان قياسات الدكاترة تتحفظ في البرنامج",4);
   entryAppt=null;closeSheet();toast("اتسجلت. ريهام هتأكدها.");
 }
 /* measuring progress every session: how the patient is today (better / same / worse), pain 0-10, and one range of motion */
@@ -2519,11 +2521,11 @@ function trkSvg(pts,max,unit,color,inv){if(pts.length<1)return "";const tg=pts.s
   const path=pts.map((p,i)=>`${i?"L":"M"}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(" ");
   return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;height:auto;color:var(--ink,#1c2434)" role="img" aria-label="${unit}">${grid}<path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>${pts.map((p,i)=>`<circle cx="${X(i)}" cy="${Y(p.v)}" r="3.5" fill="${color}"/><text x="${X(i)}" y="${Y(p.v)-7}" font-size="9" text-anchor="middle" fill="currentColor">${p.v}</text>${n<=8||i===0||i===n-1?`<text x="${X(i)}" y="${H-8}" font-size="8" text-anchor="middle" fill="currentColor" opacity=".6">${esc(p.d.slice(8,10)+"/"+p.d.slice(5,7))}</text>`:""}${p.tag?`<text x="${X(i)}" y="${H-22}" font-size="10" text-anchor="middle">${p.tag}</text>`:""}`).join("")}</svg>${tg?`<p class="sub" style="margin:0">${Object.entries(PWI).map(([k,e])=>`${e} ${PWL[k]}`).join(" · ")} · ↔ الوجع اتنقل</p>`:""}`}
 const PWI={rest:"🪑",move:"🏃",morning:"🌅",evening:"🌙",work:"💼",prayer:"🕌"};
-function sheetTrackAdd(pid,name){openSheet(`سجّل التحسن · ${name||""}`,`${trackFields({patientId:pid})}
+function sheetTrackAdd(pid,name){openSheet(`سجّل التحسن · ${name||""}`,`<label class="f">يوم الجلسة<input type="date" id="e_date" value="${today()}" max="${today()}"></label>${trackFields({patientId:pid})}
   <label class="f">ملاحظة <b style="color:var(--bad)">*</b><textarea id="e_note" placeholder="مثلًا: إعادة تقييم بعد 6 جلسات، الثني بقى 110°"></textarea></label>
   <div class="err" id="formErr"></div><button class="btn primary" data-act="trackSave" data-id="${pid}" data-name="${esc(name||"")}">حفظ</button>`,()=>wirePainPattern())}
 async function trackSave(pid,name){const tr=readTrack();if(tr.err)return setErr(tr.err);const note=val("e_note").trim();if(note.length<3)return setErr("اكتب ملاحظة");const me=meName();
-  await S.db.doc("plans/"+pid).set({pid,name:name||"",track:firebase.firestore.FieldValue.arrayUnion({aid:"m"+Date.now(),date:today(),by:S.mySid||S.role,name:me,at:Date.now(),...tr.v,text:note,manual:true})},{merge:true});
+  await S.db.doc("plans/"+pid).set({pid,name:name||"",track:firebase.firestore.FieldValue.arrayUnion({aid:"m"+Date.now(),date:val("e_date")||today(),by:S.mySid||S.role,name:me,at:Date.now(),...tr.v,text:note,manual:true})},{merge:true});
   delete TRKC[pid];if(S.role!=="owner")alertOwner(`${me} سجّل تحسن`,`${name||""}: ${TRK_ST.find(x=>x[0]===tr.v.st)?.[1]||""} · الوجع ${tr.v.pain}/10`,3);
   toast("اتسجل ✓");PL={pid,tab:"trk"};sheetPlan(pid,name)}
 function trkTab(){const T=(PL.d.track||[]).slice().sort((a,b)=>(a.date+a.at).localeCompare(b.date+b.at)),t=trendOf(T);
@@ -3474,6 +3476,11 @@ function sheetType(id){
 const BK_COLS=["staff","patients","visits","payments","appts","att","exp","log","pdir","pay","cfg","priv","pub"]; // logins and the audit log are never written back
 function bkEnc(v){if(v&&typeof v.toDate==="function")return{__ts:v.toDate().getTime()};if(Array.isArray(v))return v.map(bkEnc);if(v&&typeof v==="object"){const o={};for(const [k,x] of Object.entries(v))o[k]=bkEnc(x);return o}return v}
 function bkDec(v){if(v&&typeof v==="object"&&!Array.isArray(v)&&Object.keys(v).length===1&&typeof v.__ts==="number")return firebase.firestore.Timestamp.fromMillis(v.__ts);if(Array.isArray(v))return v.map(bkDec);if(v&&typeof v==="object"){const o={};for(const [k,x] of Object.entries(v))o[k]=bkDec(x);return o}return v}
+let RULES_OK=null;
+async function rulesCheck(){if(S.role!=="owner"||RULES_OK!=null)return;RULES_OK="checking";try{await S.db.doc("plans/__rules_probe").get({source:"server"});RULES_OK=true}catch(e){RULES_OK=e?.code==="permission-denied"?false:null}render()}
+function rulesNag(){if(S.role!=="owner")return "";if(RULES_OK==null){setTimeout(rulesCheck,1500);return ""}if(RULES_OK!==false)return "";
+  return `<div class="note" style="margin-bottom:10px;border-color:var(--bad)"><b>⚠️ قوانين Firebase قديمة</b>، فالدكاترة مش هيقدروا يحفظوا البرنامج وقياسات التحسن.<br>
+  افتح <a href="https://github.com/strideclinic/stride-clinic-app/blob/main/firestore.rules" target="_blank" rel="noopener">ملف القوانين</a> وانسخه كله ← Firebase Console ← Firestore Database ← Rules ← امسح القديم والصق ← <b>Publish</b>. بعدها اقفل الأبلكيشن وافتحه.</div>`}
 function backupNag(){if(S.role!=="owner"||!S.privMeta)return "";const last=num(S.privMeta.lastBackup),days=last?Math.floor((Date.now()-last)/864e5):null;
   if(days!=null&&days<3)return "";let snooze=0;try{snooze=+localStorage.getItem("bkSnooze")||0}catch(e){}if(Date.now()<snooze)return "";
   return `<div class="note" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;${days==null||days>=7?"border-color:var(--bad)":""}"><span class="grow">${days==null?"لسه معملتش نسخة احتياطية خالص.":`آخر نسخة احتياطية من ${days} يوم.`}</span><button class="btn sm teal" data-act="backup">اعملها دلوقتي</button><button class="btn sm ghost" data-act="bkLater">بكره</button></div>`}
