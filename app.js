@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 نوفمبر · 126";
+const APP_VERSION="25 نوفمبر · 127";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -1752,6 +1752,41 @@ async function sheetSessCount(m){await ensureMonth(m).catch(()=>{});const V=Obje
   <h3 style="margin:12px 0 4px">كل دكتور</h3><div class="list">${Object.entries(byDoc).sort((a,b)=>(b[1].pack+b[1].single)-(a[1].pack+a[1].single)).map(([id,o])=>`<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t">${esc(id==="—"?"من غير دكتور":staffName(id)||extById(id)?.name||id)}</span><span class="end"><b>${n(o.pack+o.single)}</b> جلسة</span><span class="m" style="grid-column:1/-1">باكدج ${n(o.pack)} · منفردة ${n(o.single)}${o.exam?` · كشف ${n(o.exam)}`:""}</span></div>`).join("")}</div>
   <p class="sub" style="margin:4px 0 0">الجلسة اللي اشتغل فيها دكتورين بتتحسب نص لكل واحد.</p>
   ${Object.keys(byType).length?`<h3 style="margin:12px 0 4px">نوع الجلسة</h3><div class="list">${Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([t,c])=>`<div class="row" style="cursor:default;grid-template-columns:1fr auto"><span class="t">${esc(t)}</span><span class="end"><b>${c}</b></span></div>`).join("")}</div>`:""}`)}
+/* «أداء الدكاترة» (owner only): sessions, patients, comments written, progress scored, how many patients are improving, session length, waiting, no-shows */
+function docPerf(m){const V=Object.values(S.visits).filter(v=>(v.date||"").startsWith(m)&&!["cancelled","noshow"].includes(v.status)),O={};
+  const g=id=>O[id]=O[id]||{id,sess:0,exams:0,pats:{},appts:0,noted:0,scored:0,dur:[],wait:[],noshow:0,booked:0,miss:[]};
+  for(const v of V){const ds=[v.doctorId,v.doctor2Id].filter(Boolean),sh=ds.length>1?.5:1,ex=isExamVisit(v);
+    for(const id of ds){const o=g(id);if(ex)o.exams+=sh;else o.sess+=sh;if(v.patientId)o.pats[v.patientId]=(o.pats[v.patientId]||0)+sh}}
+  for(const a of Object.values(S.appts)){if(!(a.date||"").startsWith(m)||!shownAppt(a))continue;const ds=apptDocs(a).filter(isDoc);if(!ds.length)continue;
+    const came=cameAppt(a)&&a.status!=="cancelled",tr=(TRKC[a.patientId]?.track||[]).find(x=>x.aid===a.id);
+    for(const id of ds){const o=g(id);if(a.status!=="cancelled")o.booked++;if(a.status==="noshow")o.noshow++;if(!came)continue;
+      o.appts++;if((a.docNote||"").trim()||(tr&&(tr.text||"").trim()))o.noted++;else if(a.date<today()||a.status==="done")o.miss.push(a);if(tr)o.scored++;
+      const s=mins(a.start),e=mins(a.end),r=mins(a.arrived);if(s!=null&&e!=null&&e>s&&e-s<300)o.dur.push(e-s);if(s!=null&&r!=null&&s>=r&&s-r<240)o.wait.push(s-r)}}
+  /* each patient counts for the doctor who saw him most this month */
+  const owner={};Object.values(O).forEach(o=>Object.entries(o.pats).forEach(([p,n])=>{if(!owner[p]||n>owner[p].n)owner[p]={id:o.id,n}}));
+  Object.values(O).forEach(o=>{o.good=[];o.bad=[];o.mid=0;o.drop=[];
+    Object.keys(o.pats).filter(p=>owner[p]?.id===o.id).forEach(p=>{const T=TRKC[p]?.track||[],t=trendOf(T);if(t?.k==="good")o.good.push(p);else if(t?.k==="bad")o.bad.push(p);else if(t)o.mid++;
+      const P=T.filter(x=>x.pain!=null&&!x.exam).sort((a,b)=>(a.date+(a.at||0)).localeCompare(b.date+(b.at||0)));if(P.length>1)o.drop.push(P[0].pain-P[P.length-1].pain)})});
+  return Object.values(O).filter(o=>o.sess||o.exams||o.appts).sort((a,b)=>b.sess-a.sess)}
+async function sheetDocPerf(m){if(S.role!=="owner")return;openSheet("أداء الدكاترة",`<div class="empty"><b>بيجمّع الأرقام…</b></div>`);
+  await Promise.all([ensureMonth(m),ensureMonth(prevMonth(m))]).catch(()=>{});
+  const pids=[...new Set([...Object.values(S.visits),...Object.values(S.appts)].filter(x=>(x.date||"").startsWith(m)&&x.patientId).map(x=>x.patientId))];
+  await trkLoad(pids).catch(()=>{});
+  const L=docPerf(m),P=Object.fromEntries(docPerf(prevMonth(m)).map(o=>[o.id,o])),avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null,n=x=>Number.isInteger(x)?x:x.toFixed(1);
+  const pct=(a,b)=>b?Math.round(a*100/b):null,nm=p=>S.patients[p]?.name||"—";
+  const card=o=>{const pv=P[o.id],cr=pct(o.noted,o.appts),sr=pct(o.scored,o.appts),pc=Object.keys(o.pats).length,dd=avg(o.drop),dur=avg(o.dur),wt=avg(o.wait),ns=pct(o.noshow,o.booked),rated=o.good.length+o.bad.length+o.mid;
+    const diff=pv?o.sess-pv.sess:null,col=(v,g,b)=>v==null?"":v>=g?"color:var(--ok)":v<b?"color:var(--bad)":"color:var(--warn)";
+    return `<div class="card" style="padding:12px;margin-bottom:10px"><div class="bar" style="justify-content:space-between"><b style="font-size:17px">${esc(staffName(o.id))}</b><span class="sub">${pv?`الشهر اللي فات ${n(pv.sess)} جلسة${diff?` (${diff>0?"+":""}${n(diff)})`:""}`:""}</span></div>
+    <div class="dpg"><div><span class="sub">جلسات</span><b>${n(o.sess)}</b></div><div><span class="sub">كشوفات</span><b>${n(o.exams)}</b></div><div><span class="sub">عيانين</span><b>${pc}</b></div>
+     <div><span class="sub">كتب كومنت</span><b style="${col(cr,90,70)}">${cr!=null?cr+"%":"—"}</b></div><div><span class="sub">سجّل القياس</span><b style="${col(sr,90,70)}">${sr!=null?sr+"%":"—"}</b></div><div><span class="sub">بيتحسنوا</span><b>${rated?`${o.good.length} من ${rated}`:"—"}</b></div>
+     <div><span class="sub">متوسط الجلسة</span><b>${dur!=null?hm(dur):"—"}</b></div><div><span class="sub">انتظار العيان</span><b style="${wt==null?"":wt<=10?"color:var(--ok)":"color:var(--warn)"}">${wt!=null?hm(wt):"—"}</b></div><div><span class="sub">محضرش</span><b>${ns!=null?`${o.noshow} (${ns}%)`:"—"}</b></div></div>
+    ${dd!=null?`<p class="sub" style="margin:6px 0 0">${dd>0?`الوجع نزل في المتوسط <b>${dd}</b> درجة`:dd<0?`<b style="color:var(--bad)">الوجع زاد ${-dd} درجة</b> في المتوسط`:"الوجع ثابت في المتوسط"} عند عيانينه (${o.drop.length} عيان اتقاسوا أكتر من مرة)</p>`:""}
+    ${o.bad.length?`<div class="note" style="border-color:var(--bad);margin-top:6px">⚠️ مش بيتحسنوا: ${o.bad.map(p=>`<button class="chip c-bad" data-act="patFile" data-id="${p}" data-name="${esc(nm(p))}" style="border:0;cursor:pointer">${esc(nm(p))} ›</button>`).join(" ")}</div>`:""}
+    ${o.miss.length?`<details style="margin-top:6px"><summary class="sub" style="cursor:pointer;color:var(--bad)">${o.miss.length} جلسة من غير كومنت</summary><div class="list">${o.miss.sort((a,b)=>b.date.localeCompare(a.date)).map(a=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t">${esc(dayShort(a.date))} · ${esc(a.patientName||nm(a.patientId))}</span></div>`).join("")}</div></details>`:""}</div>`};
+  openSheet(`أداء الدكاترة · ${monthLabel(m)}`,`<style>.dpg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.dpg div{border:1px solid var(--line);border-radius:10px;padding:8px 4px;text-align:center}.dpg b{display:block;font-size:19px;font-variant-numeric:tabular-nums}</style>
+  <div class="bar" style="justify-content:space-between"><button class="btn sm" data-act="docPerf" data-id="${prevMonth(m)}">‹ اللي قبله</button><b>${esc(monthLabel(m))}</b>${m<today().slice(0,7)?`<button class="btn sm" data-act="docPerf" data-id="${prevMonth(m,-1)}">اللي بعده ›</button>`:"<span></span>"}</div>
+  ${L.map(card).join("")||`<p class="sub">مفيش جلسات الشهر ده.</p>`}
+  <p class="sub">الجلسات من اللي ريهام أكدته (الجلسة المشتركة بنص). «كتب كومنت» و«سجّل القياس» من الجلسات اللي العيان حضرها. «بيتحسنوا» بيتحسب للدكتور اللي شاف العيان أكتر الشهر ده، ومحتاج 3 قياسات على الأقل.</p>`)}
 /* «تحليل المصروفات»: every item this month against its last-3-months average, share of income, 6-month trend, and what to do */
 function expMonth(m){const rv=revenue(m),ex=expByCat(m),pr=payroll(m),sal=pr.reduce((s,x)=>s+x.total,0),inst=instOf(m).reduce((t,x)=>t+num(x.p.monthly),0);
   const tot=Math.round(sal+ex.t);return{m,rv,ex,pr,sal:Math.round(sal),inst:Math.round(inst),tot,inc:Math.round(rv.collected),net:Math.round(rv.collected-tot)}}
@@ -1905,7 +1940,7 @@ function vReports(){
   const thisM=today().slice(0,7),lockBar=!owner?"":isLocked(m+"-01")?`<div class="note">🔒 الشهر ده مقفول${S.lock?.at?` من ${esc(new Date(S.lock.at).toLocaleDateString("ar-EG-u-nu-latn"))}`:""}. <button class="btn sm" data-act="unlockMonth" data-m="${m}" data-confirm>افتح الشهر</button></div>`
     :m<thisM?`<div class="note" style="border-color:var(--warn)">شهر ${esc(monthLabel(m))} لسه مفتوح. بعد ما تقبّض المرتبات اقفله، عشان محدش يعدّل فيه. <button class="btn sm teal" data-act="lockMonth" data-m="${m}" data-confirm>قفّل شهر ${esc(monthLabel(m))}</button></div>`
     :m===thisM&&+today().slice(8)<=10&&!isLocked(prevMonth(m)+"-01")?`<div class="note">بعد ما تقبّض مرتبات شهر ${esc(monthLabel(prevMonth(m)))} متنساش تقفله. <button class="btn sm teal" data-act="lockMonth" data-m="${prevMonth(m)}" data-confirm>قفّل شهر ${esc(monthLabel(prevMonth(m)))}</button></div>`:"";
-  const top=`<div class="bar"><button class="btn sm primary" data-act="dailyRev" data-id="${m}">تقرير الإيراد اليومي</button><button class="btn sm" data-act="expAna" data-id="${m}">تحليل المصروفات</button><button class="btn sm" data-act="sessCount" data-id="${m}">عدد الجلسات</button><button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
+  const top=`<div class="bar"><button class="btn sm primary" data-act="dailyRev" data-id="${m}">تقرير الإيراد اليومي</button><button class="btn sm" data-act="expAna" data-id="${m}">تحليل المصروفات</button><button class="btn sm" data-act="sessCount" data-id="${m}">عدد الجلسات</button>${owner?`<button class="btn sm" data-act="docPerf" data-id="${m}">أداء الدكاترة</button>`:""}<button class="btn sm" data-act="dayRep" data-id="${today()}">تقرير النهارده</button><button class="btn sm" data-act="waCompare" data-id="${m}">قارن بالواتساب</button><input type="month" id="monthPick" value="${m}" style="max-width:190px" aria-label="الشهر"><span class="sub grow">${esc(monthLabel(m))}</span>${owner?`<button class="btn sm teal" data-act="monthReport" data-m="${m}">تقرير قفل الشهر</button>`:""}</div>${loadingNote}${lockBar}`;
   if(!owner){
     const d=S.ui.repDay||today();ensureMonth(d.slice(0,7));
     const dm=dayMoney(x=>x===d),cash=dm.cash,insta=dm.insta,dv=vaultIn(x=>x===d);
@@ -3822,6 +3857,7 @@ document.addEventListener("click",async e=>{
     case "dailyRev":sheetDailyRev(id);break;
     case "expAna":sheetExpAnalysis(id);break;
     case "sessCount":sheetSessCount(id);break;
+    case "docPerf":sheetDocPerf(id);break;
     case "dailyRevPdf":dailyRevPdf(id,t);break;
     case "dailyRevWa":window.open(`https://wa.me/?text=${encodeURIComponent(dailyRevText(id))}`,"_blank","noopener");break;
     case "dayRepWa":window.open(`https://wa.me/?text=${encodeURIComponent(dayRepText(id))}`,"_blank","noopener");break;
