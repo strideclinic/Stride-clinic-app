@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 نوفمبر · 130";
+const APP_VERSION="25 نوفمبر · 131";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -319,10 +319,11 @@ function shiftStart(sid,date){ // when the paid day starts: doctors 3:00 (or the
 function effIn(rec){const a=mins(rec.in);if(a==null)return null;const s=shiftStart(rec.staffId,rec.date);return s!=null&&a<s?s:a} // coming early with no work doesn't count
 function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`}
 function countedNote(r){const e=effIn(r),a=mins(r.in),w=r?rawAttMinutes(r):null;return (r&&e!=null&&a!=null&&e!==a?` · بيتحسب من ${fmtMin(e)}`:"")+(w!=null&&attMinutes(r)!==w?` · مشي بدري واتحسبله ${hm(cfg().hoursBase*60)}`:"")}
-/* some staff (Dr. Habiba) get a full day even when they leave early: set in salary settings */
+/* some staff (Dr. Habiba) get a full day when they leave early (the owner sends them home), only if they came by 3:00 (10 min grace); came later = the real hours. Set in salary settings */
+const FULLDAY_BY=15*60+10;
 function fullDayOf(sid){const f=S.config?.fullDay;if(f)return !!f[sid];return /حبيب/.test(S.staff[sid]?.name||"")}
 function rawAttMinutes(rec){const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
-function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(w==null||w>=base||!fullDayOf(rec.staffId))return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
+function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(w==null||w>=base||!fullDayOf(rec.staffId)||mins(rec.in)>FULLDAY_BY)return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
 function fixedRow(f){f=f||{id:randId(),name:"",amount:"",from:prevMonth(today().slice(0,7))};return `<div class="grid2 fxrow" data-fx="${f.id}"><label class="f">الاسم<input class="fx_name" value="${esc(f.name||"")}" placeholder="د. تامر"></label><label class="f">المرتب الشهري<input class="fx_amt" inputmode="decimal" value="${f.amount??""}" placeholder="3500"></label><label class="f">من شهر<input type="month" class="fx_from" value="${f.from||prevMonth(today().slice(0,7))}"></label><button class="btn sm danger" data-act="delFixed" style="align-self:end">شيله</button></div>`}
 function defBonus(){const o={};for(const s of Object.values(S.staff||{}))if(s.role==="doctor"&&/سلم|حبيب/.test(s.name||""))o[s.id]=150;return o}
 function cfg(){const c=S.config||{};return{payDetail:c.payDetail||Object.fromEntries(Object.keys(c.commission||{}).map(k=>[k,true])),fixed:c.fixed||[],bonus:c.bonus||defBonus(),salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},docStart:c.docStart||"15:00",secStart:c.secStart||"14:30",secLead:c.secLead??30,otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7,shifts:c.shifts||{}}}
@@ -2047,7 +2048,7 @@ function vSettings(){
   <div class="grid2"><label class="f">ساعات اليوم الأساسية<input id="cfgHours" inputmode="numeric" value="${c.hoursBase}"></label><label class="f">أيام الشهر في الحسبة<input id="cfgDays" inputmode="numeric" value="${c.daysBase}"></label><label class="f">الأوفر تايم (الدقيقة بكام دقيقة)<input id="cfgOt" inputmode="decimal" value="${c.otMult}"></label>
   <label class="f">الدكاترة بيتحسبوا من<input type="time" id="cfgDocStart" value="${c.docStart}"></label><label class="f">الاستقبال بيتحسب من<input type="time" id="cfgSecStart" value="${c.secStart}"></label>
   <label class="f">الاستقبال تيجي قبل أول حالة بـ (دقيقة)<input id="cfgSecLead" inputmode="numeric" value="${c.secLead}"></label></div>
-  <div class="note" style="display:grid;gap:6px"><b>اللي يمشي بدري يتحسبله اليوم كامل (${cfg().hoursBase} ساعات)</b><div class="bar" style="flex-wrap:wrap">${activeStaff().map(s=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="fd_${s.id}" ${fullDayOf(s.id)?"checked":""}> ${esc(s.name)}</label>`).join("")}</div><span class="sub">مبيتخصمش منه ساعات لو مشي قبل ما يكمل. الأوفر تايم بيتحسب عادي لو قعد أكتر.</span></div>
+  <div class="note" style="display:grid;gap:6px"><b>اللي يمشي بدري يتحسبله اليوم كامل (${cfg().hoursBase} ساعات)</b><div class="bar" style="flex-wrap:wrap">${activeStaff().map(s=>`<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="fd_${s.id}" ${fullDayOf(s.id)?"checked":""}> ${esc(s.name)}</label>`).join("")}</div><span class="sub">لو جه لحد الساعة 3 ومشي قبل ما يكمل، بيتحسبله اليوم كامل (جه 1 كأنه مشي 8، جه 3 كأنه مشي 10). لو جه بعد 3 بيتحسب بالساعة اللي مشي فيها. الأوفر تايم بيتحسب عادي لو قعد أكتر.</span></div>
   ${(()=>{const m=today().slice(0,7),x=startsFor(today());return `<div class="note" style="display:grid;gap:8px"><b>مواعيد ${esc(monthLabel(m))} وبعده</b><div class="grid2"><label class="f">الدكاترة بيتحسبوا من<input type="time" id="cfgMDoc" value="${x.doc}"></label><label class="f">الاستقبال بيتحسب من<input type="time" id="cfgMSec" value="${x.sec}"></label></div><span class="sub">اللي يمضي قبل الوقت ده بيتكتبله الوقت ده، واللي يمضي بعده بيتحسب من وقت ما مضى. الشهور اللي فاتت بتفضل على مواعيدها القديمة.</span></div>`})()}
   <p class="sub" style="margin:0">اللي ييجي بدري من غير شغل بيتحسب من الوقت ده. الدكتور لو عنده حالة قبله بيتحسب من ميعاد أول حالة، والاستقبال بتتحسب من قبل أول حالة في المركز بالدقايق دي.</p>
   <div class="bar"><button class="btn primary" data-act="saveCfg">حفظ المرتبات</button><span class="sub">سيب خانة النسبة فاضية لو مفيش نسبة.</span></div></div>
