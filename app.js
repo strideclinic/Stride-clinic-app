@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="23 نوفمبر · 125";
+const APP_VERSION="25 نوفمبر · 126";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -730,6 +730,7 @@ function drawPlan(){const d=PL.d,s=PL.s,cm=d.comments||[],ch=(d.changes||[]).sli
   const sh=document.querySelector("#sheetRoot .sheet"),sc=sh?.scrollTop||0,sc2=sh?.parentElement?.scrollTop||0,same=document.getElementById("pf_body")&&PL._t===tab;PL._t=tab;
   openSheet(`البرنامج · ${PL.name}`,`<style>.pf h4{margin:12px 0 4px;padding:4px 8px;background:var(--line,#e6ebf3);border-radius:6px;font-size:14px}.pf .pf-g{font-weight:700;margin:6px 0 2px;color:var(--acc,#2b3f86)}.pf-grid{display:grid;gap:4px}.pf-it{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:6px 8px}.pf-it.on{border-color:var(--acc,#2b3f86);background:rgba(43,63,134,.06)}.pf-it label{display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600}.pf-it input[type=checkbox]{width:18px;height:18px}.pf-sub{margin-top:6px}.pf-prog{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}.pf-prog input,.pf-sub{min-width:0;font-size:16px;padding:6px}.pf-ul{margin:0;padding-inline-start:18px}.pf-tbl{overflow-x:auto}.pf-tbl table{border-collapse:collapse;width:100%;font-size:13px}.pf-tbl td,.pf-tbl th{border:1px solid var(--line,#d5dbe5);padding:4px 6px;text-align:start}.pf-goals{display:grid;grid-template-columns:1fr 1fr;gap:6px}.pf-add{display:flex;gap:6px;margin-top:6px}.pf-add input{flex:1;min-width:0;font-size:16px;padding:6px}.pf-note{border:1px solid var(--line,#e2e8f0);border-radius:8px;padding:8px;margin-bottom:6px;display:grid;gap:6px}@media(max-width:420px){.pf-prog{grid-template-columns:1fr 1fr}}</style>
   ${d.updatedAt?`<p class="sub" style="margin:0">آخر تعديل: ${esc(d.updatedName||"")} · ${esc(fmtAt(d.updatedAt))}</p>`:""}
+  <button class="btn sm" data-act="patFile" data-id="${PL.pid}" data-name="${pfE(PL.name)}" style="margin:4px 0">🗂 ملف العيان الكامل</button>
   <label class="f">Diagnosis<input id="pl_dx" dir="ltr" value="${pfE(s.dx)}" ${PL.edit?"":"readonly"} placeholder="مثلًا Lt knee OA"></label>
   <div class="seg" style="margin:6px 0;flex-wrap:wrap">${tabs.map(([k,l])=>`<button class="btn sm ${tab===k?"primary":""}" data-act="pfTab" data-id="${k}">${l}</button>`).join("")}</div>
   <div class="pf" id="pf_body" dir="ltr" style="text-align:left">${body}</div>
@@ -2279,7 +2280,7 @@ function cancelledList(list,view){ // cancelled / no-show at the end, so the day
     <span class="end bar">${view==="admin"?`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`:""}</span><span class="m">${esc([kindOf(a),apptDocs(a).length>1||view==="admin"?apptDocs(a).map(staffName).join(" + "):""].filter(Boolean).join(" · "))}</span><span></span></div>`).join("")}</div>`}
 function apptRow(a,view,showDoc){
   const noNote=!(a.docNote||"").trim()&&!["cancelled","noshow"].includes(a.status)&&a.date<=today();
-  const doctorBtns=(a.patientId?`<button class="btn sm" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">البرنامج</button>${trendChip(a)}`:"")+(!a.confirmed&&a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:!a.confirmed&&["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:noNote&&(a.confirmed||a.status==="done"||a.date<today())?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">اكتب الكومنت والقياس</button>`:"");
+  const doctorBtns=(a.patientId?`<button class="btn sm" data-act="plan" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">البرنامج</button><button class="btn sm" data-act="patFile" data-id="${a.patientId}" data-name="${esc(a.patientName||"")}">الملف</button>${trendChip(a)}`:"")+(!a.confirmed&&a.status==="started"?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">خلصت</button>`:!a.confirmed&&["booked","arrived"].includes(a.status)&&a.date===today()?`<button class="btn sm primary" data-act="apptStart" data-id="${a.id}">بدأت</button>`:noNote&&(a.confirmed||a.status==="done"||a.date<today())?`<button class="btn sm teal" data-act="apptEnd" data-id="${a.id}">اكتب الكومنت والقياس</button>`:"");
   const adminBtns=remindBtn(a)+`<button class="btn sm" data-act="editAppt" data-id="${a.id}">تعديل</button>`;
   const docs=apptDocs(a).map(staffName).join(" + ");
   const credit=a.confirmed&&a.credit?creditLabel(a.credit):a.status==="done"?`لحد التأكيد: ${creditLabel(provisionalCredit(a))}`:"";
@@ -2519,6 +2520,100 @@ async function askReview(pid){const url=reviewUrl();if(!url)return sheetReviewLi
   const msg=`أهلًا ${t} 🙏 مبسوطين جدًا إن حضرتك بتتحسن معانا في Stride Clinic. لو عندك دقيقة، تقييمك لينا على جوجل هيفرق معانا جدًا:\n${url}\nشكرًا لحضرتك ❤️`;
   const n=waNumber(p.phone)||waNumber(p.phone2);window.open(`https://wa.me/${n||""}?text=${encodeURIComponent(msg)}`,"_blank","noopener");
   await S.db.doc("patients/"+pid).update({reviewAskedAt:Date.now()}).catch(()=>{});p.reviewAskedAt=Date.now();render()}
+/* ---------- the patient's full file: program, every day he came and what was done, progress, how long he stayed, did he go in on time ---------- */
+let PFX=null;
+async function sheetPatFile(pid,name){openSheet(`ملف ${name||S.patients[pid]?.name||"العيان"}`,`<div class="empty"><b>بيجمّع الملف…</b></div>`);
+  const adm=isAdmin();let plan={},ap=[],vs=[];
+  const apQ=async()=>{if(adm)return (await S.db.collection("appts").where("patientId","==",pid).get()).docs.map(rowOf);
+    try{return (await S.db.collection("appts").where("patientId","==",pid).where("doctors","array-contains",S.mySid).get()).docs.map(rowOf)}
+    catch(e){return (await S.db.collection("appts").where("doctors","array-contains",S.mySid).get()).docs.map(rowOf).filter(a=>a.patientId===pid)}};
+  await Promise.all([S.db.doc("plans/"+pid).get().then(x=>{plan=x.exists?x.data():{}}).catch(()=>{}),
+    apQ().then(r=>{ap=r}).catch(()=>{}),
+    adm?getFast(S.db.collection("visits").where("patientId","==",pid)).then(q=>{vs=q.docs.map(rowOf)}).catch(()=>{vs=Object.values(S.visits).filter(v=>v.patientId===pid)}):0]);
+  Object.values(S.appts).forEach(a=>{if(a.patientId===pid&&!ap.some(x=>x.id===a.id))ap.push(a)});
+  PFX={pid,name:name||S.patients[pid]?.name||plan.name||"",plan,rows:pfxRows(ap,vs,plan.track||[])};drawPatFile()}
+function pfxRows(ap,vs,track){const R={};
+  ap.forEach(a=>{if(a.dupPending)return;R[a.id]={key:a.id,date:a.date,time:a.time||null,arr:a.arrived||null,st:a.start||null,en:a.end||null,status:a.confirmed?"done":a.status||"booked",docs:apptDocs(a),note:(a.docNote||"").trim(),exam:a.kind==="exam",reason:a.cancelReason||""}});
+  vs.forEach(v=>{const k=v.apptId||v.id,x=R[k],tm=v.tm||{},ex=isExamVisit(v);
+    if(x){x.type=v.typeName||"";x.exam=x.exam||ex;x.status="done";x.time=x.time||tm.b||null;x.arr=x.arr||tm.a||null;x.st=x.st||tm.s||null;x.en=x.en||tm.e||null;x.note=x.note||(v.note||"").trim()}
+    else R[k]={key:k,date:v.date,time:tm.b||null,arr:tm.a||null,st:tm.s||v.time||null,en:tm.e||null,status:"done",docs:[v.doctorId,v.doctor2Id].filter(Boolean),note:(v.note||"").trim(),exam:ex,type:v.typeName||""}});
+  const rows=Object.values(R);
+  track.slice().sort((a,b)=>(a.date+(a.at||0)).localeCompare(b.date+(b.at||0))).forEach(t=>{let x=R[t.aid];if(!x)x=rows.find(r=>r.date===t.date&&!r.tr&&!["noshow","cancelled"].includes(r.status));
+    if(x){x.tr=t;if(!x.note&&t.text)x.note=t.text.trim();if(t.exam)x.exam=true}else rows.push({key:t.aid||("t"+t.at),date:t.date,status:"track",docs:[t.by].filter(Boolean),docName:t.name,note:(t.text||"").trim(),tr:t,exam:!!t.exam})});
+  rows.sort((a,b)=>(a.date+(a.time||a.st||"")).localeCompare(b.date+(b.time||b.st||"")));
+  let n=0;rows.forEach(r=>{if(r.status==="done"&&!r.exam)r.no=++n});return rows}
+function pfxT(r){const D=(x,y)=>{const a=mins(x),b=mins(y);return a!=null&&b!=null?b-a:null};
+  const dur=D(r.st,r.en),wait=D(r.arr,r.st),late=D(r.time,r.arr||r.st);
+  return{dur:dur!=null&&dur>0&&dur<300?dur:null,wait:wait!=null&&wait>=0&&wait<240?wait:null,late:late!=null&&Math.abs(late)<240?late:null}}
+function pfxStats(rows){const s=rows.filter(r=>r.status==="done"),T=s.map(pfxT),avg=L=>L.length?Math.round(L.reduce((a,b)=>a+b,0)/L.length):null;
+  const du=T.map(t=>t.dur).filter(x=>x!=null),wa=T.map(t=>t.wait).filter(x=>x!=null),la=T.map(t=>t.late).filter(x=>x!=null);
+  return{sess:s.filter(r=>!r.exam).length,exams:s.filter(r=>r.exam).length,noshow:rows.filter(r=>r.status==="noshow").length,cancel:rows.filter(r=>r.status==="cancelled").length,
+    first:s[0]?.date,last:s[s.length-1]?.date,next:rows.find(r=>["booked","arrived"].includes(r.status)&&r.date>=today()),
+    dur:avg(du),durN:du.length,wait:avg(wa),quick:wa.filter(x=>x<=10).length,waitN:wa.length,lateN:la.filter(x=>x>10).length,laN:la.length}}
+function pfxProgram(plan){const sel=plan.sel||{},on=Object.keys(sel).filter(k=>sel[k]?.on);if(!on.length&&!plan.dx)return "";
+  const nm=k=>(PFI[k]?.n||k.split(".").pop())+(sel[k].side?` (${sel[k].side==="Both"?"Rt+Lt":sel[k].side})`:"")+(sel[k].note?` · ${sel[k].note}`:"");
+  const grp=[["up","Upper"],["low","Lower"],["ag","Agents"]].map(([r,l])=>{const L=on.filter(k=>k.startsWith(r+"."));return L.length?`<div><b>${l}:</b> ${esc(L.map(nm).join(" · "))}</div>`:""}).join("");
+  const goals=(plan.goals||[]).filter(g=>(g||"").trim()),hep=Object.keys(plan.hep?.items||{}).filter(k=>plan.hep.items[k]?.on);
+  return `<div class="card" dir="ltr" style="text-align:left;display:grid;gap:4px;padding:10px">${plan.dx?`<div><b>Diagnosis:</b> ${esc(plan.dx)}</div>`:""}${goals.length?`<div><b>Goals:</b> ${esc(goals.join(" · "))}</div>`:""}${grp}${hep.length?`<div dir="rtl" style="text-align:right"><b>تمارين البيت:</b> ${hep.length} تمرين</div>`:""}</div>`}
+function pfxTrend(track){const T=(track||[]).slice().sort((a,b)=>(a.date+(a.at||0)).localeCompare(b.date+(b.at||0)));if(!T.length)return `<p class="sub">لسه مفيش قياسات للوجع والحركة.</p>`;
+  const t=trendOf(T),pain=T.filter(x=>x.pain!=null),first=pain[0],last=pain[pain.length-1];
+  const romL=(T.filter(x=>x.romL).slice(-1)[0]||{}).romL,rom=romL?T.filter(x=>x.romL===romL&&x.rom!=null).map(x=>({v:x.rom,d:x.date})):[];
+  const bc=T.filter(x=>x.st==="better").length,sc=T.filter(x=>x.st==="same").length,wc=T.filter(x=>x.st==="worse").length;
+  return `${t&&t.k!=="mid"?`<div class="note" style="border-color:${t.k==="bad"?"var(--bad)":"var(--ok)"}">${t.k==="bad"?"⚠️ ":"✅ "}${esc(t.t)}</div>`:""}
+  <div class="stats">${first?`<div class="stat"><div class="k">الوجع أول مرة</div><div class="v num">${first.pain}/10</div></div><div class="stat"><div class="k">الوجع آخر مرة</div><div class="v num">${last.pain}/10</div></div>`:""}${rom.length>1?`<div class="stat"><div class="k" dir="ltr">${esc(romL)}</div><div class="v num">${rom[0].v}°←${rom[rom.length-1].v}°</div></div>`:""}</div>
+  <p class="sub" style="margin:4px 0">أحسن 🟢 ${bc} · زي ما هو 🟡 ${sc} · أوحش 🔴 ${wc}</p>
+  ${pain.length?`<h4 style="margin:8px 0 2px">الوجع (من 10)</h4>${trkSvg(pain.map(x=>({v:x.pain,d:x.date,tag:[...(x.when||[]).map(w=>PWI[w]),x.loc==="moved"?"↔":""].join("")})),10,"الوجع","#d64545")}`:""}
+  ${rom.length?`<h4 style="margin:8px 0 2px" dir="ltr">${esc(romL)} (°)</h4>${trkSvg(rom,Math.max(20,Math.ceil((Math.max(...rom.map(x=>x.v))+10)/20)*20),"ROM","#2b6cb0")}`:""}
+  ${T.some(x=>x.prayOk!=null)?`<h4 style="margin:8px 0 2px">صلوات من غير وجع (من 5)</h4>${trkSvg(T.filter(x=>x.prayOk!=null).map(x=>({v:x.prayOk,d:x.date})),5,"الصلاة","#2f9e5b")}`:""}
+  ${painSummary(T)}`}
+function pfxRowHtml(r){const t=pfxT(r),stc={better:"c-ok",same:"c-warn",worse:"c-bad"},stl=Object.fromEntries(TRK_ST),x=r.tr;
+  const head=r.status==="track"?"قياس":r.exam?"كشف":r.no?`جلسة ${r.no}`:r.status==="noshow"?"محضرش":r.status==="cancelled"?"اتلغى":["booked","arrived","started"].includes(r.status)?(r.date>=today()?"ميعاد جاي":"ميعاد"):"جلسة";
+  const who=r.docs.length?r.docs.map(staffName).join(" + "):(r.docName||"");
+  const tc=[];if(r.time)tc.push(`ميعاده ${hour12(r.time)}`);if(r.arr)tc.push(`وصل ${hour12(r.arr)}`);if(r.st)tc.push(`دخل ${hour12(r.st)}`);if(r.en)tc.push(`خلص ${hour12(r.en)}`);
+  const ch=[];if(t.late!=null&&t.late>10)ch.push(`<span class="chip c-warn">اتأخر ${hm(t.late)}</span>`);
+  if(t.wait!=null)ch.push(t.wait<=10?`<span class="chip c-ok">دخل على طول</span>`:`<span class="chip c-warn">استنى ${hm(t.wait)}</span>`);
+  if(t.dur!=null)ch.push(`<span class="chip c-acc">قعد ${hm(t.dur)}</span>`);
+  if(r.status==="noshow")ch.push(`<span class="chip c-warn">محضرش</span>`);if(r.status==="cancelled")ch.push(`<span class="chip c-bad">اتلغى${r.reason?` · ${esc(r.reason)}`:""}</span>`);
+  const tr=x?[x.st?`<span class="chip ${stc[x.st]}">${esc(stl[x.st])}</span>`:"",x.pain!=null?`الوجع ${x.pain}/10`:"",x.romL?`<span dir="ltr">${esc(x.romL)} ${x.rom??""}°</span>`:"",x.when?`بيوجعه ${esc(x.when.map(w=>PWL[w]).join("، "))}`:"",x.prayOk!=null?`صلّى ${x.prayOk}/5 من غير وجع`:"",x.loc==="moved"?`<b>الوجع اتنقل${x.locTxt?`: ${esc(x.locTxt)}`:""}</b>`:""].filter(Boolean).join(" · "):"";
+  return `<div class="row" style="cursor:default;grid-template-columns:1fr auto;gap:4px"><span class="t"><b>${esc(dayShort(r.date))}</b> · ${head}${who?` · ${esc(who)}`:""}</span><span class="end">${isAdmin()&&r.type&&!r.exam?`<span class="sub">${esc(r.type)}</span>`:""}</span>
+   ${tc.length||ch.length?`<span class="m" style="grid-column:1/-1">${tc.length?`${esc(tc.join(" · "))} `:""}${ch.join(" ")}</span>`:""}
+   ${tr?`<span class="m" style="grid-column:1/-1">${tr}</span>`:""}
+   ${r.note?`<span class="m" style="grid-column:1/-1;white-space:pre-wrap;color:var(--ink,#1c2434)">📝 ${esc(r.note)}</span>`:r.status==="done"&&!r.exam?`<span class="m" style="grid-column:1/-1;color:var(--bad)">مفيش كومنت على الجلسة دي</span>`:""}</div>`}
+function drawPatFile(){const F=PFX;if(!F)return;const st=pfxStats(F.rows),pl=F.plan,cm=(pl.comments||[]).slice().reverse();
+  const flt=F.f||"all",shown=F.rows.filter(r=>flt==="all"?true:flt==="done"?r.status==="done"||r.status==="track":["noshow","cancelled"].includes(r.status)).slice().reverse();
+  const since=st.last?Math.round((new Date(today()+"T12:00")-new Date(st.last+"T12:00"))/864e5):null;
+  openSheet(`ملف ${F.name}`,`<div class="bar" style="flex-wrap:wrap"><button class="btn sm" data-act="plan" data-id="${F.pid}" data-name="${esc(F.name)}">📋 البرنامج</button><button class="btn sm" data-act="trackAdd" data-id="${F.pid}" data-name="${esc(F.name)}">+ سجّل التحسن</button><button class="btn sm teal" data-act="patFilePdf">PDF الملف</button>${isAdmin()&&S.patients[F.pid]?`<button class="btn sm" data-act="openPatient" data-id="${F.pid}">بيانات العيان والكشف</button>`:""}</div>
+  <div class="stats"><div class="stat"><div class="k">جلسات حضرها</div><div class="v num">${st.sess}${st.exams?` <span style="font-size:13px">و${st.exams>1?st.exams+" كشف":"كشف"}</span>`:""}</div></div><div class="stat"><div class="k">محضرش / اتلغى</div><div class="v num">${st.noshow} / ${st.cancel}</div></div>
+   <div class="stat"><div class="k">متوسط قعدته</div><div class="v num">${st.dur!=null?hm(st.dur):"—"}</div></div><div class="stat"><div class="k">دخل على طول</div><div class="v num">${st.waitN?`${st.quick} من ${st.waitN}`:"—"}</div></div></div>
+  <p class="sub" style="margin:4px 0">${st.first?`أول مرة ${esc(dmy(st.first))} · آخر مرة ${esc(dmy(st.last))}${since!=null?` (${since?`من ${since} يوم`:"النهارده"})`:""}`:"لسه مجاش"}${st.wait!=null?` · متوسط الانتظار ${hm(st.wait)}`:""}${st.laN?` · اتأخر عن ميعاده ${st.lateN} مرة`:""}${st.next?` · <b>الميعاد الجاي: ${esc(dayShort(st.next.date))}${st.next.time?` ${esc(hour12(st.next.time))}`:""}</b>`:""}</p>
+  <h4 style="margin:12px 0 4px">البرنامج</h4>${pfxProgram(pl)||`<p class="sub">لسه البرنامج متكتبش.</p>`}
+  <h4 style="margin:12px 0 4px">التحسن</h4>${pfxTrend(pl.track)}
+  <h4 style="margin:12px 0 4px">الأيام اللي جه فيها</h4>
+  <div class="seg" style="margin-bottom:6px">${[["all","الكل"],["done","اللي جه فيها"],["miss","محضرش / اتلغى"]].map(([k,l])=>`<button class="btn sm ${flt===k?"primary":""}" data-act="patFileF" data-id="${k}">${l}</button>`).join("")}</div>
+  <div class="list">${shown.map(pfxRowHtml).join("")||`<p class="sub">مفيش حاجة هنا.</p>`}</div>
+  ${cm.length?`<details style="margin-top:10px"><summary style="cursor:pointer;font-weight:700">كومنتات على البرنامج (${cm.length})</summary><div class="list">${cm.map(c=>`<div class="row" style="cursor:default;grid-template-columns:1fr"><span class="t"><b>${esc(c.name||"")}</b> <span class="sub">${esc(fmtAt(c.at))}</span></span><span class="m" style="white-space:pre-wrap">${esc(c.text)}</span></div>`).join("")}</div></details>`:""}
+  ${isAdmin()?`<p class="sub" style="margin-top:8px">أوقات الدخول والخروج بتتحفظ في الملف من أول ما ريهام تأكد الجلسة.</p>`:""}`)}
+async function patFilePdf(btn){const F=PFX;if(!F)return;const label=btn?.textContent;if(btn){btn.disabled=true;btn.textContent="بيجهّز…"}
+  try{await loadScript("vendor/jspdf.umd.min.js");const {jsPDF}=window.jspdf;const d=new jsPDF({unit:"mm",format:"a4"});const [fr,fb]=await Promise.all([b64("fonts/Amiri-Regular.ttf"),b64("fonts/Amiri-Bold.ttf")]);
+    d.addFileToVFS("ar.ttf",fr);d.addFont("ar.ttf","ar","normal");d.addFileToVFS("arb.ttf",fb);d.addFont("arb.ttf","ar","bold");let wm=null;try{wm=await imgData("icons/watermark.png")}catch(e){}
+    const deco=()=>{if(wm){const w=110,h=w*wm.h/wm.w;d.addImage(wm.d,"PNG",(210-w)/2,(297-h)/2,w,h,undefined,"FAST")}};deco();
+    let y=18;const need=h=>{if(y+h>282){d.addPage();deco();y=18}};
+    const line=(t,o={})=>{d.setFont(o.lat?"helvetica":"ar",o.b?"bold":"normal");d.setFontSize(o.s||11);const L=d.splitTextToSize(String(t),o.w||180);L.forEach(x=>{need(6);d.text(x,o.lat?14:196,y,{align:o.lat?"left":"right"});y+=o.s&&o.s>12?7:5.6})};
+    const st=pfxStats(F.rows),pl=F.plan;
+    line(`ملف العيان · ${F.name}`,{b:1,s:16});line(`جلسات حضرها ${st.sess}${st.exams?` + ${st.exams} كشف`:""} · محضرش ${st.noshow} · اتلغى ${st.cancel}${st.dur!=null?` · متوسط القعدة ${hm(st.dur)}`:""}${st.waitN?` · دخل على طول ${st.quick} من ${st.waitN}`:""}`);
+    if(st.first)line(`من ${dmy(st.first)} لحد ${dmy(st.last)}`);y+=2;
+    const sel=pl.sel||{},on=Object.keys(sel).filter(k=>sel[k]?.on);
+    if(pl.dx||on.length){line("البرنامج",{b:1,s:13});if(pl.dx)line(`Diagnosis: ${pl.dx}`,{lat:1});[["up","Upper"],["low","Lower"],["ag","Agents"]].forEach(([r,l])=>{const L=on.filter(k=>k.startsWith(r+"."));if(L.length)line(`${l}: ${L.map(k=>(PFI[k]?.n||k.split(".").pop())+(sel[k].side?` (${sel[k].side})`:"")).join(", ")}`,{lat:1,s:10})});y+=2}
+    const T=(pl.track||[]).filter(x=>x.pain!=null).sort((a,b)=>(a.date+(a.at||0)).localeCompare(b.date+(b.at||0)));
+    if(T.length){line("التحسن",{b:1,s:13});line(`الوجع أول مرة ${T[0].pain} من 10 وآخر مرة ${T[T.length-1].pain} من 10`,{s:11});const tr=trendOf(pl.track);if(tr&&tr.k!=="mid")line(tr.k==="bad"?tr.t:"بيتحسن",{b:1});y+=2}
+    line("الأيام اللي جه فيها",{b:1,s:13});
+    F.rows.filter(r=>r.status!=="booked"||r.date<today()).forEach(r=>{const t=pfxT(r),x=r.tr;need(14);d.setDrawColor(225);d.line(14,y-3.8,196,y-3.8);
+      const head=r.status==="track"?"قياس":r.exam?"كشف":r.no?`جلسة ${r.no}`:r.status==="noshow"?"محضرش":r.status==="cancelled"?"اتلغى":"ميعاد";
+      line(`${dayShort(r.date)} · ${head}${r.docs.length?` · ${r.docs.map(staffName).join(" + ")}`:""}`,{b:1});
+      const p=[];if(r.time)p.push(`ميعاده ${hour12(r.time)}`);if(r.st)p.push(`دخل ${hour12(r.st)}`);if(t.wait!=null)p.push(t.wait<=10?"دخل على طول":`استنى ${hm(t.wait)}`);if(t.late!=null&&t.late>10)p.push(`اتأخر ${hm(t.late)}`);if(t.dur!=null)p.push(`قعد ${hm(t.dur)}`);
+      if(x){if(x.st)p.push((TRK_ST.find(s=>s[0]===x.st)||[])[1]?.replace(/[🟢🟡🔴]/gu,"").trim());if(x.pain!=null)p.push(`الوجع ${x.pain}/10`)}
+      if(p.length)line(p.filter(Boolean).join(" · "),{s:10});if(x?.romL)line(`${x.romL} ${x.rom??""}°`,{lat:1,s:10});if(r.note)line(r.note,{s:10})});
+    d.setFont("helvetica","bold");d.setFontSize(9);d.text("Stride Clinic",14,290);await shareBlob(d.output("blob"),`File - ${F.name}.pdf`)}catch(e){console.warn(e);toast("مقدرتش أعمل الـ PDF، جرب تاني.")}finally{if(btn){btn.disabled=false;btn.textContent=label}}}
 /* progress chart: pain (0-10) and range of motion over the sessions */
 function trkSvg(pts,max,unit,color,inv){if(pts.length<1)return "";const tg=pts.some(p=>p.tag),W=320,H=tg?146:130,L=tg?40:28,R=tg?24:10,T=10,B=tg?40:24,iw=W-L-R,ih=H-T-B,n=pts.length;const X=i=>L+(n===1?iw/2:i*iw/(n-1)),Y=v=>T+ih-(v/max)*ih;
   const grid=[0,.25,.5,.75,1].map(f=>{const v=Math.round(max*f);return `<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-opacity=".12"/><text x="${L-4}" y="${Y(v)+3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">${v}</text>`}).join("");
@@ -2593,7 +2688,7 @@ async function saveApptConfirm(id){
   if(!x)return setErr("اختار الحالة تتحسب لمين");const type=val("c_type");if(!type)return setErr("اختار نوع الجلسة");
   const mny=readMoney("c");const me=moneyError(mny);if(me)return setErr(me);
   const credit=mode==="split"?{mode:"split",a:x,b:y}:{mode:"full",a:x};
-  const v={date:a.date,time:a.start||a.time,patientId:a.patientId,patientName:a.patientName,doctorId:credit.a,doctor2Id:credit.b||null,completion:credit.mode==="split"?"half":"full",typeId:type,typeName:typeName(type),...mny,apptId:id,kind:a.kind==="exam"?"exam":"session",createdAt:Date.now(),by:S.mySid};
+  const v={date:a.date,time:a.start||a.time,patientId:a.patientId,patientName:a.patientName,doctorId:credit.a,doctor2Id:credit.b||null,completion:credit.mode==="split"?"half":"full",typeId:type,typeName:typeName(type),...mny,apptId:id,kind:a.kind==="exam"?"exam":"session",tm:{b:a.time||null,a:a.arrived||null,s:a.start||null,e:a.end||null},note:(a.docNote||"").trim()||null,createdAt:Date.now(),by:S.mySid};
   const b=S.db.batch(),acc={};addPackPay(b,acc,{id:a.patientId,name:a.patientName},v,a.date);
   b.set(S.db.doc("visits/"+id),v);visitEffect(acc,v,1);flushPatients(b,acc);
   (a.media||[]).forEach((data,i)=>b.set(S.db.doc(`photos/a_${id}_${i}`),{patientId:a.patientId,data,at:Date.now(),from:"session",date:a.date,by:a.endBy||a.startBy||"",note:a.docNote||""}));
@@ -3168,6 +3263,7 @@ function sheetPatient(id){
   ${id?`<div class="bar">${balChip(b)}<span class="sub grow">${b||doneCount(p)?`خلص ${doneCount(p)} جلسة من الأول${p.exams?` + ${p.exams>1?p.exams+" كشف":"الكشف"}`:""} · إجمالي ${money(b?.charged||0)} · دفع ${money(b?.paid||0)}`:""}</span></div>
   <div class="bar"><button class="btn sm" data-act="payFor" data-id="${id}">+ دفعة</button><button class="btn sm" data-act="sellPack" data-id="${id}">+ باكدج</button><button class="btn sm" data-act="newRate" data-id="${id}">+ بالجلسة</button><button class="btn sm teal" data-act="newInvoice" data-id="${id}">فاتورة جلسات</button><button class="btn sm teal" data-act="newReport" data-id="${id}">تقرير</button><button class="btn sm" data-act="discount" data-id="${id}">خصم</button></div>
   ${p.opening?`<div class="note">رصيد قديم من قبل السيستم: ${p.opening>0?`عليه ${money(p.opening)}`:`ليه ${money(-p.opening)}`}</div>`:""}
+  <button class="btn" data-act="patFile" data-id="${id}" data-name="${esc(p.name||"")}" style="width:100%;display:flex;justify-content:space-between"><span>🗂 ملف العيان: البرنامج والأيام اللي جه فيها والتحسن</span><b>›</b></button>
   <button class="btn" data-act="plan" data-id="${id}" style="width:100%;display:flex;justify-content:space-between"><span>📋 البرنامج العلاجي</span><b>›</b></button>
   ${isAdmin()?payerHint(p)+`<div id="pt_acct"></div>`:""}${packsHtml(id)}${ratesHtml(id)}${reportsHtml(id)}`:""}
   <div class="grid2">${F("name","الاسم")}${F("phone","الموبايل","input",'inputmode="tel"')}${F("phone2","موبايل تاني (اختياري)","input",'inputmode="tel"')}${F("age","السن","input",'inputmode="numeric"')}
@@ -3739,6 +3835,9 @@ document.addEventListener("click",async e=>{
     case "trackSave":guard(t,()=>trackSave(id,t.dataset.name));break;
     case "reviewLinkSave":guard(t,async()=>{const u=val("rv_url").trim();if(!/^https?:\/\//.test(u))return setErr("الصق اللينك كامل");await S.db.doc("priv/review").set({url:u});S.reviewUrl=u;closeSheet();toast("اتحفظ");if(id)askReview(id)});break;
     case "planPdf":planPdf(t);break;
+    case "patFile":sheetPatFile(id,t.dataset.name);break;
+    case "patFileF":if(PFX){PFX.f=id;drawPatFile()}break;
+    case "patFilePdf":patFilePdf(t);break;
     case "pfCustom":{const [r,c]=id.split("|"),inp=document.getElementById(`pfc_${r||"ag"}_${c}`),n=(inp?.value||"").trim().replace(/[.|]/g," ");if(!n){toast("اكتب اسم الحاجة الأول");break}
       const k=c==="ag"?`ag.${n}`:c==="ex"?`${r}.ex.Other.${n}`:`${r}.${c}.${n}`;if(PFI[k]||PL.s.sel[k]){toast("موجودة في الفورم");break}
       PL.s.custom=[...(PL.s.custom||[]),{r:r||null,c,n}];PL.s.sel[k]={on:true};drawPlan();break}
