@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 نوفمبر · 127";
+const APP_VERSION="25 نوفمبر · 128";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -299,7 +299,7 @@ function patCountTxt(p){const P=p?.packs||[];const k=P.find(k=>(k.used||0)<k.ses
 function doneCount(p){return (p?.count||0)+(p?.packs||[]).reduce((s,k)=>s+(k.preUsed||0),0)} // sessions done: recorded here + done on packages before the system
 function balances(){const b={};for(const p of Object.values(S.patients))if(p.count||p.charged||p.paid)b[p.id]={charged:p.charged||0,paid:p.paid||0,count:p.count||0};return b}
 function balChip(x){if(!x)return `<span class="chip c-mute">مفيش جلسات</span>`;const d=Math.round(x.charged-x.paid);
-  return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">خالص</span>`}
+  return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-teal">حسابه خالص</span>`}
 let caseIdx=null,caseIdxOf=null;
 function firstCase(date,sid){ // earliest booking that day (for the whole clinic, or for one doctor)
   if(caseIdxOf!==S.appts){caseIdx={};caseIdxOf=S.appts;
@@ -1538,7 +1538,7 @@ function payerOwed(id){const a=payerAcct(id);return Math.round(a.charged-a.paid)
 function payersPanel(){
   const ps=payers();if(!ps.length)return "";
   return `<div class="list">${ps.map(P=>{const o=payerOwed(P.id),n=Object.values(S.patients).filter(p=>p.payer===P.id).length,inv=payerAcct(P.id).invoices.slice(-1)[0];
-    return `<div class="row stack" style="cursor:default"><span class="t">${esc(P.name)} ${o>0?`<span class="chip c-bad">عليهم ${money(o)}</span>`:o<0?`<span class="chip c-ok">ليهم ${money(-o)}</span>`:`<span class="chip c-ok">خالص</span>`}</span>
+    return `<div class="row stack" style="cursor:default"><span class="t">${esc(P.name)} ${o>0?`<span class="chip c-bad">عليهم ${money(o)}</span>`:o<0?`<span class="chip c-ok">ليهم ${money(-o)}</span>`:`<span class="chip c-ok">حسابهم خالص</span>`}</span>
     <span class="end bar"><button class="btn sm teal" data-act="payerBill" data-id="${P.id}">فاتورة</button><button class="btn sm" data-act="payerPay" data-id="${P.id}">+ دفعة</button></span>
     <span class="m">${n} لاعب · الجلسة ${money(P.price)}${inv?` · آخر فاتورة رقم ${inv.no} (${esc(dmy(inv.from))} ← ${esc(dmy(inv.to))})`:""}</span><span></span></div>`}).join("")}</div>`}
 function sheetPayerType(id){
@@ -2167,8 +2167,8 @@ function moneyError(m){return m._err||(m.discount&&!m.discountReason?"اكتب �
 function activePacks(pid,keepId){return (S.patients[pid]?.packs||[]).filter(k=>(k.used||0)<k.sessions||k.id===keepId)}
 function packsFor(pid,typeId,keepId){return activePacks(pid,keepId).filter(k=>!typeId||!k.typeId||k.typeId===typeId||k.id===keepId)} // a package only serves its own session type
 function packOwed(k){return k&&k.paid!=null?Math.round((k.price||0)-(k.paid||0)):null}
-function packMoneyChip(k){const o=packOwed(k);return o==null?"":o>0?`<span class="chip c-bad">عليه ${money(o)}</span>`:o<0?`<span class="chip c-ok">ليه ${money(-o)}</span>`:`<span class="chip c-ok">خالص</span>`}
-function patBalChip(pid){const p=S.patients[pid];if(!p)return "";const d=Math.round((p.charged||0)-(p.paid||0));return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-ok">خالص</span>`}
+function packMoneyChip(k){const o=packOwed(k);return o==null?"":o>0?`<span class="chip c-bad">عليه ${money(o)}</span>`:o<0?`<span class="chip c-ok">ليه ${money(-o)}</span>`:`<span class="chip c-ok">مدفوعة كلها</span>`}
+function patBalChip(pid){const p=S.patients[pid];if(!p)return "";const d=Math.round((p.charged||0)-(p.paid||0));return d>0?`<span class="chip c-bad">عليه ${money(d)}</span>`:d<0?`<span class="chip c-ok">ليه ${money(-d)}</span>`:`<span class="chip c-ok">حسابه خالص</span>`}
 function wirePack(prefix,cur,typeSel){ // pick the session type first; the patient's package of that type is used, otherwise it's a single paid session
   const box=document.getElementById(prefix+"_packbox"),moneyEl=document.getElementById(prefix+"_money"),pick=document.getElementById(prefix+"_pat"),tsel=typeSel&&document.getElementById(typeSel);
   const prIn=document.getElementById(prefix+"_price");if(prIn)prIn.addEventListener("input",e=>{if(e.isTrusted)prIn.dataset.auto=""}); // typed by hand: keep it
@@ -2731,7 +2731,9 @@ async function saveApptConfirm(id){
   await b.commit();closeSheet();toast("اتأكدت واتسجلت الجلسة");
   if(!(a.docNote||"").trim()){const ds=[...new Set([a.endBy,a.startBy,credit.a,credit.b].filter(x=>x&&isDoc(x)))];alertOwner(`${ds.map(staffName).join(" و")||"الدكتور"} مكتبش كومنت`,`على جلسة ${a.patientName} (${dmy(a.date)})`,3)}
 }
-function cameAppt(a){return ["arrived","started","done"].includes(a.status)||!!S.visits[a.id]||!!a.confirmed}
+/* Reham can record a session (money/package) before the patient shows up: that alone doesn't mean he came */
+function preRec(a){return (a.status||"booked")==="booked"&&!a.confirmed&&!a.arrived&&!a.start&&a.date>=today()&&!!S.visits[a.id]}
+function cameAppt(a){if(preRec(a))return false;return ["arrived","started","done"].includes(a.status)||!!S.visits[a.id]||!!a.confirmed}
 /* ---------- sessions of the day: what actually happened (came / cancelled, when, with whom, paid) ---------- */
 const SESS_STATUS=[["booked","مستني"],["arrived","وصل"],["started","جوه الجلسة"],["done","خلصت"],["noshow","محضرش"],["cancelled","كنسل"]];
 function lateMin(a){const b=mins(a.time),x=mins(a.arrived);return b!=null&&x!=null?x-b:null}
@@ -2739,7 +2741,7 @@ function lateChip(a){const l=lateMin(a);return l!=null&&l>10?`<span class="chip 
 function payChip(a){
   if(["noshow","cancelled"].includes(a.status))return "";
   const v=S.visits[a.id];const P=payerOf(a.patientId);
-  return (v?"":`<span class="chip c-mute">لسه ما اتسجلش</span> `)+(P?`<span class="chip c-acc">على ${esc(P.name)}</span>`:patBalChip(a.patientId));
+  return (v?(preRec(a)?`<span class="chip c-mute">اتسجلت مقدّم · لسه مجاش</span> `:""):`<span class="chip c-mute">لسه ما اتسجلش</span> `)+(P?`<span class="chip c-acc">على ${esc(P.name)}</span>`:patBalChip(a.patientId));
 }
 function needsRecord(a){return a.status==="done"&&(!S.visits[a.id]||!a.creditSet)&&shownAppt(a)} // finished, but Reham hasn't settled doctor + money yet
 function sameSlot(x,a){return x.patientId===a.patientId&&x.date===a.date&&(x.time===a.time||(!!a.typeId&&x.typeId===a.typeId))}
@@ -2769,10 +2771,11 @@ function statSheet(k){
   const row=(t,end,m)=>`<div class="row" style="cursor:default"><span class="t">${t}</span><span class="end">${end||""}</span><span class="m">${m||""}</span><span></span></div>`;
   let title="",body="";
   if(k==="came"){title="اللي جم";
-    const st=a=>a.status==="arrived"?`<span class="chip c-warn">مستني${waitMin(a)!=null?` من ${hm(waitMin(a))}`:""}</span>`:a.status==="started"?`<span class="chip c-acc">جوه دلوقتي${apptElapsed(a)!=null?` من ${hm(apptElapsed(a))}`:""}</span>`:`<span class="chip c-ok">خلص${a.end?` ${esc(hour12(a.end))}`:""}</span>`;
-    const list=appts.filter(cameAppt);
+    const st=a=>a.status==="arrived"?`<span class="chip c-warn">مستني${waitMin(a)!=null?` من ${hm(waitMin(a))}`:""}</span>`:a.status==="started"?`<span class="chip c-acc">جوه دلوقتي${apptElapsed(a)!=null?` من ${hm(apptElapsed(a))}`:""}</span>`:a.status==="done"||a.confirmed||a.end?`<span class="chip c-ok">خلص${a.end?` ${esc(hour12(a.end))}`:""}</span>`:`<span class="chip c-ok">اتسجلت</span>`;
+    const list=appts.filter(cameAppt),pre=appts.filter(preRec);
     const order={arrived:0,started:1,done:2};list.sort((a,b)=>order[a.status]-order[b.status]||(a.time||"").localeCompare(b.time||""));
     body=(list.length||loose.length)?`<div class="list">${list.map(a=>row(esc(a.patientName),st(a),esc([`ميعاده ${hour12(a.time)}`,docs(a),apptTimes(a)].filter(Boolean).join(" · ")))).join("")}${loose.map(v=>row(esc(v.patientName),`<span class="chip c-ok">اتسجلت</span>`,esc(visitDocs(v)))).join("")}</div>`:`<div class="empty"><b>محدش جه لسه</b></div>`;
+    if(pre.length)body+=`<h4 style="margin:12px 0 4px">اتسجلوا مقدّم ولسه مجوش (${pre.length})</h4><div class="list">${pre.map(a=>row(esc(a.patientName),`<span class="chip c-mute">لسه مجاش</span>`,esc([`ميعاده ${hour12(a.time)}`,docs(a)].filter(Boolean).join(" · ")))).join("")}</div>`;
     const c={arrived:list.filter(a=>a.status==="arrived").length,started:list.filter(a=>a.status==="started").length,done:list.filter(a=>a.status==="done").length+loose.length};
     body=`<div class="stats"><div class="stat"><div class="k">مستني</div><div class="v num">${c.arrived}</div></div><div class="stat"><div class="k">جوه دلوقتي</div><div class="v num">${c.started}</div></div><div class="stat"><div class="k">خلص</div><div class="v num">${c.done}</div></div></div>`+body}
   else if(k==="no"){title="محضروش أو كنسلوا";const list=appts.filter(a=>["noshow","cancelled"].includes(a.status));
