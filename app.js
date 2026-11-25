@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 نوفمبر · 128";
+const APP_VERSION="25 نوفمبر · 129";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -306,10 +306,15 @@ function firstCase(date,sid){ // earliest booking that day (for the whole clinic
     for(const a of Object.values(S.appts)){if(!a.time||["cancelled","noshow"].includes(a.status))continue;const m=mins(a.time);if(m==null)continue;
       const d=caseIdx[a.date]||(caseIdx[a.date]={all:null,by:{}});if(d.all==null||m<d.all)d.all=m;for(const x of apptDocs(a))if(d.by[x]==null||m<d.by[x])d.by[x]=m}}
   const d=caseIdx[date];return d?(sid?d.by[sid]:d.all):undefined}
+/* the paid day can start at a different hour from a given month on (from November 2026 everyone starts at 1:00) */
+const STARTS_DEF=[{from:"2026-11",doc:"13:00",sec:"13:00"}];
+function startsList(){return (S.config?.starts||STARTS_DEF).slice().sort((a,b)=>a.from.localeCompare(b.from))}
+function startsFor(date){const m=(date||today()).slice(0,7),c=cfg(),x=startsList().filter(e=>e.from<=m).pop();return{doc:x?.doc||c.docStart,sec:x?.sec||c.secStart,from:x?.from||null}}
 function shiftStart(sid,date){ // when the paid day starts: doctors 3:00 (or their first case if earlier), reception 2:30 (or 30 min before the first case)
   const c=cfg(),role=S.staff[sid]?.role;if(!role)return null;
-  if(role==="secretary"){const b=mins(c.secStart),f=firstCase(date);return f!=null?Math.min(b,f-c.secLead):b}
-  if(role==="doctor"){const b=mins(c.docStart),f=firstCase(date,sid);return f!=null&&f<b?f:b}
+  const st=startsFor(date);
+  if(role==="secretary"){const b=mins(st.sec),f=firstCase(date);return f!=null?Math.min(b,f-c.secLead):b}
+  if(role==="doctor"){const b=mins(st.doc),f=firstCase(date,sid);return f!=null&&f<b?f:b}
   return null}
 function effIn(rec){const a=mins(rec.in);if(a==null)return null;const s=shiftStart(rec.staffId,rec.date);return s!=null&&a<s?s:a} // coming early with no work doesn't count
 function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`}
@@ -915,7 +920,7 @@ function vAtt(){
   const tempNote=S.role!=="owner"?`<div class="note">صلاحية مؤقتة: تسجيل الحضور من ${esc(S.backfill.from)} لحد ${esc(S.backfill.to)}، ومتاحة لحد ${tsDate(S.backfill.until).toLocaleString("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",hour:"numeric",minute:"2-digit"})}.${inBackfill(d)?"":" <b>اليوم ده بره الفترة.</b>"}</div>`:"";
   const st=activeStaff();
   const rows=st.map(s=>{const r=S.att[d+"_"+s.id];const w=r?attMinutes(r):null;const ot=w!=null&&w>base?w-base:0;
-    const sh=shiftOf(s.id,new Date(d+"T12:00").getDay()),late=shiftLate(r,s.id,d);
+    const sh=shiftOf(s.id,new Date(d+"T12:00").getDay(),d),late=shiftLate(r,s.id,d);
     return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span>${sh?` <span class="sub">${t12(sh.from)}–${t12(sh.to)}</span>`:` <span class="sub">مش يوم شغله</span>`}</span>
     <span class="end">${late?`<span class="chip c-warn">اتأخر ${hm(late)}</span> `:""}${attChip(r,w,ot,base)}</span>
     <span class="m">${r?`حضور ${esc(r.in||"—")}${countedNote(r)} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
@@ -934,8 +939,8 @@ function vAtt(){
 }
 /* weekly attendance schedule: each person's days and hours (from–to); the days also drive the payroll's working days */
 const WD=[[6,"السبت"],[0,"الحد"],[1,"الاتنين"],[2,"التلات"],[3,"الأربع"],[4,"الخميس"],[5,"الجمعة"]];
-function shiftOf(sid,dow){const c=cfg(),sh=c.shifts[sid];if(sh&&Object.keys(sh).length)return sh[dow]||null;const s=S.staff[sid];const w=s?workDaysOf(s):null;if(!w||!w.includes(dow))return null;
-  const st=s.role==="secretary"?c.secStart:c.docStart;const [h,m]=st.split(":").map(Number);const e=h*60+m+c.hoursBase*60;return{from:st,to:`${String(Math.floor(e/60)%24).padStart(2,"0")}:${String(e%60).padStart(2,"0")}`,guess:true}}
+function shiftOf(sid,dow,date){const c=cfg(),sh=c.shifts[sid];if(sh&&Object.keys(sh).length)return sh[dow]||null;const s=S.staff[sid];const w=s?workDaysOf(s):null;if(!w||!w.includes(dow))return null;
+  const S0=startsFor(date),st=s.role==="secretary"?S0.sec:S0.doc;const [h,m]=st.split(":").map(Number);const e=h*60+m+c.hoursBase*60;return{from:st,to:`${String(Math.floor(e/60)%24).padStart(2,"0")}:${String(e%60).padStart(2,"0")}`,guess:true}}
 function t12(t){if(!t)return "";const [h,m]=t.split(":").map(Number);return `${((h+11)%12)+1}${m?":"+String(m).padStart(2,"0"):""}${h<12?"ص":"م"}`}
 function shiftPanel(){if(S.role!=="owner")return "";const st=activeStaff();
   return `<div class="panel"><div class="sec-title"><h2>مواعيد الحضور</h2></div><p class="sub" style="margin:0">مواعيد كل واحد في الأسبوع. دوس على أي حد عشان تعدّل أيامه وساعاته.</p>
@@ -952,7 +957,7 @@ async function saveShift(sid){const o={};for(const [d,l] of WD){if(!document.get
   const c=cfg(),shifts={...c.shifts,[sid]:o},workDays={...c.workDays,[sid]:Object.keys(o).map(Number)};
   await S.db.doc("priv/config").set({shifts,workDays},{merge:true});audit("staff","مواعيد الحضور",{target:staffName(sid),info:WD.filter(([d])=>o[d]).map(([d,l])=>`${l} ${o[d].from}-${o[d].to}`).join(" · ")||"مفيش أيام"});closeSheet();toast("المواعيد اتحفظت")}
 /* late arrival against the schedule */
-function shiftLate(r,sid,d){const x=shiftOf(sid,new Date(d+"T12:00").getDay());if(!x||!r?.in)return 0;const a=mins(r.in),b=mins(x.from);return a!=null&&b!=null&&a-b>10?a-b:0}
+function shiftLate(r,sid,d){const x=shiftOf(sid,new Date(d+"T12:00").getDay(),d);if(!x||!r?.in)return 0;const a=mins(r.in),b=mins(x.from);return a!=null&&b!=null&&a-b>10?a-b:0}
 function locNote(r){const parts=[];if(r.inLoc)parts.push(`حضور على بعد ${r.inLoc.d}م`);if(r.outLoc)parts.push(`انصراف على بعد ${r.outLoc.d}م`);return parts.length?` · ${parts.join("، ")}`:""}
 function attChip(r,w,ot,base){if(!r)return `<span class="chip c-mute">غايب / مش متسجل</span>`;if(ot)return `<span class="chip c-acc">أوفر تايم ${hm(ot)}</span>`;if(w!=null&&w<base)return `<span class="chip c-warn">ناقص ${hm(base-w)}</span>`;return `<span class="chip c-ok">${w!=null?"تمام":"لسه مقفلش"}</span>`}
 /* ---------- views: my attendance (doctor) ---------- */
@@ -2039,6 +2044,7 @@ function vSettings(){
   <div class="grid2"><label class="f">ساعات اليوم الأساسية<input id="cfgHours" inputmode="numeric" value="${c.hoursBase}"></label><label class="f">أيام الشهر في الحسبة<input id="cfgDays" inputmode="numeric" value="${c.daysBase}"></label><label class="f">الأوفر تايم (الدقيقة بكام دقيقة)<input id="cfgOt" inputmode="decimal" value="${c.otMult}"></label>
   <label class="f">الدكاترة بيتحسبوا من<input type="time" id="cfgDocStart" value="${c.docStart}"></label><label class="f">الاستقبال بيتحسب من<input type="time" id="cfgSecStart" value="${c.secStart}"></label>
   <label class="f">الاستقبال تيجي قبل أول حالة بـ (دقيقة)<input id="cfgSecLead" inputmode="numeric" value="${c.secLead}"></label></div>
+  ${(()=>{const m=today().slice(0,7),x=startsFor(today());return `<div class="note" style="display:grid;gap:8px"><b>مواعيد ${esc(monthLabel(m))} وبعده</b><div class="grid2"><label class="f">الدكاترة بيتحسبوا من<input type="time" id="cfgMDoc" value="${x.doc}"></label><label class="f">الاستقبال بيتحسب من<input type="time" id="cfgMSec" value="${x.sec}"></label></div><span class="sub">اللي يمضي قبل الوقت ده بيتكتبله الوقت ده، واللي يمضي بعده بيتحسب من وقت ما مضى. الشهور اللي فاتت بتفضل على مواعيدها القديمة.</span></div>`})()}
   <p class="sub" style="margin:0">اللي ييجي بدري من غير شغل بيتحسب من الوقت ده. الدكتور لو عنده حالة قبله بيتحسب من ميعاد أول حالة، والاستقبال بتتحسب من قبل أول حالة في المركز بالدقايق دي.</p>
   <div class="bar"><button class="btn primary" data-act="saveCfg">حفظ المرتبات</button><span class="sub">سيب خانة النسبة فاضية لو مفيش نسبة.</span></div></div>
   <div class="panel"><h2>نسخة احتياطية</h2><p class="sub" style="margin:0">ملف فيه كل بيانات المركز: المرضى وشيتات الكشف، والجلسات، والحجوزات، والدفعات، والباكدجات، والحضور، والمصروفات، والمرتبات، والدكاترة اللي بره، والإعدادات. اعملها كل كام يوم واحفظها في Files أو Google Drive.${S.privMeta?.lastBackup?` آخر نسخة: <b>${esc(new Date(S.privMeta.lastBackup).toLocaleString("ar-EG-u-nu-latn",{day:"numeric",month:"long",hour:"numeric",minute:"2-digit"}))}</b>.`:""}</p>
@@ -3949,7 +3955,7 @@ document.addEventListener("click",async e=>{
     case "delType":guard(t,async()=>{await db.doc("pub/types").set({list:S.types.filter(x=>x.id!==id)});closeSheet()});break;
     case "saveCfg":guard(t,async()=>{const c0=cfg(),salary={...c0.salary},commission={...c0.commission},workDays={...c0.workDays},leaveAllow={...c0.leaveAllow},bonus={...c0.bonus},payDetail={};activeStaff().forEach(s=>{if(document.getElementById("pd_"+s.id)?.checked)payDetail[s.id]=true;const bv=val("bn_"+s.id).trim();if(bv)bonus[s.id]=num(bv);else delete bonus[s.id];const v=val("sal_"+s.id).trim();if(v)salary[s.id]=num(v);else delete salary[s.id];const f=val("cf_"+s.id).trim(),h=val("ch_"+s.id).trim();if(f||h)commission[s.id]={full:num(f),half:num(h)};else delete commission[s.id];workDays[s.id]=WEEK.map(([d])=>d).filter(d=>document.getElementById(`wd_${s.id}_${d}`)?.checked);const la=val("la_"+s.id).trim();if(la)leaveAllow[s.id]=Math.round(num(la));else delete leaveAllow[s.id]});{const ch=[];activeStaff().forEach(s=>{if(num(c0.salary[s.id])!==num(salary[s.id]))ch.push(`${s.name}: ${money(c0.salary[s.id]||0)} ← ${money(salary[s.id]||0)}`);const a=c0.commission[s.id]||{},b2=commission[s.id]||{};if(num(a.full)!==num(b2.full)||num(a.half)!==num(b2.half))ch.push(`نسبة ${s.name}: ${a.full||0}%/${a.half||0}% ← ${b2.full||0}%/${b2.half||0}%`)});if(ch.length)audit("settings","غيّر المرتبات",{info:ch.join(" · ")})}
       const fixed=[...document.querySelectorAll(".fxrow")].map(r=>({id:r.dataset.fx,name:r.querySelector(".fx_name").value.trim(),amount:num(r.querySelector(".fx_amt").value),from:r.querySelector(".fx_from").value||prevMonth(today().slice(0,7))})).filter(f=>f.name&&f.amount);
-      await db.doc("priv/config").set({payDetail,fixed,bonus,salary,commission,workDays,leaveAllow,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5,docStart:val("cfgDocStart")||"15:00",secStart:val("cfgSecStart")||"14:30",secLead:val("cfgSecLead").trim()===""?30:Math.max(0,Math.round(num(val("cfgSecLead"))))});toast("المرتبات اتحفظت")});break;
+      await db.doc("priv/config").set({payDetail,fixed,bonus,salary,commission,workDays,leaveAllow,hoursBase:num(val("cfgHours"))||7,daysBase:num(val("cfgDays"))||30,otMult:num(val("cfgOt"))||1.5,docStart:val("cfgDocStart")||"15:00",secStart:val("cfgSecStart")||"14:30",secLead:val("cfgSecLead").trim()===""?30:Math.max(0,Math.round(num(val("cfgSecLead")))),starts:(()=>{const m=today().slice(0,7),L=startsList().filter(e=>e.from!==m),cur=startsFor(today()),d=val("cfgMDoc")||cur.doc,sc=val("cfgMSec")||cur.sec;if(d!==cur.doc||sc!==cur.sec||cur.from)L.push({from:cur.from&&d===cur.doc&&sc===cur.sec?cur.from:m,doc:d,sec:sc});return L.filter((e,i,a)=>a.findIndex(y=>y.from===e.from)===i)})()});toast("المرتبات اتحفظت")});break;
     case "backup":backup().catch(err=>{console.error(err);const m=document.getElementById("bkMsg");if(m)m.textContent="النسخة مكملتش. جرب تاني."});break;
     case "newEntry":sheetEntry(null);break;
     case "myEntry":sheetEntry(S.log[id]);break;
