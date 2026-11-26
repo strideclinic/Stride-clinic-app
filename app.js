@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 نوفمبر · 134";
+const APP_VERSION="26 نوفمبر · 135";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -321,7 +321,7 @@ function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")
 function outTxt(r){return (r?.out||"—")+(r?.outBad?` (يوم ${dm(r.outDay)})`:"")}
 function countedNote(r){const e=effIn(r),a=mins(r.in),w=r?rawAttMinutes(r):null;return (r&&e!=null&&a!=null&&e!==a?` · بيتحسب من ${fmtMin(e)}`:"")+(w!=null&&attMinutes(r)!==w?` · مشي بدري واتحسبله ${hm(cfg().hoursBase*60)}`:"")}
 /* some staff (Dr. Habiba) get a full day when they leave early (the owner sends them home), only if they came by 3:00 (10 min grace); came later = the real hours. Set in salary settings */
-const FULLDAY_BY=15*60+10,FULLDAY_FROM=""; // applies to every month (the owner confirmed October with it)
+const FULLDAY_BY=15*60+10,FULLDAY_FROM="2026-11-01"; // October was closed and paid without it
 function fullDayOf(sid){const f=S.config?.fullDay;if(f)return !!f[sid];return /حبيب/.test(S.staff[sid]?.name||"")}
 function rawAttMinutes(rec){if(rec.outBad)return null;const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
 function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(w!=null&&w>=base||!fullDayOf(rec.staffId)||(rec.date||"")<FULLDAY_FROM||mins(rec.in)==null||mins(rec.in)>FULLDAY_BY)return w;if(w==null&&!(rec.date<today()))return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
@@ -406,6 +406,10 @@ function payroll(month){
   for(const f of cfg().fixed){if((f.from||"")>month)continue; // a fixed monthly salary with no account and no attendance (e.g. د. تامر)
     const sid="fx_"+f.id,extras=(S.bonuses||[]).filter(b=>b.sid===sid&&b.month===month),extra2=extras.reduce((t,b)=>t+num(b.amount),0),sal=num(f.amount);
     rows.push({s:{id:sid,name:f.name,fixed:true},fixed:true,sal,ot:0,otPay:0,days:0,short:0,req:null,got:null,cm:null,comm:0,full:0,half:0,pre:0,commBase:0,bonus:0,bAmt:0,bonusSoFar:false,extras,extra2,total:sal+extra2,wd:null,sched:null,absent:0,absentDates:[],extra:0,deductDays:0,paidLeave:0,deduction:0,dayRate:0})}
+  const snap=S.closes?.[month]?.payroll; // a closed month keeps the salaries it was closed (and paid) on; later edits or rule changes never move them
+  if(snap)for(const x of rows){const y=snap.find(z=>z.sid===x.s.id);if(!y)continue;const live=x.total;
+    Object.assign(x,{sal:num(y.sal),ot:num(y.ot),otPay:num(y.otPay),comm:num(y.comm),deduction:num(y.deduction),total:num(y.total),closed:true,liveTotal:live});
+    x.bonus=Math.max(0,x.total-(x.sal-x.deduction+x.otPay+x.comm)-(x.extra2||0));const left=x.total-(x.sal-x.deduction+x.otPay+x.comm)-x.bonus;if(left!==x.extra2)x.extra2=left}
   return rows;
 }
 /* two vaults: money paid for an outside doctor's package / session sits in her vault (across months) until the period is settled;
@@ -1995,7 +1999,7 @@ function vReports(){
   ${extProfitPanel(m)}${extPendingPanel()}${planPanel(m)}
   <div class="panel"><h2>تقلل منين؟</h2><ul class="tips">${expenseTips(m,rv,ex,pr,flags).map(t=>`<li>${esc(t)}</li>`).join("")}</ul></div>
   <div class="panel"><div class="sec-title"><h2>المرتبات</h2>${m===prevMonth(today().slice(0,7))?`<button class="btn sm" data-act="pubPay">حدّث «مرتبي» عند الفريق</button>`:""}</div>
-  ${m===prevMonth(today().slice(0,7))?`<p class="sub" style="margin:0">الأرقام دي هي اللي ظاهرة لكل واحد في «مرتبي»${Object.keys(S.payPub||{}).length?"":" (لسه متبعتتش)"}. أي تعديل بيتبعت لوحده بعد دقيقة من فتح الأبلكيشن.</p>`:""}
+  ${m===prevMonth(today().slice(0,7))?`<p class="sub" style="margin:0">الأرقام دي هي اللي ظاهرة لكل واحد في «مرتبي»${Object.keys(S.payPub||{}).length?"":" (لسه متبعتتش)"}. أي تعديل بيتبعت لوحده بعد دقيقة من فتح الأبلكيشن.</p>`:""}${S.closes?.[m]?.payroll?`<p class="sub" style="margin:0;color:var(--acc)">الشهر ده اتقفل، فالمرتبات ثابتة على اللي اتقفل عليه ومش بتتغير مع أي تعديل بعد كده.</p>`:""}
   <div class="tblwrap"><table><thead><tr><th>الاسم</th><th>الأيام</th><th>الأساسي</th><th>أوفر تايم</th><th>قيمة الأوفر تايم</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
   ${pr.map(x=>`<tr><td>${esc(x.s.name)}${x.s.active===false?` <span class="chip c-mute">متوقف</span>`:""}</td><td style="white-space:normal;min-width:120px">${x.fixed?`<span class="chip c-mute">مرتب ثابت</span>`:x.sched!=null?`حضر ${x.days-x.extra} من ${x.sched}${x.extra?`<div class="sub">${x.extra} يوم زيادة/تعويض</div>`:""}
     ${x.absent||x.paidLeave||x.deductDays?`<button class="btn sm" data-act="absence" data-id="${x.s.id}" style="margin-top:4px">${[x.absent?`غاب ${x.absent}`:"",x.paidLeave?`إجازة ${x.paidLeave}`:"",x.deductDays?`خصم ${x.deductDays} يوم`:""].filter(Boolean).join(" · ")}</button>`:""}<button class="btn sm" data-act="warnings" data-id="${x.s.id}" style="margin-top:4px">${(n=>n?`إنذارات ${n}`:"إنذار")(warningsOf(x.s.id,S.ui.month.slice(0,4)).length)}</button>${(()=>{const al=cfg().leaveAllow[x.s.id];if(al==null)return "";const left=al-yearLeave(x.s.id,S.ui.month.slice(0,4));return `<div class="sub" ${left<=0?`style="color:var(--bad)"`:""}>${left>0?`فاضله ${left} يوم إجازة`:left===0?"خلّص إجازاته":`زاد ${-left} يوم عن إجازاته`}</div>`})()}<div class="sub">${esc(daysLabel(x.wd))}</div>`:`${x.days} يوم`}</td><td>${money(x.sal)}${x.deduction?`<div class="sub" style="color:var(--bad)">− ${money(x.deduction)} خصم</div>`:""}</td><td>${hm(x.ot)}${x.req!=null?`<div class="sub">اشتغل ${hm(x.got)} من ${hm(x.req)} مطلوبين${!x.ot&&x.short?` · ناقصه ${hm(x.short)}`:""}</div>`:""}</td><td>${money(x.otPay)}</td><td>${x.cm?`${money(x.comm)}<div class="sub">${x.full} كاملة · ${x.half} نص · من ${money(x.commBase)}${x.pre?` (منهم ${x.pre} قبل السيستم)`:""}</div><button class="btn sm" data-act="preComm" data-id="${x.s.id}" style="margin-top:4px">جلسات قبل السيستم</button>`:"—"}</td><td><b>${money(x.total)}</b>${x.extras.map(b=>`<div class="sub" style="color:var(--ok)">+ بونص ${money(b.amount)}${b.reason?` (${esc(b.reason)})`:""} <button class="btn ghost sm" data-act="delBonus" data-id="${b.id}" data-confirm aria-label="امسح البونص">✕</button></div>`).join("")}<button class="btn sm" data-act="addBonus" data-id="${x.s.id}" data-m="${m}" style="margin-top:4px">+ بونص</button>${x.bonus?`<div class="sub" style="color:var(--ok)">منه بونص الالتزام ${money(x.bonus)}${x.bonusSoFar?" (لو كمّل الشهر كده)":""}</div>`:x.bAmt?`<div class="sub">مفيش بونص الالتزام (${[x.absent?"غاب":"",x.paidLeave||x.deductDays?"خد إذن":"",x.short>0?"ساعاته ناقصة":""].filter(Boolean).join("، ")||"مفيش حضور"})</div>`:""}${(()=>{const c=S.closes?.[m]?.payroll?.find(p=>p.sid===x.s.id);return c&&Math.round(c.total)!==Math.round(x.total)?`<div class="sub" style="color:var(--bad)">اتقبض ${money(c.total)} · فرق ${money(Math.round(x.total)-Math.round(c.total))}</div>`:c?`<div class="sub">زي ما اتقبض</div>`:""})()}</td></tr>`).join("")}
