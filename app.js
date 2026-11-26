@@ -2192,6 +2192,7 @@ function patBalChip(pid){const p=S.patients[pid];if(!p)return "";const d=Math.ro
 function wirePack(prefix,cur,typeSel){ // pick the session type first; the patient's package of that type is used, otherwise it's a single paid session
   const box=document.getElementById(prefix+"_packbox"),moneyEl=document.getElementById(prefix+"_money"),pick=document.getElementById(prefix+"_pat"),tsel=typeSel&&document.getElementById(typeSel);
   const prIn=document.getElementById(prefix+"_price");if(prIn)prIn.addEventListener("input",e=>{if(e.isTrusted)prIn.dataset.auto=""}); // typed by hand: keep it
+  const dIn=document.getElementById(prefix+"_disc");if(dIn)dIn.addEventListener("input",e=>{if(e.isTrusted)dIn.dataset.auto=""});
   const draw=()=>{const pat=findPatient(pick.value);const tid=tsel?tsel.value:"";const list=pat?packsFor(pat.id,tid,cur?.packId):[];
     const P=pat?payerOf(pat.id):null;
     if(!list.length&&P){box.innerHTML=`<div class="note">الجلسة دي على حساب <b>${esc(P.name)}</b> بـ ${money(P.price)}، والفلوس بتتاخد من الجهة بالفاتورة.</div><input type="hidden" id="${prefix}_payer" value="${P.id}">`;moneyEl.hidden=true;return}
@@ -2204,6 +2205,8 @@ function wirePack(prefix,cur,typeSel){ // pick the session type first; the patie
       if(pt&&pat&&rate==null){const setP=force=>{const n=+radio(prefix+"_parts")||1;box.dataset.parts=n;const pv=partsPrice(tid,n);if(pr&&pv&&(force||!pr.value||pr.dataset.auto==="1")){pr.value=pv;pr.dataset.auto="1";pr.dispatchEvent(new Event("input"))}};
         box.querySelectorAll(`input[name="${prefix}_parts"]`).forEach(r=>r.addEventListener("change",()=>setP(true)));setP(false)}
       else if(pt)box.querySelectorAll(`input[name="${prefix}_parts"]`).forEach(r=>r.addEventListener("change",()=>{box.dataset.parts=r.value}));
+      const rd=pat&&tid?rDisc(pat.id,tid):null,di=document.getElementById(prefix+"_disc");
+      if(rd&&di&&(!di.value||di.dataset.auto==="1")){di.value=rd.amt;di.dataset.auto="1";const dm=document.getElementById(prefix+"_dmode");if(dm)dm.value="amount";const dr=document.getElementById(prefix+"_dreason");if(dr&&!dr.value)dr.value=rd.reason||"خصم ثابت";di.dispatchEvent(new Event("input"))}
       return}
     const on=cur?!!cur.packId:true;
     box.innerHTML=`<div class="seg"><label><input type="checkbox" id="${prefix}_usepack" style="width:auto" ${on?"checked":""}> الجلسة دي من الباكدج</label><select id="${prefix}_pack" style="flex:1 1 200px">${list.map(k=>{const o=packOwed(k);return `<option value="${k.id}" ${k.id===cur?.packId?"selected":""}>${esc(packTitle(k))} · فاضل ${k.sessions-(k.used||0)} من ${k.sessions}${o>0?` · عليه ${money(o)}`:o===0?" · خالص":""}</option>`}).join("")}</select></div>
@@ -2761,7 +2764,35 @@ function lateChip(a){const l=lateMin(a);return l!=null&&l>10?`<span class="chip 
 function payChip(a){
   if(["noshow","cancelled"].includes(a.status))return "";
   const v=S.visits[a.id];const P=payerOf(a.patientId);
-  return (v?(preRec(a)?`<span class="chip c-mute">اتسجلت مقدّم · لسه مجاش</span> `:""):`<span class="chip c-mute">لسه ما اتسجلش</span> `)+(P?`<span class="chip c-acc">على ${esc(P.name)}</span>`:patBalChip(a.patientId));
+  return (v?(preRec(a)?`<span class="chip c-mute">اتسجلت مقدّم · لسه مجاش</span> `:""):`<span class="chip c-mute">لسه ما اتسجلش</span> `)+(P?`<span class="chip c-acc">على ${esc(P.name)}</span>`:dueChip(a));
+}
+/* the patient's standing discount on a single session of this type (e.g. 100 off every time) */
+function rDisc(pid,tid){const d=S.patients[pid]?.rdisc||{};return d[tid]||d["*"]||null}
+function lastParts(pid,tid){const v=Object.values(S.visits).filter(x=>x.patientId===pid&&x.parts&&!x.packId&&(!tid||x.typeId===tid)).sort((x,y)=>(y.date||"").localeCompare(x.date||""))[0];return v?.parts||1}
+/* what a booked, not yet recorded session will cost: 0 on a package (paid through the package), the single price otherwise
+   (his own price per session, or by body parts like his last single session), less his standing discount; null = price not known */
+function expectDue(a){
+  const pid=a.patientId,tid=a.typeId,p=S.patients[pid];if(!p||a.kind==="exam")return null;
+  if(packsFor(pid,tid)[0])return {amt:0,pack:true};
+  let price=tid?p.rates?.[tid]:null,parts=null;
+  if(price==null&&tid){if(partsType(tid)){parts=lastParts(pid,tid);price=partsPrice(tid,parts)}else price=S.single?.[tid]??null}
+  if(price==null)return null;const d=Math.min(price,num(rDisc(pid,tid)?.amt));
+  return {amt:Math.max(0,Math.round(price-d)),price:Math.round(price),disc:d,parts};
+}
+/* money chip on a booked session: old debt apart from what this session costs, so «عليه» only means money he really owes from before */
+function dueChip(a){
+  const p=S.patients[a.patientId];if(!p)return "";
+  const bal=Math.round((p.charged||0)-(p.paid||0)),v=S.visits[a.id];
+  let cur=null,x=null; // cur = what this session still needs, already inside the balance or not
+  if(v){if(!preRec(a))return patBalChip(a.patientId);cur=Math.max(0,Math.round((v.net||0)-(v.paid||0)))}
+  else{x=expectDue(a);if(!x)return patBalChip(a.patientId);cur=x.amt}
+  const old=v?bal-cur:bal,tot=old+cur;
+  const disc=x?.disc?` (بعد خصم ${money(x.disc)})`:"";
+  if(!cur)return old>0?`<span class="chip c-bad">عليه ${money(old)} من قبل</span>`:old<0?`<span class="chip c-ok">ليه ${money(-old)}</span>`:`<span class="chip c-ok">حسابه خالص</span>`;
+  if(old>0)return `<span class="chip c-bad">المطلوب ${money(tot)}</span> <span class="chip c-mute">${money(old)} من قبل + ${money(cur)} الجلسة دي${disc}</span>`;
+  if(old<0)return tot>0?`<span class="chip c-warn">هيدفع ${money(tot)}</span> <span class="chip c-mute">الجلسة ${money(cur)}${disc} − ليه ${money(-old)}</span>`
+    :`<span class="chip c-ok">الجلسة من رصيده</span>${tot<0?` <span class="chip c-ok">ويفضل ليه ${money(-tot)}</span>`:""}`;
+  return `<span class="chip c-warn">هيدفع ${money(cur)}${disc}</span>`;
 }
 function needsRecord(a){return a.status==="done"&&(!S.visits[a.id]||!a.creditSet)&&shownAppt(a)} // finished, but Reham hasn't settled doctor + money yet
 function sameSlot(x,a){return x.patientId===a.patientId&&x.date===a.date&&(x.time===a.time||(!!a.typeId&&x.typeId===a.typeId))}
@@ -3295,8 +3326,8 @@ function packsHtml(pid){
     <span class="m">${[k.date||"",`السعر ${k.discount?`${money(k.listPrice)} ← `:""}${money(k.price)}`,k.paid!=null?`دفع ${money(k.paid)}`:"",k.refund?`اتقفل باسترجاع: كان ${k.refund.origSessions} جلسة بـ ${money(k.refund.origPrice)}، اتحاسب ${k.refund.cost?money(k.refund.cost):0}${k.refund.back>0?` ورجعله ${money(k.refund.back)}`:""}`:"",k.old?`من قبل السيستم (كان عمل ${k.preUsed||0}${k.prePaid?`، ودفع ${money(k.prePaid)} قبل الشهر اللي اتسجل فيه`:""})`:"",k.discount?`خصم ${money(k.discount)}: ${[k.reason,...(k.discHist||[]).map(h=>h.reason)].filter(Boolean).join("، ")}`:""].filter(Boolean).map(esc).join(" · ")}</span><span></span></div>`}).join("")}</div>`;
 }
 function ratesHtml(pid){
-  const r=S.patients[pid]?.rates||{};const ks=Object.keys(r);if(!ks.length)return "";
-  return `<div class="list">${ks.map(t=>`<div class="row" style="cursor:default"><span class="t">${esc(typeName(t))} بالجلسة <span class="chip c-acc">${money(r[t])} للجلسة</span></span><span class="end bar"><button class="btn sm" data-act="editRate" data-id="${pid}" data-k="${t}">تعديل</button></span><span class="m">كل جلسة ${esc(typeName(t))} من غير باكدج بتتحسب عليه بالسعر ده</span><span></span></div>`).join("")}</div>`}
+  const r=S.patients[pid]?.rates||{},rd=S.patients[pid]?.rdisc||{};const ks=[...new Set([...Object.keys(r),...Object.keys(rd)])];if(!ks.length)return "";
+  return `<div class="list">${ks.map(t=>`<div class="row" style="cursor:default"><span class="t">${esc(typeName(t))} بالجلسة ${r[t]!=null?`<span class="chip c-acc">${money(r[t])} للجلسة</span>`:""} ${rd[t]?`<span class="chip c-warn">خصم ${money(rd[t].amt)} كل جلسة</span>`:""}</span><span class="end bar"><button class="btn sm" data-act="editRate" data-id="${pid}" data-k="${t}">تعديل</button></span><span class="m">كل جلسة ${esc(typeName(t))} من غير باكدج بتتحسب ${r[t]!=null?"بالسعر ده":"بعدد الأعضاء"}${rd[t]?` وناقص ${money(rd[t].amt)} (${esc(rd[t].reason||"")})`:""}</span><span></span></div>`).join("")}</div>`}
 function sheetPackUse(pid,kid){
   const p=S.patients[pid],k=(p?.packs||[]).find(x=>x.id===kid);if(!k)return;
   openSheet(`${packTitle(k)} · ${p.name}`,`<p class="sub" style="margin:0">لو رقم الجلسة طالع غلط، عدّل كام جلسة خلصت من الباكدج، وكل الجلسات اللي جاية هتتظبط على كده.</p>
@@ -3318,13 +3349,18 @@ async function savePackUse(pid,kid){
 function sheetRate(pid,tid){
   const p=S.patients[pid];if(!p)return;const r=p.rates||{};
   openSheet(`${p.name} بالجلسة`,`<p class="sub" style="margin:0">للمريض اللي بيدفع كل جلسة لوحدها. بتحدد السعر مرة واحدة، وكل جلسة من النوع ده بتتحسب عليه لوحدها، وريهام بتكتب دفع كام بس.</p>
-  <div class="grid2"><label class="f">نوع الجلسة<select id="rt_type" ${tid?"disabled":""}>${typeOptions(tid||"")}</select></label><label class="f">سعر الجلسة<input id="rt_price" inputmode="decimal" value="${tid?r[tid]??"":""}"></label></div>
+  <div class="grid2"><label class="f">نوع الجلسة<select id="rt_type" ${tid?"disabled":""}>${typeOptions(tid||"")}</select></label><label class="f">سعر الجلسة (سيبه فاضي = بعدد الأعضاء)<input id="rt_price" inputmode="decimal" value="${tid?r[tid]??"":""}"></label>
+  <label class="f">خصم ثابت على كل جلسة<input id="rt_disc" inputmode="decimal" placeholder="0" value="${tid?p.rdisc?.[tid]?.amt??"":""}"></label><label class="f">سبب الخصم<input id="rt_dreason" placeholder="مثلاً قريب حد من الفريق" value="${esc(tid?p.rdisc?.[tid]?.reason||"":"")}"></label></div>
+  <p class="sub" style="margin:0">الخصم بيتكتب لوحده في كل جلسة منفردة من النوع ده (من غير باكدج)، وبيبان في الحجز «هيدفع» بعده.</p>
   <div class="err" id="formErr"></div><div class="bar"><button class="btn primary grow" data-act="saveRate" data-id="${pid}" data-k="${tid||""}">حفظ</button>${tid?`<button class="btn danger" data-act="delRate" data-id="${pid}" data-k="${tid}" data-confirm>شيل</button>`:""}</div>`);
 }
 async function saveRate(pid,tid,del){
-  const p=S.patients[pid];const r={...(p.rates||{})};
-  if(del)delete r[tid];else{const t=tid||val("rt_type");const price=num(val("rt_price"));if(!t)return setErr("اختار نوع الجلسة");if(!price)return setErr("اكتب سعر الجلسة");r[t]=price}
-  await S.db.doc("patients/"+pid).update({rates:r});toast(del?"اتشال":"اتحفظ");reopenPatient(pid);
+  const p=S.patients[pid];const r={...(p.rates||{})},rd={...(p.rdisc||{})};
+  if(del){delete r[tid];delete rd[tid]}else{const t=tid||val("rt_type");const price=num(val("rt_price")),dc=num(val("rt_disc")),why=val("rt_dreason").trim();if(!t)return setErr("اختار نوع الجلسة");
+    if(!price&&!dc)return setErr("اكتب سعر الجلسة أو الخصم");if(dc&&!why)return setErr("اكتب سبب الخصم");if(price&&dc>=price)return setErr("الخصم أكبر من سعر الجلسة");
+    if(price)r[t]=price;else delete r[t];if(dc)rd[t]={amt:dc,reason:why};else delete rd[t];
+    audit("money","سعر/خصم ثابت لمريض",{target:p.name,info:`${typeName(t)}: ${price?money(price)+" للجلسة":"بعدد الأعضاء"}${dc?` · خصم ${money(dc)} (${why})`:""}`})}
+  await S.db.doc("patients/"+pid).update({rates:r,rdisc:rd});toast(del?"اتشال":"اتحفظ");reopenPatient(pid);
 }
 function sheetPatient(id){
   const p=id?S.patients[id]:{examDate:today()};if(!p)return;
