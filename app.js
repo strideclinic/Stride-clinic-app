@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="25 نوفمبر · 131";
+const APP_VERSION="26 نوفمبر · 132";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -102,7 +102,7 @@ async function checkSetup(){if(S.setupDone)return;try{const d=await S.db.doc("me
 function clearSubs(){S.roleSubs.forEach(u=>{try{u()}catch(e){}});S.roleSubs=[];if(backfillUnsub){backfillUnsub();backfillUnsub=null}
   Object.assign(S,{staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",loadedMonths:{},
     live:{visits:{},payments:{},att:{},exp:{},appts:{}},old:{visits:{},payments:{},att:{},exp:{},appts:{}}});merge()}
-function rowOf(d){const x={id:d.id,...d.data({serverTimestamps:"estimate"})};if(x.inAt)x.in=fmtTs(x.inAt);if(x.outAt)x.out=fmtTs(x.outAt);if(x.arrivedAt)x.arrived=fmtTs(x.arrivedAt);if(x.startAt)x.start=fmtTs(x.startAt);if(x.endAt)x.end=fmtTs(x.endAt);if(x.arrivedT)x.arrived=x.arrivedT;if(x.startT)x.start=x.startT;if(x.endT)x.end=x.endT;return x}
+function rowOf(d){const x={id:d.id,...d.data({serverTimestamps:"estimate"})};if(x.inAt)x.in=fmtTs(x.inAt);if(x.outAt){x.out=fmtTs(x.outAt);if(x.date&&x.staffId){try{const od=(x.outAt.toDate?x.outAt.toDate():new Date(x.outAt)).toLocaleDateString("en-CA");if(od!==x.date){x.outBad=true;x.outDay=od}}catch(e){}}}if(x.arrivedAt)x.arrived=fmtTs(x.arrivedAt);if(x.startAt)x.start=fmtTs(x.startAt);if(x.endAt)x.end=fmtTs(x.endAt);if(x.arrivedT)x.arrived=x.arrivedT;if(x.startT)x.start=x.startT;if(x.endT)x.end=x.endT;return x}
 function toObj(snap){const o={};snap.docs.forEach(d=>o[d.id]=rowOf(d));return o}
 function sub(q,set){return q.onSnapshot(snap=>{set(toObj(snap));sched()},e=>console.warn("sub",e))}
 function subDoc(path,set){return S.db.doc(path).onSnapshot(d=>{set(d.exists?d.data():null);sched()},e=>console.warn(path,e))}
@@ -177,7 +177,7 @@ function syncBackfillSub(){
 function saveView(){try{localStorage.setItem("stride_view",JSON.stringify({role:S.role,sid:S.mySid,tab:S.tab,date:S.ui?.date,y:window.scrollY,at:Date.now()}))}catch(e){}}
 function restoredTab(){try{const v=JSON.parse(localStorage.getItem("stride_view")||"null");if(!v||v.role!==S.role||v.sid!==S.mySid||Date.now()-v.at>15*60e3)return null;
   if(!tabsFor().some(([k])=>k===v.tab))return null;if(v.date&&S.ui)S.ui.date=v.date;if(v.y)setTimeout(()=>window.scrollTo(0,v.y),900);return v.tab}catch(e){return null}}
-window.addEventListener("pagehide",saveView);document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")saveView()});
+window.addEventListener("pagehide",saveView);document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"){saveView();S._day=today()}else if(S._day&&S._day!==today()){S._day=today();try{render()}catch(e){}}});
 function defaultTab(){return {owner:"sessions",secretary:"sessions",doctor:"myappts"}[S.role]}
 /* ---------- tabs & render ---------- */
 function tabsFor(){
@@ -318,12 +318,13 @@ function shiftStart(sid,date){ // when the paid day starts: doctors 3:00 (or the
   return null}
 function effIn(rec){const a=mins(rec.in);if(a==null)return null;const s=shiftStart(rec.staffId,rec.date);return s!=null&&a<s?s:a} // coming early with no work doesn't count
 function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`}
+function outTxt(r){return (r?.out||"—")+(r?.outBad?` (يوم ${dm(r.outDay)})`:"")}
 function countedNote(r){const e=effIn(r),a=mins(r.in),w=r?rawAttMinutes(r):null;return (r&&e!=null&&a!=null&&e!==a?` · بيتحسب من ${fmtMin(e)}`:"")+(w!=null&&attMinutes(r)!==w?` · مشي بدري واتحسبله ${hm(cfg().hoursBase*60)}`:"")}
 /* some staff (Dr. Habiba) get a full day when they leave early (the owner sends them home), only if they came by 3:00 (10 min grace); came later = the real hours. Set in salary settings */
 const FULLDAY_BY=15*60+10;
 function fullDayOf(sid){const f=S.config?.fullDay;if(f)return !!f[sid];return /حبيب/.test(S.staff[sid]?.name||"")}
-function rawAttMinutes(rec){const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
-function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(w==null||w>=base||!fullDayOf(rec.staffId)||mins(rec.in)>FULLDAY_BY)return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
+function rawAttMinutes(rec){if(rec.outBad)return null;const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
+function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(w!=null&&w>=base||!fullDayOf(rec.staffId)||mins(rec.in)==null||mins(rec.in)>FULLDAY_BY)return w;if(w==null&&!(rec.date<today()))return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
 function fixedRow(f){f=f||{id:randId(),name:"",amount:"",from:prevMonth(today().slice(0,7))};return `<div class="grid2 fxrow" data-fx="${f.id}"><label class="f">الاسم<input class="fx_name" value="${esc(f.name||"")}" placeholder="د. تامر"></label><label class="f">المرتب الشهري<input class="fx_amt" inputmode="decimal" value="${f.amount??""}" placeholder="3500"></label><label class="f">من شهر<input type="month" class="fx_from" value="${f.from||prevMonth(today().slice(0,7))}"></label><button class="btn sm danger" data-act="delFixed" style="align-self:end">شيله</button></div>`}
 function defBonus(){const o={};for(const s of Object.values(S.staff||{}))if(s.role==="doctor"&&/سلم|حبيب/.test(s.name||""))o[s.id]=150;return o}
 function cfg(){const c=S.config||{};return{payDetail:c.payDetail||Object.fromEntries(Object.keys(c.commission||{}).map(k=>[k,true])),fixed:c.fixed||[],bonus:c.bonus||defBonus(),salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},docStart:c.docStart||"15:00",secStart:c.secStart||"14:30",secLead:c.secLead??30,otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7,shifts:c.shifts||{}}}
@@ -382,7 +383,7 @@ function payroll(month){
     const sched=wd&&wd.length?monthDates(month).filter(d=>wd.includes(wday(d))):null;
     const minRate=sched?(sched.length?sal/(sched.length*c.hoursBase*60):0):sal/(c.daysBase*c.hoursBase*60);
     let ot=0,days=0,short=0,extra=0;const came=new Set(),mins={};
-    for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(w==null)continue;days++;came.add(r.date);mins[r.date]=(mins[r.date]||0)+w;
+    for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(month)){const w=attMinutes(r);if(r.in)came.add(r.date);if(w==null)continue;days++;came.add(r.date);mins[r.date]=(mins[r.date]||0)+w;
       if(sched&&!wd.includes(wday(r.date)))extra++;
       if(!sched){if(w>base)ot+=w-base;else short+=base-w}}
     const lv=leavesOf(s.id,month);let deductDays=0,paidLeave=0,req=null,got=null;
@@ -927,7 +928,7 @@ function vAtt(){
     const sh=shiftOf(s.id,new Date(d+"T12:00").getDay(),d),late=shiftLate(r,s.id,d);
     return `<button class="row" data-act="editAtt" data-sid="${s.id}"><span class="t">${esc(s.name)} <span class="chip c-mute">${ROLE_NAMES[s.role]||""}</span>${sh?` <span class="sub">${t12(sh.from)}–${t12(sh.to)}</span>`:` <span class="sub">مش يوم شغله</span>`}</span>
     <span class="end">${late?`<span class="chip c-warn">اتأخر ${hm(late)}</span> `:""}${attChip(r,w,ot,base)}</span>
-    <span class="m">${r?`حضور ${esc(r.in||"—")}${countedNote(r)} · انصراف ${esc(r.out||"—")}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
+    <span class="m">${r?`حضور ${esc(r.in||"—")}${countedNote(r)} · انصراف ${esc(outTxt(r))}${w!=null?" · "+hm(w):""}${r.inAt?" · سجّلها بنفسه":""}${locNote(r)}`:"اضغط عشان تسجل الحضور والانصراف"}</span><span></span></button>`}).join("");
   const PR=payroll(m); // same numbers as the payroll: overtime is counted on the month, a short day is made up first
   const sum=st.map(s=>{let days=0,plus=0,minus=0;for(const r of Object.values(S.att))if(r.staffId===s.id&&(r.date||"").startsWith(m)){const w=attMinutes(r);if(w==null)continue;days++;w>base?plus+=w-base:minus+=base-w}
     const p=PR.find(x=>x.s.id===s.id);const ot=p?p.ot:plus,sh=p?p.short:minus;
@@ -935,7 +936,9 @@ function vAtt(){
   const fixR=S.role==="owner"&&today()<="2026-11-15"?Object.values(S.att).filter(r=>S.staff[r.staffId]?.role==="secretary"&&(r.date||"").startsWith("2026-10")&&r.out&&mins(r.out)!=null&&mins(r.out)>=12*60&&mins(r.out)<21*60).sort((a,b)=>a.date.localeCompare(b.date)):[];
   const dl=S.role==="owner"&&today()<="2026-11-15"?(S.leaves||[]).filter(l=>l.type==="deduct"&&l.date==="2026-10-12"&&S.staff[l.sid]?.role==="secretary"):[];
   const fixHtml=(dl.length?`<div class="panel" style="border-color:var(--warn)"><h2>خصم ${esc(staffName(dl[0].sid))} يوم 12/10</h2><p class="sub" style="margin:0">هيتشال خالص: من غير خصم، ومش هيتعد من إجازاتها، ومش مطلوب تعوّض ساعاته.</p><button class="btn teal" data-act="dropDeduct" data-id="${dl[0].sid}" data-confirm>شيل الخصم</button></div>`:"")+(fixR.length?`<div class="panel" style="border-color:var(--warn)"><h2>انصراف ${esc(staffName(fixR[0].staffId))} بدري في أكتوبر</h2><div class="list">${fixR.map(r=>`<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(r.date))}</span><span class="end"><button class="btn sm teal" data-act="attTo10" data-id="${r.date}_${r.staffId}" data-confirm>خليها مشيت 10:00</button></span><span class="m">حضور ${esc(r.in||"—")} · انصراف ${esc(r.out)}</span><span></span></div>`).join("")}</div></div>`:"");
-  return `${tempNote}${fixHtml}<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
+  const open=Object.values(S.att).filter(r=>(r.date||"")<today()&&(r.date||"")>=addDays(today(),-45)&&r.in&&(!r.out||r.outBad||mins(r.out)<=mins(r.in))&&S.staff[r.staffId]).sort((a,b)=>b.date.localeCompare(a.date));
+  const openHtml=open.length?`<div class="panel" style="border-color:var(--bad)"><h2>أيام محتاجة تتصلّح (${open.length})</h2><p class="sub" style="margin:0">مسجلوش انصراف، أو الانصراف اتسجل في يوم تاني. دوس على اليوم واكتب الساعة اللي مشي فيها.${open.some(r=>fullDayOf(r.staffId))?" (حبيبة لو جت لحد 3 بيتحسبلها اليوم كامل لحد ما يتصلّح.)":""}</p><div class="list">${open.map(r=>`<button class="row" data-act="attGo" data-id="${r.date}"><span class="t">${esc(staffName(r.staffId))} · ${esc(dayShort(r.date))}</span><span class="end"><span class="chip c-bad">${r.outBad?`انصراف ${esc(outTxt(r))}`:"مسجلش انصراف"}</span></span><span class="m">حضور ${esc(r.in)}</span><span></span></button>`).join("")}</div></div>`:"";
+  return `${tempNote}${fixHtml}${openHtml}<div class="bar">${dayNav("attDay","attPick",d)}<span class="sub grow">${esc(dayLabel(d))}</span></div>
   ${st.length?`<div class="list">${rows}</div>`:`<div class="empty"><b>مفيش فريق متسجل</b>ضيف الدكاترة والسكرتارية من الإعدادات.</div>`}
   ${shiftPanel()}
   <div class="panel"><h2>ملخص ${esc(monthLabel(m))}</h2><p class="sub" style="margin:0">اليوم الأساسي ${cfg().hoursBase} ساعات. الأوفر تايم بيتحسب على الشهر: الأول يكمّل ساعات أيام جدوله لحد النهارده (اليوم اللي خرج فيه بدري بيتعوّض من الزيادة)، واللي يفضل بعد كده هو الأوفر تايم، بدقيقة ونص في المرتب. ده نفس الرقم اللي في المرتبات.</p>
@@ -963,7 +966,7 @@ async function saveShift(sid){const o={};for(const [d,l] of WD){if(!document.get
 /* late arrival against the schedule */
 function shiftLate(r,sid,d){const x=shiftOf(sid,new Date(d+"T12:00").getDay(),d);if(!x||!r?.in)return 0;const a=mins(r.in),b=mins(x.from);return a!=null&&b!=null&&a-b>10?a-b:0}
 function locNote(r){const parts=[];if(r.inLoc)parts.push(`حضور على بعد ${r.inLoc.d}م`);if(r.outLoc)parts.push(`انصراف على بعد ${r.outLoc.d}م`);return parts.length?` · ${parts.join("، ")}`:""}
-function attChip(r,w,ot,base){if(!r)return `<span class="chip c-mute">غايب / مش متسجل</span>`;if(ot)return `<span class="chip c-acc">أوفر تايم ${hm(ot)}</span>`;if(w!=null&&w<base)return `<span class="chip c-warn">ناقص ${hm(base-w)}</span>`;return `<span class="chip c-ok">${w!=null?"تمام":"لسه مقفلش"}</span>`}
+function attChip(r,w,ot,base){if(!r)return `<span class="chip c-mute">غايب / مش متسجل</span>`;if(r.outBad&&w==null)return `<span class="chip c-bad">الانصراف اتسجل يوم ${esc(dm(r.outDay))}</span>`;if(w==null&&r.in&&r.date<today())return `<span class="chip c-bad">مسجلش انصراف</span>`;if(ot)return `<span class="chip c-acc">أوفر تايم ${hm(ot)}</span>`;if(w!=null&&w<base)return `<span class="chip c-warn">ناقص ${hm(base-w)}</span>`;return `<span class="chip c-ok">${w!=null?"تمام":"لسه مقفلش"}</span>`}
 /* ---------- views: my attendance (doctor) ---------- */
 function vMyAtt(){
   const sid=S.mySid,d=today(),m=d.slice(0,7),base=7*60;const r=S.att[d+"_"+sid];
@@ -972,10 +975,11 @@ function vMyAtt(){
   return `<div class="panel"><h2>النهارده · ${esc(dayLabel(d))}</h2>
   <div class="stats"><div class="stat"><div class="k">حضور</div><div class="v num">${esc(r?.in||"—")}</div></div><div class="stat"><div class="k">انصراف</div><div class="v num">${esc(r?.out||"—")}</div></div></div>
   <div class="bar">${r?"":`<button class="btn primary grow" data-act="selfIn">سجّل حضوري دلوقتي</button>`}${r&&r.in&&!r.out?`<button class="btn teal grow" data-act="selfOut">سجّل انصرافي دلوقتي</button>`:""}</div>
+  ${(()=>{const o=recs.filter(x=>x.date<d&&x.in&&(!x.out||x.outBad));return o.length?`<div class="note" style="border-color:var(--bad)">${o.map(x=>`يوم ${esc(dm(x.date))}`).join("، ")}: ${o.some(x=>x.outBad)?"الانصراف اتسجل في يوم تاني":"مسجلتش انصراف"}. قول لريهام أو د. محي يكتبوا الساعة اللي مشيت فيها.</div>`:""})()}
   <p class="err" id="geoMsg" style="margin:0"></p>
   <p class="sub" style="margin:0">الوقت بيتسجل من ساعة السيرفر${S.geo?.lat&&S.geo.required!==false?"، ومكانك بيتأكد إنه جوه المركز":""}.${r?.in&&r?.out?" اليوم اتقفل، ولو فيه غلط قول لريهام تعدّله.":""}</p></div>
   <div class="stats"><div class="stat"><div class="k">أيام حضور ${esc(monthLabel(m))}</div><div class="v num">${days}</div></div><div class="stat"><div class="k">أوفر تايم الشهر ده</div><div class="v">${hm(ot)}</div></div></div>
-  ${recs.length?`<div class="list">${recs.map(x=>{const w=attMinutes(x);const o=w!=null&&w>base?w-base:0;return `<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(x.date))}</span><span class="end">${attChip(x,w,o,base)}</span><span class="m">حضور ${esc(x.in||"—")}${countedNote(x)} · انصراف ${esc(x.out||"—")}${w!=null?" · "+hm(w):""}</span><span></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام متسجلة الشهر ده</b>اضغط «سجّل حضوري» أول ما توصل.</div>`}`;
+  ${recs.length?`<div class="list">${recs.map(x=>{const w=attMinutes(x);const o=w!=null&&w>base?w-base:0;return `<div class="row" style="cursor:default"><span class="t">${esc(dayLabel(x.date))}</span><span class="end">${attChip(x,w,o,base)}</span><span class="m">حضور ${esc(x.in||"—")}${countedNote(x)} · انصراف ${esc(outTxt(x))}${w!=null?" · "+hm(w):""}</span><span></span></div>`}).join("")}</div>`:`<div class="empty"><b>مفيش أيام متسجلة الشهر ده</b>اضغط «سجّل حضوري» أول ما توصل.</div>`}`;
 }
 /* ---------- doctors from outside (on a percentage, paid weekly / every two weeks) ---------- */
 function exts(all){return (S.ext?.list||[]).filter(x=>all||x.active!==false)}
@@ -1439,6 +1443,7 @@ const ORD1=["","الأولى","الثانية","الثالثة","الرابعة"
 const ORDU=["","الحادية","الثانية","الثالثة","الرابعة","الخامسة","السادسة","السابعة","الثامنة","التاسعة"];
 const TENS=["","","العشرون","الثلاثون","الأربعون","الخمسون","الستون","السبعون","الثمانون","التسعون"];
 function arOrd(n){if(n<1)return "";if(n<=10)return ORD1[n];if(n<20)return ORDU[n-10]+" عشرة";if(n===100)return "المائة";if(n>100)return "رقم "+n;const t=Math.floor(n/10),u=n%10;return u?`${ORDU[u]} و${TENS[t]}`:TENS[t]}
+function dm(d){return dmy(d).split("/").slice(0,2).join("/")}
 function dmy(d){if(!d)return "";const [y,m,x]=d.split("-");return `${+x}/${+m}/${y}`}
 function rowValue(v){return Math.round(v.packId?(v.packValue||0):(v.net||0))}
 let RP=null; // the report being edited
@@ -3743,6 +3748,7 @@ document.addEventListener("click",async e=>{
     case "saveAccount":guard(t,()=>saveAccount(!!t.dataset.forced));break;
     case "day":S.ui.date=addDays(S.ui.date,Number(t.dataset.n));render();break;
     case "attDay":S.ui.attDate=addDays(S.ui.attDate,Number(t.dataset.n));render();break;
+    case "attGo":S.ui.attDate=id;render();scrollTo(0,0);break;
     case "newVisit":sheetVisit(null);break;
     case "editVisit":sheetVisit(id);break;
     case "saveVisit":guard(t,()=>saveVisit(id));break;
