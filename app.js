@@ -3078,7 +3078,8 @@ function sheetSellPack(pid){
   <label class="f">الباكدج<select id="k_type"></select></label>
   ${exts().length?`<label class="f">الباكدج ده مع<select id="k_ext"><option value="">المركز (دكاترتنا)</option>${exts().map(x=>`<option value="${x.id}">${esc(x.name)} · فلوسه في خزنتها</option>`).join("")}</select></label>`:""}
   <div class="grid2"><label class="f">اسم الباكدج<input id="k_name"></label><label class="f">عدد الجلسات<input id="k_sessions" inputmode="numeric"></label><label class="f">التاريخ<input type="date" id="k_date" value="${today()}"></label>
-  <label class="f" id="k_usedbox" hidden>كام جلسة خلصت منه قبل كده<input id="k_used" inputmode="numeric" placeholder="0"></label></div>
+  <label class="f" id="k_usedbox" hidden>كام جلسة خلصت منه قبل السيستم<input id="k_used" inputmode="numeric" placeholder="0"></label></div>
+  <div id="k_vlink"></div>
   <p class="sub" id="k_rate" style="margin:0" hidden></p>
   ${moneyFields("k",{price:"",paid:"",method:"cash"})}
   <div id="k_link"></div>
@@ -3097,21 +3098,31 @@ function sheetSellPack(pid){
     const xs=document.getElementById("k_ext");if(xs){let touched=false;xs.addEventListener("change",e=>{if(e.isTrusted)touched=true});
       cat.addEventListener("change",()=>{if(!touched)xs.value=defPackExt(pid,cat.value)});}
     const E=i=>document.getElementById(i);
-    const oldSum=()=>{const n=Math.round(num(E("k_sessions").value)),u=Math.round(num(E("k_used").value)),price=num(E("k_price").value),net=Math.max(0,price-discFrom("k",price)),paid=num(E("k_prepaid").value)+num(E("k_mpaid").value),d=net-paid;
-      E("k_oldsum").innerHTML=n?`الجلسة الجاية رقم <b>${Math.min(u+1,n)} من ${n}</b>${u>=n?" (الباكدج خلص)":""} · دفع <b>${money(paid)}</b> من <b>${money(net)}</b> · ${d>0?`عليه دلوقتي <b style="color:var(--bad)">${money(d)}</b>`:d<0?`ليه <b style="color:var(--ok)">${money(-d)}</b>`:"خالص"}`:"اكتب عدد جلسات الباكدج."};
+    const oldSum=()=>{const n=Math.round(num(E("k_sessions").value)),u=Math.round(num(E("k_used").value)),price=num(E("k_price").value),net=Math.max(0,price-discFrom("k",price)),lk=linked(),paid=num(E("k_prepaid").value)+num(E("k_mpaid").value)+lk,d=net-paid,mv=movedN(),nu=u+mv;
+      E("k_oldsum").innerHTML=n?`${nu+pendN>n?`<b style="color:var(--bad)">الجلسات (${u} قبل السيستم${mv?` + ${mv} اتنقلوا`:""}${pendN?` + ${pendN} لسه هتتأكد`:""}) أكتر من الباكدج</b> · `:""}الجلسة الجاية رقم <b>${Math.min(nu+pendN+1,n)} من ${n}</b>${nu+pendN>=n?" (الباكدج خلص)":""}${pendN?` (بعد ${pendN} متسجلة في السيستم لسه متأكدتش)`:""} · دفع <b>${money(paid)}</b> من <b>${money(net)}</b>${lk?` (منهم ${money(lk)} دفعات متسجلة اتربطت)`:""} · ${d>0?`عليه دلوقتي <b style="color:var(--bad)">${money(d)}</b>`:d<0?`ليه <b style="color:var(--ok)">${money(-d)}</b>`:"خالص"}`:"اكتب عدد جلسات الباكدج."};
     // payments already taken without a package (e.g. Reham took the money first): tick them and they count on this package, not twice
     const loose=Object.values(S.payments).filter(x=>x.patientId===pid&&!x.packId&&!x.kind&&(x.amount||0)>0&&(x.date||"")>=dstr(dnum(today())-30)).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
     const linked=()=>[...document.querySelectorAll('input[name="k_lp"]:checked')].reduce((t,x)=>t+num(x.dataset.amt),0);
-    const drawLink=()=>{const box=E("k_link");if(!loose.length||radio("k_mode")==="old"){box.innerHTML="";return}
-      const d=E("k_date").value||today();
+    const drawLink=()=>{const box=E("k_link");if(!loose.length){box.innerHTML="";return}
+      const d=E("k_date").value||today(),isOld=radio("k_mode")==="old",mo=today().slice(0,7);const tick=x=>isOld?(x.date||"").slice(0,7)===mo:x.date===d;
       box.innerHTML=`<div class="note" style="display:grid;gap:6px"><b>فيه دفعات اتسجلت للمريض ده من غير باكدج</b><span class="sub">علّم على اللي اتدفع للباكدج ده، فتتحسب عليه ومتتكتبش تاني.</span>
-        ${loose.map(x=>`<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="k_lp" value="${x.id}" data-amt="${x.amount}" ${x.date===d?"checked":""}> <b>${money(x.amount)}</b> · ${esc(METHODS[x.method]||x.method||"")} · ${esc(dmy(x.date))}${x.note?` · ${esc(x.note)}`:""}</label>`).join("")}
+        ${loose.map(x=>`<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="k_lp" value="${x.id}" data-amt="${x.amount}" ${tick(x)?"checked":""}> <b>${money(x.amount)}</b> · ${esc(METHODS[x.method]||x.method||"")} · ${esc(dmy(x.date))}${x.note?` · ${esc(x.note)}`:""}</label>`).join("")}
         <span id="k_linksum" class="sub"></span></div>`;
       box.querySelectorAll('input[name="k_lp"]').forEach(c=>c.addEventListener("change",fixPaid));fixPaid()};
-    const fixPaid=()=>{const l=linked(),price=num(E("k_price").value),net=Math.max(0,price-discFrom("k",price));if(price)E("k_paid").value=Math.max(0,net-l);E("k_paid").dispatchEvent(new Event("input"));
-      const sm=E("k_linksum");if(sm)sm.innerHTML=l?`اتربط <b>${money(l)}</b> على الباكدج. «دفع كام» تحت = أي فلوس دفعها زيادة دلوقتي بس.`:""};
+    const fixPaid=()=>{const l=linked(),isOld=radio("k_mode")==="old",price=num(E("k_price").value),net=Math.max(0,price-discFrom("k",price));if(!isOld){if(price)E("k_paid").value=Math.max(0,net-l);E("k_paid").dispatchEvent(new Event("input"))}
+      const sm=E("k_linksum");if(sm)sm.innerHTML=l?(isOld?`اتربط <b>${money(l)}</b> على الباكدج وهو أصلاً في إيراد يومه. «دفع كام الشهر ده» تحت = فلوس زيادة ماتسجلتش بس، متكتبهاش تاني.`:`اتربط <b>${money(l)}</b> على الباكدج. «دفع كام» تحت = أي فلوس دفعها زيادة دلوقتي بس.`):"";oldSum()};
     E("k_date").addEventListener("change",drawLink);
-    const mode=()=>{const old=radio("k_mode")==="old";drawLink();E("k_usedbox").hidden=!old;E("k_oldbox").hidden=!old;E("k_oldsum").hidden=!old;E("k_paid").closest("label").hidden=old;E("k_method").closest("label").hidden=old;E("k_sum").hidden=old;oldSum()};
+    const tId=()=>E("k_cat").value;
+    const looseV=()=>Object.values(S.visits).filter(v=>v.patientId===pid&&!v.packId&&!v.payerId&&!isExamVisit(v)&&(v.date||"")>=dstr(dnum(today())-60)&&(!tId()||!v.typeId||v.typeId===tId())).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+    const pendA=()=>Object.values(S.appts).filter(x=>x.patientId===pid&&x.kind!=="exam"&&!x.confirmed&&!S.visits[x.id]&&!["cancelled","noshow"].includes(x.status)&&shownAppt(x)&&(x.date||"")<=today()&&(!tId()||!x.typeId||x.typeId===tId()));
+    let pendN=0;const movedN=()=>document.querySelectorAll('input[name="k_mv"]:checked').length;
+    const drawV=()=>{const box=E("k_vlink");pendN=0;if(radio("k_mode")!=="old"){box.innerHTML="";return}const vs=looseV(),pa=pendA();pendN=pa.length;
+      box.innerHTML=(vs.length?`<div class="note" style="display:grid;gap:6px"><b>جلسات اتسجلت هنا في السيستم من غير باكدج</b><span class="sub">علّم على اللي اتعمل على الباكدج ده: تتنقل عليه وسعرها يتشال من حسابه. متحسبهاش في «قبل السيستم».</span>
+        ${vs.map(v=>`<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="k_mv" value="${v.id}" checked> ${esc(dmy(v.date))} · ${esc(v.typeName||"جلسة")}${v.net?` · ${money(v.net)}`:""}</label>`).join("")}</div>`:"")
+        +(pa.length?`<div class="note">فيه <b>${pa.length}</b> جلسة متسجلة في السيستم لسه متأكدتش (${pa.map(x=>esc(dmy(x.date))).join("، ")}). دي هتتحسب على الباكدج لوحدها أول ما تتأكد، فمتحسبهاش في «قبل السيستم».</div>`:"");
+      box.querySelectorAll('input[name="k_mv"]').forEach(c=>c.addEventListener("change",oldSum))};
+    E("k_cat").addEventListener("change",()=>{drawV();oldSum()});
+    const mode=()=>{const old=radio("k_mode")==="old";drawLink();drawV();E("k_usedbox").hidden=!old;E("k_oldbox").hidden=!old;E("k_oldsum").hidden=!old;E("k_paid").closest("label").hidden=old;E("k_method").closest("label").hidden=old;E("k_sum").hidden=old;oldSum()};
     document.querySelectorAll('input[name="k_mode"]').forEach(r=>r.addEventListener("change",mode));
     ["k_sessions","k_used","k_price","k_disc","k_prepaid","k_mpaid"].forEach(i=>E(i).addEventListener("input",oldSum));E("k_dmode").addEventListener("change",oldSum);
     // pick a package, then just change the number of sessions: the price follows at that package's per-session rate
@@ -3135,14 +3146,17 @@ async function saveSellPack(pid){
   if(old){prePaid=num(val("k_prepaid"));mPaid=num(val("k_mpaid"));mDate=val("k_mdate")||today();mMethod=val("k_mmethod");
     if(mPaid&&(mDate.slice(0,7)!==today().slice(0,7)||mDate>today()))return setErr("يوم الدفع لازم يكون في الشهر ده. لو دفع قبل كده اكتبه في «دفع كام قبل الشهر ده»");}
   else mPaid=m.paid;
-  const links=old?[]:[...document.querySelectorAll('input[name="k_lp"]:checked')].map(x=>S.payments[x.value]).filter(Boolean);
-  if(lockBlock(...links.map(x=>x.date)))return;const linkAmt=links.reduce((t,x)=>t+(x.amount||0),0);
-  const pack={id:randId(),name,typeId,typeName:typeName(typeId),sessions,listPrice:m.price,saleDiscount:m.discount,discount:m.discount,price:m.net,paid:prePaid+mPaid+linkAmt,ext:val("k_ext")||"",prePaid,reason:m.discountReason,date,used,preUsed:used,old,by:S.mySid,discHist:[]};
+  const links=[...document.querySelectorAll('input[name="k_lp"]:checked')].map(x=>S.payments[x.value]).filter(Boolean);
+  const moves=old?[...document.querySelectorAll('input[name="k_mv"]:checked')].map(x=>S.visits[x.value]).filter(v=>v&&!v.packId):[];
+  if(used+moves.length>sessions)return setErr(`الجلسات (${used} قبل السيستم + ${moves.length} من السيستم) أكتر من عدد الباكدج`);
+  if(lockBlock(...links.map(x=>x.date),...moves.map(v=>v.date)))return;const linkAmt=links.reduce((t,x)=>t+(x.amount||0),0),movedNet=moves.reduce((t,v)=>t+(v.net||0),0);
+  const pack={id:randId(),name,typeId,typeName:typeName(typeId),sessions,listPrice:m.price,saleDiscount:m.discount,discount:m.discount,price:m.net,paid:prePaid+mPaid+linkAmt,ext:val("k_ext")||"",prePaid,reason:m.discountReason,date,used:used+moves.length,preUsed:used,old,by:S.mySid,discHist:[]};
   const b=S.db.batch();
+  for(const v of moves){const ch={packId:pack.id,packName:pack.name,packValue:Math.round((pack.price||0)/(pack.sessions||1)),price:0,discount:0,net:0,discountReason:""};b.update(S.db.doc("visits/"+v.id),ch);S.visits[v.id]={...v,...ch};if(S.old?.visits?.[v.id])S.old.visits[v.id]={...S.old.visits[v.id],...ch}}
   if(mPaid)b.set(S.db.collection("payments").doc(),{patientId:pid,patientName:p.name,amount:mPaid,method:mMethod,date:old?mDate:date,packId:pack.id,note:packTitle(pack),createdAt:Date.now(),by:S.mySid});
   for(const x of links)b.update(S.db.doc("payments/"+x.id),{packId:pack.id,note:(x.note?x.note+" · ":"")+"على "+packTitle(pack)});
-  b.update(S.db.doc("patients/"+pid),{packs:[...(p.packs||[]),pack],charged:inc(m.net),paid:inc(prePaid+mPaid)}); // linked payments are already in his paid total
-  await b.commit();audit("money",old?"سجّل باكدج قديم":"باع باكدج",{target:p.name,info:`${packTitle(pack)} · ${money(pack.price)}${m.discount?` · خصم ${money(m.discount)} (${m.discountReason})`:""}${prePaid?` · دفع قبل كده ${money(prePaid)}`:""}${mPaid?` · دفع ${money(mPaid)}`:""}${linkAmt?` · اتربط عليه ${money(linkAmt)} كانت مدفوعة قبل كده`:""}`,discount:m.discount});
+  b.update(S.db.doc("patients/"+pid),{packs:[...(p.packs||[]),pack],charged:inc(m.net-movedNet),paid:inc(prePaid+mPaid)}); // linked payments are already in his paid total
+  await b.commit();audit("money",old?"سجّل باكدج قديم":"باع باكدج",{target:p.name,info:`${packTitle(pack)} · ${money(pack.price)}${m.discount?` · خصم ${money(m.discount)} (${m.discountReason})`:""}${prePaid?` · دفع قبل كده ${money(prePaid)}`:""}${mPaid?` · دفع ${money(mPaid)}`:""}${linkAmt?` · اتربط عليه ${money(linkAmt)} كانت مدفوعة قبل كده`:""}${moves.length?` · اتنقل عليه ${moves.length} جلسة من السيستم`:""}`,discount:m.discount});
   toast("الباكدج اتسجل");reopenPatient(pid);
 }
 /* cancel a package entered by mistake: undo its price, its payments (or keep them as credit) and move its sessions */
