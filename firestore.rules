@@ -142,7 +142,8 @@ service cloud.firestore {
       allow update: if isOwner() || (inBackfill(resource.data.date) && inBackfill(request.resource.data.date) && openOld() && openNew())
         || (isStaff() && resource.data.staffId == mySid()
             && !('outAt' in resource.data)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt', 'outLoc'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['out', 'outAt', 'outLoc', 'early'])
+            && request.resource.data.get('early', 'self') in ['self', 'clinic']
             && request.resource.data.outAt == request.time);
       allow delete: if isOwner() || (inBackfill(resource.data.date) && openOld());
     }

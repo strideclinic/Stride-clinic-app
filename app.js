@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 نوفمبر · 135";
+const APP_VERSION="26 نوفمبر · 136";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -319,12 +319,12 @@ function shiftStart(sid,date){ // when the paid day starts: doctors 3:00 (or the
 function effIn(rec){const a=mins(rec.in);if(a==null)return null;const s=shiftStart(rec.staffId,rec.date);return s!=null&&a<s?s:a} // coming early with no work doesn't count
 function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`}
 function outTxt(r){return (r?.out||"—")+(r?.outBad?` (يوم ${dm(r.outDay)})`:"")}
-function countedNote(r){const e=effIn(r),a=mins(r.in),w=r?rawAttMinutes(r):null;return (r&&e!=null&&a!=null&&e!==a?` · بيتحسب من ${fmtMin(e)}`:"")+(w!=null&&attMinutes(r)!==w?` · مشي بدري واتحسبله ${hm(cfg().hoursBase*60)}`:"")}
+function countedNote(r){const e=effIn(r),a=mins(r.in),w=r?rawAttMinutes(r):null;return (r&&e!=null&&a!=null&&e!==a?` · بيتحسب من ${fmtMin(e)}`:"")+(w!=null&&attMinutes(r)!==w?` · ${r.early==="clinic"?"المركز مشّاه و":"مشي بدري و"}اتحسبله ${hm(cfg().hoursBase*60)}`:r?.early==="self"&&w!=null&&w<cfg().hoursBase*60?" · مشي بدري بمزاجه":"")}
 /* some staff (Dr. Habiba) get a full day when they leave early (the owner sends them home), only if they came by 3:00 (10 min grace); came later = the real hours. Set in salary settings */
 const FULLDAY_BY=15*60+10,FULLDAY_FROM="2026-11-01"; // October was closed and paid without it
 function fullDayOf(sid){const f=S.config?.fullDay;if(f)return !!f[sid];return /حبيب/.test(S.staff[sid]?.name||"")}
 function rawAttMinutes(rec){if(rec.outBad)return null;const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
-function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(w!=null&&w>=base||!fullDayOf(rec.staffId)||(rec.date||"")<FULLDAY_FROM||mins(rec.in)==null||mins(rec.in)>FULLDAY_BY)return w;if(w==null&&!(rec.date<today()))return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
+function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(rec.early==="self")return w;const sent=rec.early==="clinic";if(w!=null&&w>=base||!(sent||fullDayOf(rec.staffId))||!sent&&(rec.date||"")<FULLDAY_FROM||mins(rec.in)==null||mins(rec.in)>FULLDAY_BY)return w;if(w==null&&!(rec.date<today()))return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
 function fixedRow(f){f=f||{id:randId(),name:"",amount:"",from:prevMonth(today().slice(0,7))};return `<div class="grid2 fxrow" data-fx="${f.id}"><label class="f">الاسم<input class="fx_name" value="${esc(f.name||"")}" placeholder="د. تامر"></label><label class="f">المرتب الشهري<input class="fx_amt" inputmode="decimal" value="${f.amount??""}" placeholder="3500"></label><label class="f">من شهر<input type="month" class="fx_from" value="${f.from||prevMonth(today().slice(0,7))}"></label><button class="btn sm danger" data-act="delFixed" style="align-self:end">شيله</button></div>`}
 function defBonus(){const o={};for(const s of Object.values(S.staff||{}))if(s.role==="doctor"&&/سلم|حبيب/.test(s.name||""))o[s.id]=150;return o}
 function cfg(){const c=S.config||{};return{payDetail:c.payDetail||Object.fromEntries(Object.keys(c.commission||{}).map(k=>[k,true])),fixed:c.fixed||[],bonus:c.bonus||defBonus(),salary:c.salary||{},commission:c.commission||{},workDays:c.workDays||{},leaveAllow:c.leaveAllow||{},docStart:c.docStart||"15:00",secStart:c.secStart||"14:30",secLead:c.secLead??30,otMult:c.otMult||1.5,daysBase:c.daysBase||30,hoursBase:c.hoursBase||7,shifts:c.shifts||{}}}
@@ -3451,6 +3451,7 @@ function sheetAtt(sid){
   const d=S.ui.attDate,r=S.att[d+"_"+sid]||{};
   openSheet(`${staffName(sid)} · ${dayLabel(d)}`,`<div class="grid2"><label class="f">حضور<input type="time" id="a_in" value="${r.in||""}"></label><label class="f">انصراف<input type="time" id="a_out" value="${r.out||""}"></label></div>
   <div class="bar"><button class="btn sm" data-act="nowIn">الحضور = دلوقتي</button><button class="btn sm" data-act="nowOut">الانصراف = دلوقتي</button></div>
+  <label class="f">لو مشي بدري<select id="a_early"><option value="">${fullDayOf(sid)?"زي قاعدتها: لو جت لحد 3 يتحسب يوم كامل":"يتحسب بالساعات اللي اشتغلها"}</option><option value="self" ${r.early==="self"?"selected":""}>مشي بمزاجه: بالساعات اللي اشتغلها</option><option value="clinic" ${r.early==="clinic"?"selected":""}>المركز مشّاه: يتحسب ${cfg().hoursBase} ساعات (لو جه لحد 3)</option></select></label>
   <label class="f">ملاحظة<input id="a_note" value="${esc(r.note||"")}"></label><div class="err" id="formErr"></div>
   <div class="bar"><button class="btn primary grow" data-act="saveAtt" data-sid="${sid}">حفظ</button>${r.date?`<button class="btn danger" data-act="delAtt" data-sid="${sid}" data-confirm>مسح اليوم</button>`:""}</div>`);
 }
@@ -3504,17 +3505,27 @@ async function checkPlace(kind){ // returns location info, or throws a readable 
     throw new Error(`انت بعيد عن المركز حوالي ${d} متر. الحضور والانصراف بيتسجلوا من جوه المركز بس.`)}
   return{d,acc:p.acc};
 }
-async function selfAtt(kind){
+/* leaving before the day's hours are done: the doctor says why. «بمزاجي» = the real hours; «المركز مشّاني» = a full day (if he came by 3:00), and the owner is told */
+function selfOutAsk(){const d=today(),r=S.att[d+"_"+S.mySid],base=cfg().hoursBase*60;if(!r)return selfAtt("out");const a=effIn(r),now=mins(nowHM());
+  if(a==null||now==null||now-a>=base)return selfAtt("out");const w=now-a,ok=mins(r.in)<=FULLDAY_BY;
+  openSheet("هتمشي بدري؟",`<p style="margin:0 0 10px">اشتغلت <b>${hm(w)}</b> من ${hm(base)} النهارده.</p>
+  <div style="display:grid;gap:8px"><button class="btn grow" data-act="selfOutAs" data-id="self" style="justify-content:flex-start;text-align:start"><b>ماشي بمزاجي</b>&nbsp;· يتسجل زي ما هو (${hm(w)})</button>
+  <button class="btn teal grow" data-act="selfOutAs" data-id="clinic" style="justify-content:flex-start;text-align:start"><b>المركز مشّاني</b>&nbsp;· ${ok?`يتقفل ${hm(base)}`:"يتسجل زي ما هو (جيت بعد 3)"}</button></div>
+  <p class="sub" style="margin:8px 0 0">«المركز مشّاني» بيوصل لـ د. محي، ولو مش مظبوط هيعدّله.</p><p class="err" id="geoMsg" style="margin:6px 0 0"></p>`)}
+async function selfAtt(kind,early){
   const sid=S.mySid,d=today(),ref=S.db.doc(`att/${d}_${sid}`);const TS=firebase.firestore.FieldValue.serverTimestamp();
   const msg=document.getElementById("geoMsg");if(msg){msg.textContent="بيحدد مكانك…";msg.style.color=""}
   let loc;try{loc=await checkPlace(kind)}catch(e){if(msg){msg.textContent=e.message;msg.style.color="var(--bad)"}return}
   if(msg)msg.textContent="";
-  const base=kind==="in"?{date:d,staffId:sid,inAt:TS,in:"",out:"",note:"",by:sid}:{out:nowHM(),outAt:TS};
+  const base=kind==="in"?{date:d,staffId:sid,inAt:TS,in:"",out:"",note:"",by:sid}:{out:nowHM(),outAt:TS,...(early?{early}:{})};
   const extra=loc?(kind==="in"?{inLoc:loc}:{outLoc:loc}):{};
   const write=o=>kind==="in"?ref.set(o):ref.update(o);
   try{await write({...base,...extra})}
-  catch(e){if(e?.code==="permission-denied"&&loc)await write(base);else throw e} // older security rules don't know the distance fields yet
-  toast(kind==="in"?"اتسجل حضورك":"اتسجل انصرافك");
+  catch(e){if(e?.code!=="permission-denied")throw e; // older security rules don't know the distance / early-leave fields yet
+    const b2={...base};delete b2.early;try{await write(loc?{...b2,...extra}:b2)}catch(e2){if(e2?.code==="permission-denied"&&loc)await write(b2);else throw e2}}
+  if(early==="clinic")alertOwner(`${meName()} مشي بدري وقال المركز مشّاه`,`النهارده الساعة ${nowHM()}. لو مش مظبوط عدّله من الحضور.`);
+  if(kind==="out"&&early)closeSheet();
+  toast(kind==="in"?"اتسجل حضورك":early==="clinic"?"اتسجل انصرافك، ود. محي هيعرف إن المركز مشّاك":"اتسجل انصرافك");
 }
 /* ---------- expenses ---------- */
 function sheetExp(id){
@@ -3795,11 +3806,12 @@ document.addEventListener("click",async e=>{
     case "shiftCopy":{const f=WD.find(([d])=>document.getElementById("sh_on_"+d).checked);if(!f){toast("علّم على يوم الأول");break}const a=val("sh_f_"+f[0]),b=val("sh_t_"+f[0]);WD.forEach(([d])=>{if(document.getElementById("sh_on_"+d).checked){document.getElementById("sh_f_"+d).value=a;document.getElementById("sh_t_"+d).value=b}});break}
     case "nowIn":document.getElementById("a_in").value=nowHM();break;
     case "nowOut":document.getElementById("a_out").value=nowHM();break;
-    case "saveAtt":guard(t,async()=>{const sid=t.dataset.sid,d=S.ui.attDate;if(lockBlock(d))return;const i=val("a_in"),o=val("a_out");if(!i&&!o)return setErr("سجّل الحضور أو الانصراف");if(i&&o&&mins(o)<=mins(i))return setErr("الانصراف لازم يكون بعد الحضور");const body={date:d,staffId:sid,in:i,out:o,note:val("a_note").trim(),by:S.mySid};const was=S.att[`${d}_${sid}`];await db.doc(`att/${d}_${sid}`).set(body);
+    case "saveAtt":guard(t,async()=>{const sid=t.dataset.sid,d=S.ui.attDate;if(lockBlock(d))return;const i=val("a_in"),o=val("a_out");if(!i&&!o)return setErr("سجّل الحضور أو الانصراف");if(i&&o&&mins(o)<=mins(i))return setErr("الانصراف لازم يكون بعد الحضور");const body={date:d,staffId:sid,in:i,out:o,note:val("a_note").trim(),by:S.mySid,...(val("a_early")?{early:val("a_early")}:{})};const was=S.att[`${d}_${sid}`];await db.doc(`att/${d}_${sid}`).set(body);
       audit("att",was?"عدّل حضور":"سجّل حضور بإيده",{target:staffName(sid),date:d,before:was?`${was.in||"—"} – ${was.out||"—"}`:"",after:`${i||"—"} – ${o||"—"}`});if(d<winStart()){S.old.att[`${d}_${sid}`]={id:`${d}_${sid}`,...body};merge()}closeSheet();toast("اتسجل")});break;
     case "delAtt":guard(t,async()=>{if(lockBlock(S.ui.attDate))return;const k=`${S.ui.attDate}_${t.dataset.sid}`;const was=S.att[k];await db.doc("att/"+k).delete();audit("att","مسح حضور",{target:staffName(t.dataset.sid),date:S.ui.attDate,before:was?`${was.in||"—"} – ${was.out||"—"}`:"",del:true});forget("att",k);closeSheet()});break;
     case "selfIn":guard(t,()=>selfAtt("in"));break;
-    case "selfOut":guard(t,()=>selfAtt("out"));break;
+    case "selfOut":guard(t,()=>selfOutAsk());break;
+    case "selfOutAs":guard(t,()=>selfAtt("out",id));break;
     case "newExp":sheetExp(null);break;
     case "editExp":sheetExp(id);break;
     case "saveExp":guard(t,async()=>{const amount=num(val("x_amt"));if(!amount)return setErr("اكتب المبلغ");if(lockBlock(val("x_date")||today(),id?S.expenses[id]?.date:null))return;const body={category:val("x_cat"),amount,date:val("x_date")||today(),note:val("x_note").trim(),notDrawer:!document.getElementById("x_drawer")?.checked};const was=id?S.expenses[id]:null;
