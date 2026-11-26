@@ -10,7 +10,7 @@ const CFG=window.STRIDE_FIREBASE_CONFIG||{};
 const DOMAIN="users.stride-clinic.app";
 const USER_RE=/^[a-z0-9._\-]{3,30}$/;
 const LOG_KEEP_DAYS=60;
-const APP_VERSION="26 نوفمبر · 133";
+const APP_VERSION="26 نوفمبر · 134";
 /* ---------- state ---------- */
 const S={db:null,auth:null,uid:null,profile:null,role:null,mySid:null,settingUp:false,setupDone:null,
   staff:{},types:[],prices:{},pdir:{},patients:{},log:{},config:null,users:{},usernames:{},myUsername:"",
@@ -321,7 +321,7 @@ function fmtMin(m){return m==null?"":`${String(Math.floor(m/60)).padStart(2,"0")
 function outTxt(r){return (r?.out||"—")+(r?.outBad?` (يوم ${dm(r.outDay)})`:"")}
 function countedNote(r){const e=effIn(r),a=mins(r.in),w=r?rawAttMinutes(r):null;return (r&&e!=null&&a!=null&&e!==a?` · بيتحسب من ${fmtMin(e)}`:"")+(w!=null&&attMinutes(r)!==w?` · مشي بدري واتحسبله ${hm(cfg().hoursBase*60)}`:"")}
 /* some staff (Dr. Habiba) get a full day when they leave early (the owner sends them home), only if they came by 3:00 (10 min grace); came later = the real hours. Set in salary settings */
-const FULLDAY_BY=15*60+10,FULLDAY_FROM="2026-11-01"; // paid months before November stay as they were
+const FULLDAY_BY=15*60+10,FULLDAY_FROM=""; // applies to every month (the owner confirmed October with it)
 function fullDayOf(sid){const f=S.config?.fullDay;if(f)return !!f[sid];return /حبيب/.test(S.staff[sid]?.name||"")}
 function rawAttMinutes(rec){if(rec.outBad)return null;const a=effIn(rec),b=mins(rec.out);return a!=null&&b!=null&&b>a?b-a:null}
 function attMinutes(rec){const w=rawAttMinutes(rec),base=cfg().hoursBase*60;if(w!=null&&w>=base||!fullDayOf(rec.staffId)||(rec.date||"")<FULLDAY_FROM||mins(rec.in)==null||mins(rec.in)>FULLDAY_BY)return w;if(w==null&&!(rec.date<today()))return w;const st=S.staff[rec.staffId],wd=st?workDaysOf(st):null;return wd&&wd.length&&!wd.includes(wday(rec.date))?w:base} // a day off he came in still counts as worked
@@ -1238,9 +1238,7 @@ async function autoPublishPay(force){ // the owner's app publishes last month's 
   if(!force&&Date.now()-payPubAt<20000)return;const pm=prevMonth(today().slice(0,7));
   if(monthLoading(pm)){ensureMonth(pm);return}if(!Object.keys(S.staff||{}).length)return;payPubAt=Date.now();payPubBusy=true;
   try{const b=S.db.batch();let n=0;for(const x of payroll(pm)){if(x.s.me||x.fixed||!(x.total>0))continue;const id=`${pm}_${x.s.id}`,bAmt=Math.round((x.bonus||0)+(x.extra2||0)),d={sid:x.s.id,month:pm,total:Math.round(x.total),bonus:!!bAmt};
-      const snap=S.closes?.[pm]?.payroll?.find(y=>y.sid===x.s.id); // a closed (paid) month shows what was closed, never a later recalculation
-      if(snap)d.total=Math.round(num(snap.total));
-      if(cfg().payDetail[x.s.id])Object.assign(d,{detail:true,sal:Math.round(x.sal),otPay:Math.round(x.otPay),comm:Math.round(x.comm),full:x.full,half:x.half,bonusAmt:bAmt,deduction:Math.round(x.deduction||0)},snap?{sal:Math.round(num(snap.sal)),otPay:Math.round(num(snap.otPay)),comm:Math.round(num(snap.comm)),deduction:Math.round(num(snap.deduction))}:{}); // e.g. Dr. Mohamed: the parts, never the cases themselves
+      if(cfg().payDetail[x.s.id])Object.assign(d,{detail:true,sal:Math.round(x.sal),otPay:Math.round(x.otPay),comm:Math.round(x.comm),full:x.full,half:x.half,bonusAmt:bAmt,deduction:Math.round(x.deduction||0)}); // e.g. Dr. Mohamed: the parts, never the cases themselves
       const o=S.payPub?.[id],same=o&&["total","bonus","detail","sal","otPay","comm","full","half","bonusAmt","deduction"].every(k=>(o[k]??null)===(d[k]??null));
       if(!same){b.set(S.db.doc("pay/"+id),{...d,at:Date.now()});n++}}
     if(n)await b.commit();S.payPubLast=Date.now();if(force)toast(n?`اتحدّث مرتب ${n}`:"المرتبات اللي عندهم مظبوطة")}catch(e){console.warn("pay",e)}finally{payPubBusy=false}}
